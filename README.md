@@ -7,7 +7,7 @@
 Self-hostable · any coding agent · any model provider · your Git policy
 
 [![CI](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml/badge.svg)](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.1.2-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/license-pending-orange)
 

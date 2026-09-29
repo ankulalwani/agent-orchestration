@@ -139,7 +139,7 @@ export class ControlPlaneClient {
       this.lastConnectedAt = new Date().toISOString();
       this.lastError = null;
       this.setState('connected');
-      ws.send(JSON.stringify({ type: 'hello', protocol: WORKER_PROTOCOL_VERSION, version: process.env.AO_WORKER_VERSION ?? '0.1.2' }));
+      ws.send(JSON.stringify({ type: 'hello', protocol: WORKER_PROTOCOL_VERSION, version: process.env.AO_WORKER_VERSION ?? '0.2.0' }));
     });
     ws.on('message', (raw) => {
       try {
