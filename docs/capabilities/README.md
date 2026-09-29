@@ -9,9 +9,35 @@ Four distinct types share one manifest format (`packages/core/src/capabilities.t
 | `plugin` | Extension of the orchestration platform itself | Code run by workers at task hooks, in a restricted process (see [Plugins](#plugins)). Off unless the `plugins.execution` feature flag is on. |
 | `integration` | Connection to an external service | Registry only |
 
-## No mandatory marketplace
+## Registry and marketplace
 
-Every control-plane installation owns its registry. Self-hosted organizations register their own private capabilities, and nothing is fetched from, or sent to, vendor infrastructure. On the hosted service the operator curates platform-level capabilities. The architecture is identical in both.
+Every control-plane installation owns its registry. Self-hosted organizations register their own private capabilities, and nothing is fetched from, or sent to, vendor infrastructure unless a platform administrator imports from a public registry. On the hosted service the operator curates the marketplace. The architecture is identical in both.
+
+**Packages and namespaces.** A package is identified by `@namespace/name` and holds immutable versions. Each organization and each person gets a namespace on first use (from the organization slug or the email name); `@platform` belongs to platform administrators. A bare name (`react-review`) still works when installing: the organization's own package is tried first, then the platform's, then the person's.
+
+**Owners and visibility.**
+
+| Owner | Starts as | Who can install it |
+|---|---|---|
+| Organization (`capability.manage`) | `ORGANIZATION` | Members of the organization, at any scope |
+| Person (`capability.personal`, developers and up) | `PRIVATE` | Only its owner, at USER or TASK scope, in any of their organizations |
+| Platform | `PUBLIC` | Everyone |
+
+**Publishing.** The owner asks for a package to be published (`listed`: shown in the marketplace, or unlisted: installable by reference). Automated checks run first and refuse secrets in manifests, instructions that tell agents to ignore their rules, send credentials away or hide actions, `curl … | sh`, and plugins without code; they warn about high-risk permissions, permissions added since the previous version, and thin descriptions. A platform administrator then approves (granting `COMMUNITY`, `VERIFIED` or `OFFICIAL` trust) or rejects with notes. New versions of a published package must pass the automated checks; its trust carries over.
+
+**Curation.** Platform administrators mark public packages *curated*, with an optional rank. Every listing (dashboard, public catalog) shows curated packages first. The dashboard's marketplace shows curated packages only, and when none match the search it shows all packages with a note to check trust and permissions.
+
+**Versions.** Installations pin an exact version and its digest and keep a range (default `^<version>`). *Upgrade* moves to the newest version in the range; if the new version adds permissions, a non-administrator's upgrade goes back to pending approval. Publishers can deprecate or yank versions; yanked versions cannot be installed and are not delivered to agents.
+
+**Federation.** Platform administrators can mirror the [official MCP Registry](https://registry.modelcontextprotocol.io) (or a compatible one): `POST /api/v1/admin/registry/import/mcp-registry`, or *Server → Marketplace* in the dashboard. Only metadata is stored; servers run from their npm, PyPI or OCI package or remote URL. Mirrored packages are `UNVERIFIED` and never replace a package or namespace claimed on this server. Settings a server declares (environment variables) become installation configuration, passed to the server as environment variables; secret ones are not delivered to workers.
+
+**Categories and technologies.** Every package is categorized automatically, so the marketplace can be filtered without relying on publishers to tag things well. The classifier (`@ao/core` `taxonomy.ts`) reads the name, description, readme, skill instructions, trigger keywords and dependencies, MCP command and environment variable names, and configuration. It assigns up to three of 21 fixed categories (Frontend & UI, Testing & QA, Databases, DevOps & CI/CD, …, or Other) and the technologies it recognizes from a vocabulary of about 100 (React, PostgreSQL, Playwright, Slack, AWS, …). Mentions in the name count most, then the description, then long text. Publishers may choose up to three categories when registering; the classifier treats them as a strong hint, not the final word. Platform administrators can pin a package's categories (`POST /admin/registry/packages/:namespace/:name/categories`, or the Category column in *Server → Marketplace*). Classification is recomputed when a version is registered, the listing changes, or a package is mirrored. When the rules change (`CLASSIFIER_VERSION`), the API reclassifies outdated packages in the background at startup; administrators can also run it (`POST /admin/registry/reclassify`). Search takes `category` and `technology` filters, and `GET …/registry/facets` (or `/catalog/facets`) returns both lists with package counts.
+
+**Suggestions.** `POST /api/v1/orgs/:orgId/registry/suggest` takes any mix of `text` (a prompt or description), `projectId` and `taskId`. It returns packages that fit the work, each with its reasons ("Works with Playwright", "Matches “checkout”", "Testing & QA") and whether it is already installed for that task, project, person or organization. A project adds its name, description, knowledge and the stack its last readiness check found (languages and dependencies). A task adds its title, prompt and background. The text is read into the same technologies and categories as packages. Shared technologies weigh most, then the package's own keywords, then categories. A shared category alone is never enough. Curation, trust and installs only order equally relevant packages. Curated packages come first, as everywhere else. Candidates come from a few bounded, index-backed queries (by technology, keyword, category and text), so the cost does not grow with the catalog. The dashboard shows suggestions in *Capabilities → Suggested* and as you write a new task, where installed ones can be requested for the task and others installed just for you in one click. Package pages list related packages (`…/packages/:namespace/:name/related`). Per-task skill selection uses the same vocabulary: a skill about a technology the task mentions ranks higher when not all skills fit.
+
+**Search.** MongoDB text search by default. Set `REGISTRY_SEARCH=atlas` on MongoDB Atlas with an Atlas Search index named `capability_packages` on the `capabilitypackages` collection (fields `displayName`, `name`, `tags`, `description`, `namespace`) for fuzzy, relevance-ranked search.
+
+**Public catalog.** `GET /api/v1/catalog/packages`, `/catalog/packages/:namespace/:name`, `…/related`, `/catalog/facets`, `/catalog/suggest?q=` and `/catalog/sitemap` answer without sign-in when `PUBLIC_CATALOG=true` (default on only with `DEPLOYMENT_MODE=cloud`). They return public packages only and are cacheable; the marketing site builds a page per package from them. Each package has `indexable`: curated packages, packages with installs, and packages with a real description or readme. Thin mirrored entries are served with `noindex` and left out of the sitemap.
 
 ## Manifest
 
@@ -33,7 +59,8 @@ Other fields: `publisher`, `trust`, `dependencies`, `recommendedMcp`, `triggers`
 
 ## Scopes and policy
 
-- **Scopes:** organization, project and task installations are merged, and a more specific scope overrides (or disables) a broader one.
+- **Scopes:** organization, user (*Just me*: that person's tasks), project and task installations are merged in that order, and a more specific scope overrides (or disables) a broader one. Project beats user so a repository behaves the same for the whole team.
+- **Per-task selection:** when a task's skills exceed 12 or about 24,000 tokens of instructions, the most relevant ones are delivered (manifest `triggers` and name matched against the task's title and prompt; ties go to the more specific scope). Skills installed for the task or named in the task's `capabilityIds` always go. MCP servers, plugins and integrations are always delivered.
 - **Install policy:** `ASK` (approval required), `AUTO` (trusted and low-risk installs go straight through), or `RESTRICTED` (only pre-approved trust levels; anything else is blocked).
 - **Trust:** `OFFICIAL`, `VERIFIED`, `COMMUNITY`, `UNVERIFIED`, `LOCAL`. Only platform administrators can assign `OFFICIAL`/`VERIFIED`.
 - **Permissions:** policies can block permissions or require approval for them. `shell`, `secrets.read`, `process.execute`, `browser.control` and `git.write` require approval by default. Plugins always require approval.

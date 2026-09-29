@@ -8,6 +8,7 @@ import { ApiError, get, post } from '../lib/api';
 import { useOrgId, useSession } from '../lib/session';
 import { TaskStatusBadge, humanize } from '../lib/format';
 import { PageHeader } from '../Layout';
+import { TaskCapabilitySuggestions } from '../components/CapabilitySuggestions';
 
 const FILTERS: Array<{ label: string; statuses: TaskStatus[] }> = [
   { label: 'All', statuses: [] },
@@ -110,7 +111,7 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
   const orgId = useOrgId();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const [form, setForm] = useState({ kind: 'code' as 'code' | 'review' | 'plan', base: 'main', head: '', projectId: '', title: '', prompt: '', knowledge: '', priority: 'NORMAL', dependencies: [] as string[], requirePlanApproval: false, gitPolicy: '' });
+  const [form, setForm] = useState({ kind: 'code' as 'code' | 'review' | 'plan', base: 'main', head: '', projectId: '', title: '', prompt: '', knowledge: '', priority: 'NORMAL', dependencies: [] as string[], requirePlanApproval: false, gitPolicy: '', capabilityIds: [] as string[] });
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const create = useMutation({
     mutationFn: () =>
@@ -123,6 +124,7 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
         priority: form.priority,
         dependencies: form.dependencies,
         requirePlanApproval: form.requirePlanApproval,
+        ...(form.capabilityIds.length ? { capabilityIds: form.capabilityIds } : {}),
         idempotencyKey,
         ...(form.gitPolicy ? { policy: { git: { policy: form.gitPolicy } } } : {}),
       }),
@@ -184,6 +186,14 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
         <Field label="What should be done?" hint="Be specific about requirements, tests and how to verify. The original text is kept unchanged.">
           {(id) => <Textarea id={id} rows={7} value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} placeholder="Update the checkout flow, add Razorpay support, write tests, verify checkout in the browser…" />}
         </Field>
+        {form.kind !== 'review' && (
+          <TaskCapabilitySuggestions
+            text={`${form.title}\n${form.prompt}`}
+            projectId={form.projectId || projects[0]?.id}
+            selected={form.capabilityIds}
+            onToggle={(ref) => setForm((f) => ({ ...f, capabilityIds: f.capabilityIds.includes(ref) ? f.capabilityIds.filter((x) => x !== ref) : [...f.capabilityIds, ref] }))}
+          />
+        )}
         <Field label="Background for the agent (optional)" hint="Context that isn't an instruction: links, decisions, constraints. Added after organization and project knowledge.">
           {(id) => <Textarea id={id} rows={3} maxLength={50_000} value={form.knowledge} onChange={(e) => setForm({ ...form, knowledge: e.target.value })} />}
         </Field>

@@ -86,6 +86,10 @@ export const serverConfigSchema = z.object({
   /** Anonymous usage telemetry; never contains code, prompts or secrets. Off by default (spec §128). */
   TELEMETRY_ENABLED: bool.default('false'),
   FEATURE_FLAGS: z.string().default(''),
+  /** Marketplace search: MongoDB text index (works everywhere) or an Atlas Search index named "capability_packages". */
+  REGISTRY_SEARCH: z.enum(['text', 'atlas']).default('text'),
+  /** Serve public marketplace packages without sign-in (/catalog, for a marketing site). Unset: on when DEPLOYMENT_MODE=cloud. */
+  PUBLIC_CATALOG: bool.optional(),
 });
 export type ServerConfig = z.infer<typeof serverConfigSchema>;
 
@@ -96,6 +100,11 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     throw new Error(`Invalid control-plane configuration:\n${issues}`);
   }
   return parsed.data;
+}
+
+/** Whether /catalog answers without sign-in. */
+export function publicCatalogEnabled(config: Pick<ServerConfig, 'PUBLIC_CATALOG' | 'DEPLOYMENT_MODE'>): boolean {
+  return config.PUBLIC_CATALOG ?? config.DEPLOYMENT_MODE === 'cloud';
 }
 
 export function requirePublicCallbackUrls(config: Pick<ServerConfig, 'REQUIRE_PUBLIC_CALLBACK_URLS' | 'DEPLOYMENT_MODE'>): boolean {

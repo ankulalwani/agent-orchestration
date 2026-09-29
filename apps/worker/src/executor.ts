@@ -515,7 +515,7 @@ export class TaskRun {
     const compatible = caps.filter((c) => !c.manifest.compatibleAgents?.length || c.manifest.compatibleAgents.includes(agentId));
     const mcpServers: McpServerSpec[] = compatible
       .filter((c) => c.manifest.type === 'mcp' && c.manifest.mcp)
-      .map((c) => ({ name: c.manifest.id, transport: c.manifest.mcp.transport, command: c.manifest.mcp.command, url: c.manifest.mcp.url, env: c.manifest.mcp.env }));
+      .map((c) => ({ name: c.manifest.id, transport: c.manifest.mcp.transport, command: c.manifest.mcp.command, url: c.manifest.mcp.url, env: { ...c.manifest.mcp.env, ...configEnv(c) } }));
     const skills = compatible.filter((c) => c.manifest.type === 'skill' && c.manifest.skill).map((c) => ({ name: c.manifest.name, instructions: c.manifest.skill.instructions as string }));
     const incompatible = caps.filter((c) => !compatible.includes(c)).map((c) => c.manifest.id);
     const unhealthy: Array<{ id: string; error?: string }> = [];
@@ -1422,4 +1422,18 @@ function buildProgress(stateRoot: string, taskId: string) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Installation settings an MCP server declares in its manifest's configuration become environment
+ * variables of the same name. Secret references ("secret:NAME") are not delivered to workers and are skipped.
+ */
+function configEnv(c: { manifest: { configuration?: Array<{ key: string }> }; config?: unknown }): Record<string, string> {
+  const declared = new Set((c.manifest.configuration ?? []).map((x) => x.key));
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries((c.config as Record<string, unknown> | undefined) ?? {})) {
+    if (!declared.has(k) || v === null || v === undefined || (typeof v === 'string' && v.startsWith('secret:'))) continue;
+    if (['string', 'number', 'boolean'].includes(typeof v)) out[k] = String(v);
+  }
+  return out;
 }

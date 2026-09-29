@@ -27,6 +27,7 @@ export const PERMISSIONS = [
   'provider.read',
   'provider.manage',
   'capability.read',
+  'capability.personal', // own packages and USER-scope installations
   'capability.install',
   'capability.manage',
   'policy.manage',
@@ -45,7 +46,7 @@ const VIEWER: Permission[] = [
   'provider.read',
   'capability.read',
 ];
-const DEVELOPER: Permission[] = [...VIEWER, 'task.create', 'task.control'];
+const DEVELOPER: Permission[] = [...VIEWER, 'task.create', 'task.control', 'capability.personal'];
 const MANAGER: Permission[] = [
   ...DEVELOPER,
   'project.create',

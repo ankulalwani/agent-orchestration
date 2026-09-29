@@ -17,6 +17,20 @@ import {
   createTeamRequest,
   cursorQuery,
   installCapabilityRequest,
+  catalogQuery,
+  categoryOverrideRequest,
+  facetsDto,
+  facetsQuery,
+  publicSuggestQuery,
+  suggestRequest,
+  suggestionsDto,
+  catalogPageDto,
+  curatePackageRequest,
+  importRegistryRequest,
+  packageListingInput,
+  publishPackageRequest,
+  reviewPackageRequest,
+  versionStatusRequest,
   loginRequest,
   mfaDisableRequest,
   mfaEnableRequest,
@@ -59,7 +73,7 @@ import {
   workerDto,
 } from '@ao/contracts';
 import { AppError } from '@ao/core';
-import { requirePermission, requirePlatformAdmin, serverOverview, type Services } from '@ao/server';
+import { publicCatalogEnabled, requirePermission, requirePlatformAdmin, serverOverview, type Services } from '@ao/server';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { createRouter } from '../http.js';
 
@@ -200,6 +214,53 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'GET', path: '/admin/organizations', summary: 'All organizations on this server (for feature flag overrides)', tag: 'admin', auth: 'user', query: z.object({ q: z.string().max(100).optional() }) }, async ({ req, query }) => {
     requirePlatformAdmin(req.platformAdmin);
     return s.orgs.searchAll(query.q);
+  });
+  // ── Marketplace administration: reviews, curation, federation ───────────────
+  const registryAdmin = (req: FastifyRequest) => ({ ...platformActor(req), platformAdmin: req.platformAdmin });
+  route({ method: 'GET', path: '/admin/registry/reviews', summary: 'Packages waiting for a publish review', tag: 'admin', auth: 'user' }, async ({ req }) => s.registry.reviewQueue(req.platformAdmin));
+  route({ method: 'POST', path: '/admin/registry/packages/:namespace/:name/review', summary: 'Approve or reject a publish request', tag: 'admin', auth: 'user', body: reviewPackageRequest }, async ({ req, params, body }) =>
+    s.registry.review(registryAdmin(req), `@${params.namespace}/${params.name}`, body),
+  );
+  route({ method: 'POST', path: '/admin/registry/packages/:namespace/:name/curate', summary: 'Mark a package curated (shown first) or not', tag: 'admin', auth: 'user', body: curatePackageRequest }, async ({ req, params, body }) =>
+    s.registry.curate(registryAdmin(req), `@${params.namespace}/${params.name}`, body.curated, body.rank),
+  );
+  route({ method: 'POST', path: '/admin/registry/import/mcp-registry', summary: 'Mirror servers from an MCP Registry (metadata only)', tag: 'admin', auth: 'user', body: importRegistryRequest }, async ({ req, body }) =>
+    s.registry.importMcpRegistry(registryAdmin(req), body),
+  );
+  route({ method: 'POST', path: '/admin/registry/packages/:namespace/:name/categories', summary: 'Pin a package’s categories (null: back to automatic)', tag: 'admin', auth: 'user', body: categoryOverrideRequest }, async ({ req, params, body }) =>
+    s.registry.setCategories(registryAdmin(req), `@${params.namespace}/${params.name}`, body.categories),
+  );
+  route({ method: 'POST', path: '/admin/registry/reclassify', summary: 'Re-run automatic categorization (stale packages, or all)', tag: 'admin', auth: 'user', body: z.object({ all: z.boolean().default(false) }) }, async ({ req, body }) =>
+    s.registry.reclassify(registryAdmin(req), body.all),
+  );
+  // ── Public catalog (marketplace pages, sitemaps). Off unless PUBLIC_CATALOG / DEPLOYMENT_MODE=cloud. ──
+  const catalogOn = (reply: FastifyReply) => {
+    if (!publicCatalogEnabled(s.config)) throw new AppError('NOT_FOUND', 'Not found');
+    reply.header('cache-control', 'public, max-age=300, stale-while-revalidate=3600');
+  };
+  route({ method: 'GET', path: '/catalog/packages', summary: 'Public marketplace search (curated first)', tag: 'registry', auth: 'none', query: catalogQuery.omit({ mine: true }), response: catalogPageDto }, async ({ reply, query }) => {
+    catalogOn(reply);
+    return s.registry.search(null, query);
+  });
+  route({ method: 'GET', path: '/catalog/packages/:namespace/:name', summary: 'One public package', tag: 'registry', auth: 'none' }, async ({ reply, params }) => {
+    catalogOn(reply);
+    return s.registry.get(null, params.namespace!, params.name!);
+  });
+  route({ method: 'GET', path: '/catalog/packages/:namespace/:name/related', summary: 'Public packages similar to one package', tag: 'registry', auth: 'none' }, async ({ reply, params }) => {
+    catalogOn(reply);
+    return s.registry.related(null, params.namespace!, params.name!);
+  });
+  route({ method: 'GET', path: '/catalog/facets', summary: 'Categories and technologies with package counts', tag: 'registry', auth: 'none', query: facetsQuery, response: facetsDto }, async ({ reply, query }) => {
+    catalogOn(reply);
+    return s.registry.facets(query.type);
+  });
+  route({ method: 'GET', path: '/catalog/suggest', summary: 'Public packages that fit a description of the work (curated first)', tag: 'registry', auth: 'none', query: publicSuggestQuery, response: suggestionsDto }, async ({ reply, query }) => {
+    catalogOn(reply);
+    return s.registry.suggest(null, { text: query.q, type: query.type, limit: query.limit });
+  });
+  route({ method: 'GET', path: '/catalog/sitemap', summary: 'Indexable public packages in stable order', tag: 'registry', auth: 'none', query: z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(50_000).default(10_000) }) }, async ({ reply, query }) => {
+    catalogOn(reply);
+    return s.registry.sitemap(query.page, query.limit);
   });
   // ── Device sign-in for the CLI and mobile app (approved in the web app) ────
   route({ method: 'POST', path: '/auth/device/start', summary: 'Start a device sign-in: returns a code to approve in the web app', tag: 'auth', auth: 'none', body: deviceLoginStartRequest, response: deviceLoginStartResponse }, ({ req, body }) =>
@@ -404,14 +465,46 @@ export function userRoutes(route: Route, s: Services) {
 
   // ── Capabilities ───────────────────────────────────────────────────────────
   route({ method: 'GET', path: '/orgs/:orgId/capabilities', summary: 'Registry (org + platform)', tag: 'capabilities', auth: 'org' }, ({ actor }) => s.capabilities.list(actor));
-  route({ method: 'POST', path: '/orgs/:orgId/capabilities', summary: 'Register a capability manifest', tag: 'capabilities', auth: 'org', permission: 'capability.manage', body: registerCapabilityRequest.extend({ platform: z.boolean().default(false) }) }, ({ actor, body }) =>
-    s.capabilities.register(actor, body.manifest, body.private, body.platform),
+  route({ method: 'POST', path: '/orgs/:orgId/capabilities', summary: 'Register a capability version (organization package, or personal with owner: "user")', tag: 'capabilities', auth: 'org', permission: 'capability.personal', body: registerCapabilityRequest.extend({ platform: z.boolean().default(false) }), bodyLimit: 2 * 1024 * 1024 }, ({ actor, body }) =>
+    s.capabilities.register(actor, body.manifest, body.private, body.platform, body),
   );
   route({ method: 'GET', path: '/orgs/:orgId/capability-installations', summary: 'Installed capabilities', tag: 'capabilities', auth: 'org', query: z.object({ projectId: z.string().optional() }) }, ({ actor, query }) =>
     s.capabilities.installations(actor, query.projectId),
   );
-  route({ method: 'POST', path: '/orgs/:orgId/capability-installations', summary: 'Install capability at a scope', tag: 'capabilities', auth: 'org', permission: 'capability.install', body: installCapabilityRequest }, ({ actor, body }) =>
+  route({ method: 'POST', path: '/orgs/:orgId/capability-installations', summary: 'Install capability at a scope (USER: for yourself)', tag: 'capabilities', auth: 'org', permission: 'capability.personal', body: installCapabilityRequest }, ({ actor, body }) =>
     s.capabilities.install(actor, body),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/capability-installations/:id/upgrade', summary: 'Upgrade to the latest version in the installation’s range', tag: 'capabilities', auth: 'org' }, ({ actor, params }) =>
+    s.capabilities.upgrade(actor, params.id!),
+  );
+  // Marketplace (packages) for signed-in members: public packages plus their own and their organization's.
+  route({ method: 'GET', path: '/orgs/:orgId/registry/packages', summary: 'Search the marketplace (curated first)', tag: 'registry', auth: 'org', query: catalogQuery, response: catalogPageDto }, ({ actor, query }) =>
+    s.registry.search(actor, query),
+  );
+  route({ method: 'GET', path: '/orgs/:orgId/registry/facets', summary: 'Categories and technologies with package counts', tag: 'registry', auth: 'org', query: facetsQuery, response: facetsDto }, ({ query }) =>
+    s.registry.facets(query.type),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/registry/suggest', summary: 'Suggest capabilities for a prompt, task or project (curated first)', tag: 'registry', auth: 'org', body: suggestRequest, response: suggestionsDto }, ({ actor, body }) =>
+    s.registry.suggest(actor, body),
+  );
+  route({ method: 'GET', path: '/orgs/:orgId/registry/packages/:namespace/:name/related', summary: 'Packages similar to one package', tag: 'registry', auth: 'org' }, ({ actor, params }) =>
+    s.registry.related(actor, params.namespace!, params.name!),
+  );
+  route({ method: 'GET', path: '/orgs/:orgId/registry/packages/:namespace/:name', summary: 'One package with its versions', tag: 'registry', auth: 'org' }, async ({ actor, params }) => {
+    const p = await s.registry.findVisible(actor, `@${params.namespace}/${params.name}`);
+    return s.registry.get(actor, params.namespace!, params.name!, Boolean(p && s.registry.canManage(actor, p)));
+  });
+  route({ method: 'PATCH', path: '/orgs/:orgId/registry/packages/:namespace/:name', summary: 'Edit a package’s listing (readme, categories, tags, repository)', tag: 'registry', auth: 'org', body: packageListingInput }, ({ actor, params, body }) =>
+    s.registry.updateListing(actor, `@${params.namespace}/${params.name}`, body),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/registry/packages/:namespace/:name/publish', summary: 'Ask for a package to be published to the marketplace (reviewed)', tag: 'registry', auth: 'org', body: publishPackageRequest }, ({ actor, params, body }) =>
+    s.registry.requestPublish(actor, `@${params.namespace}/${params.name}`, body.listed),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/registry/packages/:namespace/:name/unpublish', summary: 'Stop sharing a package outside its owner', tag: 'registry', auth: 'org' }, ({ actor, params }) =>
+    s.registry.unpublish(actor, `@${params.namespace}/${params.name}`),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/registry/packages/:namespace/:name/versions/:version/status', summary: 'Deprecate, yank or restore a version', tag: 'registry', auth: 'org', body: versionStatusRequest }, ({ actor, params, body }) =>
+    s.registry.setVersionStatus(actor, `@${params.namespace}/${params.name}`, params.version!, body.status, body.message),
   );
   route({ method: 'POST', path: '/orgs/:orgId/capability-installations/:id/approve', summary: 'Approve pending installation', tag: 'capabilities', auth: 'org', permission: 'capability.manage' }, ({ actor, params }) =>
     s.capabilities.approve(actor, params.id!),

@@ -1,5 +1,10 @@
 import {
   AppError,
+  SCOPE_RANK,
+  parseRef,
+  selectForTask,
+  type CapabilityManifest,
+  type CapabilityScope,
   EPHEMERAL_EVENT_TYPES,
   captureError,
   LEASED_TASK_STATUSES,
@@ -509,27 +514,49 @@ export class TaskService {
     return caps;
   }
 
-  /** Effective capabilities for a task: org + project + task scopes, active installations only (spec §34). */
+  /**
+   * Effective capabilities for a task: org + the task creator's own + project + task scopes, active
+   * installations only (spec §34), the more specific scope winning. Yanked versions are left out. When
+   * there are more skills than fit an agent's prompt, the ones relevant to the task are chosen; skills
+   * installed for the task or named in `capabilityIds` always go.
+   */
   async effectiveCapabilities(task: TaskLean) {
     const installs = await CapabilityInstallation.find({
       organizationId: task.organizationId,
       status: 'ACTIVE',
-      enabled: true,
-      $or: [{ scope: 'ORGANIZATION' }, { scope: 'PROJECT', projectId: task.projectId }, { scope: 'TASK', taskId: task._id }],
+      // Disabled ones too: a disabled installation at a narrower scope switches the capability off.
+      $or: [{ scope: 'ORGANIZATION' }, { scope: 'USER', userId: task.createdBy }, { scope: 'PROJECT', projectId: task.projectId }, { scope: 'TASK', taskId: task._id }],
     }).lean();
-    const wanted = new Set([...installs.map((i) => `${i.capabilityId}@${i.version}`)]);
-    const caps = await Capability.find({
-      $or: [{ organizationId: task.organizationId }, { organizationId: null }],
-      $expr: { $in: [{ $concat: ['$capabilityId', '@', '$version'] }, [...wanted]] },
-    }).lean();
-    const scopeRank = { ORGANIZATION: 1, PROJECT: 2, TASK: 3 } as Record<string, number>;
-    const byId = new Map<string, { manifest: unknown; scope: string; config: unknown }>();
-    for (const i of installs.sort((a, b) => scopeRank[a.scope]! - scopeRank[b.scope]!)) {
+    const caps = installs.length
+      ? await Capability.find({ $or: installs.map((i) => ({ capabilityId: i.capabilityId, version: i.version })), status: { $ne: 'YANKED' } }).lean()
+      : [];
+    const byRef = new Map<string, { manifest: CapabilityManifest; scope: string; config: unknown; pinned: boolean; enabled: boolean }>();
+    const requested = new Set<string>(task.capabilityIds ?? []);
+    for (const i of installs.sort((a, b) => (SCOPE_RANK[a.scope as CapabilityScope] ?? 0) - (SCOPE_RANK[b.scope as CapabilityScope] ?? 0))) {
       const cap = caps.find((c) => c.capabilityId === i.capabilityId && c.version === i.version);
-      if (cap) byId.set(i.capabilityId, { manifest: cap.manifest, scope: i.scope, config: i.config });
+      if (!cap) continue;
+      const manifest = cap.manifest as CapabilityManifest;
+      const pinned = i.scope === 'TASK' || requested.has(i.capabilityId) || requested.has(manifest.id);
+      byRef.set(i.capabilityId, { manifest, scope: i.scope, config: i.config, pinned, enabled: i.enabled !== false });
     }
-    // Task-requested capability ids (capabilityIds) must already be installed; unknown ids are reported by the planner.
-    return [...byId.values()];
+    // Two packages from different publishers may share a name; agents and workers key MCP servers and
+    // plugins by manifest id, so the later ones get "<namespace>.<name>".
+    const seen = new Set<string>();
+    const items = [...byRef.entries()].filter(([, c]) => c.enabled).map(([ref, c]) => {
+      if (!seen.has(c.manifest.id)) {
+        seen.add(c.manifest.id);
+        return c;
+      }
+      const { namespace } = parseRef(ref);
+      return { ...c, manifest: { ...c.manifest, id: `${namespace}.${c.manifest.id}`.slice(0, 64) } };
+    });
+    const stack = (await Project.findById(task.projectId, { 'readiness.stack': 1 }).lean())?.readiness?.stack ?? null;
+    const { selected } = selectForTask(items, {
+      text: `${task.title ?? ''}\n${task.normalizedPrompt ?? task.originalPrompt ?? ''}\n${task.knowledge ?? ''}`,
+      dependencies: stack?.dependencies,
+      files: stack?.files,
+    });
+    return selected.map(({ manifest, scope, config }) => ({ manifest, scope, config }));
   }
 
   /**

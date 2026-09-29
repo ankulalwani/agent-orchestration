@@ -14,6 +14,7 @@ import { WorkerService } from './worker.service.js';
 import { TaskService } from './task.service.js';
 import { Scheduler } from './scheduler.js';
 import { CapabilityService } from './capability.service.js';
+import { RegistryService, manifestDigest, toPackageDto } from './registry.service.js';
 import { QueryService } from './queries.service.js';
 import { createArtifactStore } from './artifacts.js';
 import { RuntimeSettings } from './runtime-settings.js';
@@ -47,7 +48,7 @@ export * from './device-login.service.js';
 export * from './github.service.js';
 export * from './discovery.service.js';
 export { workerCheckouts, type RepositoryOrigin } from './project.service.js';
-export { AuthService, OrgService, InvitationService, OAuthService, ProjectService, WorkerService, TaskService, Scheduler, CapabilityService, QueryService };
+export { AuthService, OrgService, InvitationService, OAuthService, ProjectService, WorkerService, TaskService, Scheduler, CapabilityService, RegistryService, QueryService, manifestDigest, toPackageDto };
 
 /**
  * Composition root for control-plane services. Both the self-hosted API and the cloud API call this
@@ -109,7 +110,8 @@ export async function createServices(config: ServerConfig, overrides: { queue?: 
   const projects = new ProjectService();
   const workers = new WorkerService(config, live, notifications, timing);
   const tasks = new TaskService(live, queue, metrics, notifications, features, box);
-  const capabilities = new CapabilityService();
+  const registry = new RegistryService(config);
+  const capabilities = new CapabilityService(registry);
   const queries = new QueryService(box);
   const scheduler = new Scheduler(queue, live, tasks, workers, metrics, { sweepMs: config.SWEEP_INTERVAL_MS });
   workers.onCheckoutsAdded((organizationId, projectIds) => void tasks.redispatchProjects(organizationId, projectIds).catch(() => undefined));
@@ -125,6 +127,6 @@ export async function createServices(config: ServerConfig, overrides: { queue?: 
   const rematch = (organizationId: string) => void discovery.rematch(organizationId).catch(() => undefined);
   github.onRepositoriesChanged(rematch);
   projects.onRepositoriesChanged(rematch);
-  return { github, discovery, apiTokens, integrations, workerReleases, deviceLogins, artifacts, config, settings, features, live, metrics, queue, mailer, box, notifications, auth, oauth, orgs, invitations, projects, workers, tasks, capabilities, queries, scheduler, timing };
+  return { github, discovery, apiTokens, integrations, workerReleases, deviceLogins, artifacts, config, settings, features, live, metrics, queue, mailer, box, notifications, auth, oauth, orgs, invitations, projects, workers, tasks, capabilities, registry, queries, scheduler, timing };
 }
 export type Services = Awaited<ReturnType<typeof createServices>>;

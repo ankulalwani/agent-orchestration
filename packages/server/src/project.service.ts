@@ -1,5 +1,5 @@
-import { AppError, analyzeReadiness, newId, policyLayerSchema, repositoryKey, repositoryName, sanitizeRepositoryName, type CapabilityManifest, type ReadinessReport, type RepoFacts } from '@ao/core';
-import { Capability, CapabilityInstallation, Project, Task, Worker, isDuplicateKeyError, oid } from '@ao/database';
+import { AppError, analyzeReadiness, newId, parseRef, policyLayerSchema, repositoryKey, repositoryName, sanitizeRepositoryName, type CapabilityManifest, type ReadinessReport, type RepoFacts } from '@ao/core';
+import { Capability, CapabilityInstallation, CapabilityPackage, Project, Task, Worker, isDuplicateKeyError, oid } from '@ao/database';
 import type { z } from 'zod';
 import type { addRepositoryRequest, createProjectRequest, updateProjectRequest, updateRepositoryRequest } from '@ao/contracts';
 import { requirePermission, type Actor, type WorkerActor } from './context.js';
@@ -255,9 +255,17 @@ export class ProjectService {
     if (!p?.readiness || p.readiness.requestId !== requestId || p.readiness.workerId !== worker.workerId) throw new AppError('CONFLICT', 'No matching readiness request');
     let report: ReadinessReport | null = null;
     if (facts) {
+      // Suggestions come from curated packages and the organization's own, not the whole marketplace.
+      const candidates = await CapabilityPackage.find(
+        { $or: [{ curated: true }, { ownerKind: 'platform' }, { ownerKind: 'organization', organizationId: p.organizationId }] },
+        { ref: 1, latestVersion: 1 },
+      )
+        .sort({ curated: -1, curatedRank: 1 })
+        .limit(1000)
+        .lean();
       const [w, caps, installs] = await Promise.all([
         Worker.findById(oid(worker.workerId)).lean(),
-        Capability.find({ $or: [{ organizationId: p.organizationId }, { organizationId: null }] }).lean(),
+        candidates.length ? Capability.find({ $or: candidates.map((c) => ({ capabilityId: c.ref, version: c.latestVersion })) }).lean() : [],
         CapabilityInstallation.find({ organizationId: p.organizationId, status: 'ACTIVE', enabled: true, $or: [{ scope: 'ORGANIZATION' }, { scope: 'PROJECT', projectId: p._id }] }).lean(),
       ]);
       report = analyzeReadiness({
@@ -268,12 +276,21 @@ export class ProjectService {
           tools: w?.tools ?? [],
         },
         capabilities: caps.map((c) => c.manifest as CapabilityManifest),
-        installedCapabilityIds: installs.map((i) => i.capabilityId),
+        installedCapabilityIds: installs.map((i) => parseRef(i.capabilityId).name),
       });
     }
     await Project.updateOne(
       { _id: p._id, 'readiness.requestId': requestId },
-      { $set: { 'readiness.status': report ? 'COMPLETED' : 'FAILED', 'readiness.completedAt': new Date().toISOString(), 'readiness.error': error, 'readiness.report': report } },
+      {
+        $set: {
+          'readiness.status': report ? 'COMPLETED' : 'FAILED',
+          'readiness.completedAt': new Date().toISOString(),
+          'readiness.error': error,
+          'readiness.report': report,
+          // The stack drives capability suggestions and per-task skill selection.
+          ...(facts ? { 'readiness.stack': { languages: facts.languages.slice(0, 20), dependencies: facts.dependencies.slice(0, 500), files: facts.files.slice(0, 200) } } : {}),
+        },
+      },
     );
   }
 

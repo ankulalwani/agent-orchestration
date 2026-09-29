@@ -40,6 +40,11 @@ export async function startControlPlane(opts: StartControlPlaneOptions = {}): Pr
   services.github.start();
   await app.listen({ port: config.PORT, host: config.HOST });
   log.info({ port: config.PORT }, 'control plane listening');
+  // Marketplace packages classified by older taxonomy rules are reclassified in the background.
+  void services.registry
+    .reclassifyStale()
+    .then((n) => n && log.info({ packages: n }, 'reclassified capability packages'))
+    .catch((e) => log.warn({ err: String(e) }, 'capability reclassification failed'));
   // Key rotation: move secrets to the current key in the background (SEC-007).
   if (config.ENCRYPTION_KEYS_PREVIOUS.length) void reencryptSecrets(services.box).catch((e) => {
       log.error({ err: String(e) }, 'secret re-encryption failed');

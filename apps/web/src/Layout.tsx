@@ -71,6 +71,7 @@ export function Layout() {
               {link('/admin/users', 'Users')}
               {link('/admin/features', 'Feature flags')}
               {link('/admin/releases', 'Worker releases')}
+              {link('/admin/marketplace', 'Marketplace')}
               {extNav('server')}
             </>
           )}

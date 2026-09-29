@@ -1,5 +1,5 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
-import { PRIORITIES, ROLES, TASK_STATUSES, TASK_EVENT_TYPES, CAPABILITY_SCOPES } from '@ao/core';
+import { PRIORITIES, ROLES, TASK_STATUSES, TASK_EVENT_TYPES, CAPABILITY_SCOPES, PACKAGE_SOURCES, PUBLISHER_KINDS, REVIEW_STATUSES, VERSION_STATUSES, VISIBILITIES } from '@ao/core';
 
 /**
  * MongoDB models (spec §17). MongoDB is the durable source of truth.
@@ -405,9 +405,103 @@ const pushTokenSchema = new Schema(
 pushTokenSchema.index({ token: 1 }, { unique: true });
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
+/** Owner of a namespace ("@acme"). Organizations and people get one on first publish; upstream namespaces are mirrored. */
+const publisherSchema = new Schema(
+  {
+    namespace: { type: String, required: true },
+    kind: { type: String, enum: PUBLISHER_KINDS, required: true },
+    organizationId: { type: Schema.Types.ObjectId, default: null },
+    userId: { type: Schema.Types.ObjectId, default: null },
+    displayName: { type: String, default: '' },
+    verified: { type: Boolean, default: false },
+    upstreamRegistry: { type: String, default: null },
+  },
+  opts,
+);
+publisherSchema.index({ namespace: 1 }, { unique: true });
+publisherSchema.index({ organizationId: 1 }, { unique: true, partialFilterExpression: { kind: 'organization' } });
+publisherSchema.index({ userId: 1 }, { unique: true, partialFilterExpression: { kind: 'user' } });
+
+/** One package ("@namespace/name") with its marketplace listing. Versions live in `capabilities`. */
+const capabilityPackageSchema = new Schema(
+  {
+    ref: { type: String, required: true },
+    namespace: { type: String, required: true },
+    name: { type: String, required: true },
+    type: { type: String, enum: ['skill', 'mcp', 'plugin', 'integration'], required: true },
+    ownerKind: { type: String, enum: PUBLISHER_KINDS, required: true },
+    organizationId: { type: Schema.Types.ObjectId, default: null },
+    userId: { type: Schema.Types.ObjectId, default: null },
+    visibility: { type: String, enum: VISIBILITIES, default: 'PRIVATE' },
+    source: { type: String, enum: PACKAGE_SOURCES, default: 'native' },
+    upstream: { registry: String, id: String, url: String, _id: false },
+    // Listing
+    displayName: { type: String, required: true },
+    description: { type: String, default: '' },
+    readme: { type: String, default: null },
+    tags: { type: [String], default: [] },
+    homepage: { type: String, default: null },
+    repository: { type: String, default: null },
+    publisherName: { type: String, default: '' },
+    // Classification (see @ao/core taxonomy), recomputed whenever the listing or latest version changes
+    /** Effective categories: `categoryOverride` when a platform administrator set one, else the classifier's. */
+    categories: { type: [String], default: [] },
+    /** Categories the publisher chose; a strong hint to the classifier. */
+    declaredCategories: { type: [String], default: [] },
+    categoryOverride: { type: [String], default: undefined },
+    technologies: { type: [String], default: [] },
+    /** Words a matching task or search would use: name parts, tags, triggers, technologies. */
+    keywords: { type: [String], default: [] },
+    classifierVersion: { type: Number, default: 0 },
+    // Latest active version, denormalized for search and filtering
+    latestVersion: { type: String, required: true },
+    trust: { type: String, required: true },
+    permissions: { type: [String], default: [] },
+    compatibleAgents: { type: [String], default: [] },
+    lastPublishedAt: { type: Date, default: () => new Date() },
+    // Curation and review
+    curated: { type: Boolean, default: false },
+    curatedRank: { type: Number, default: null },
+    review: {
+      status: { type: String, enum: REVIEW_STATUSES, default: 'NONE' },
+      listed: { type: Boolean, default: true },
+      requestedAt: { type: Date, default: null },
+      requestedBy: { type: Schema.Types.ObjectId, default: null },
+      reviewedAt: { type: Date, default: null },
+      reviewedBy: { type: Schema.Types.ObjectId, default: null },
+      notes: { type: String, default: '' },
+      findings: { type: Mixed, default: [] },
+    },
+    deprecated: { type: String, default: null },
+    installs: { type: Number, default: 0 },
+    /** Worth a search engine's attention (see isIndexable in @ao/core); maintained on every relevant change. */
+    indexable: { type: Boolean, default: false },
+    createdBy: { type: Schema.Types.ObjectId, default: null },
+  },
+  opts,
+);
+capabilityPackageSchema.index({ ref: 1 }, { unique: true });
+capabilityPackageSchema.index({ visibility: 1, type: 1, curated: -1, curatedRank: 1, installs: -1 });
+capabilityPackageSchema.index({ visibility: 1, indexable: 1, _id: 1 });
+capabilityPackageSchema.index({ visibility: 1, categories: 1, curated: -1, curatedRank: 1, installs: -1 });
+capabilityPackageSchema.index({ visibility: 1, technologies: 1, curated: -1, curatedRank: 1, installs: -1 });
+capabilityPackageSchema.index({ keywords: 1 });
+capabilityPackageSchema.index({ classifierVersion: 1 });
+capabilityPackageSchema.index({ organizationId: 1 });
+capabilityPackageSchema.index({ userId: 1 });
+capabilityPackageSchema.index({ 'review.status': 1, 'review.requestedAt': 1 });
+capabilityPackageSchema.index({ 'upstream.registry': 1, 'upstream.id': 1 }, { sparse: true });
+capabilityPackageSchema.index(
+  { displayName: 'text', name: 'text', description: 'text', tags: 'text', namespace: 'text' },
+  { name: 'package_text', weights: { displayName: 10, name: 10, tags: 5, namespace: 3, description: 1 } },
+);
+
+/** One immutable version of a package. `capabilityId` is the package reference ("@namespace/name"). */
 const capabilitySchema = new Schema(
   {
-    organizationId: { type: Schema.Types.ObjectId, default: null }, // null = PLATFORM registry
+    organizationId: { type: Schema.Types.ObjectId, default: null }, // owning organization; null = platform, a person or upstream
+    packageId: { type: Schema.Types.ObjectId, default: null },
+    namespace: { type: String, default: null },
     capabilityId: { type: String, required: true },
     version: { type: String, required: true },
     type: { type: String, enum: ['skill', 'mcp', 'plugin', 'integration'], required: true },
@@ -417,30 +511,44 @@ const capabilitySchema = new Schema(
     trust: { type: String, required: true },
     permissions: { type: [String], default: [] },
     private: { type: Boolean, default: true },
+    status: { type: String, enum: VERSION_STATUSES, default: 'ACTIVE' },
+    /** SHA-256 of the canonical manifest; installations pin it. */
+    digest: { type: String, default: null },
+    findings: { type: Mixed, default: [] },
     manifest: { type: Mixed, required: true },
     createdBy: { type: Schema.Types.ObjectId, default: null },
   },
   opts,
 );
-capabilitySchema.index({ organizationId: 1, capabilityId: 1, version: 1 }, { unique: true });
+capabilitySchema.index({ capabilityId: 1, version: 1 }, { unique: true, name: 'ref_version_unique' });
+capabilitySchema.index({ packageId: 1, createdAt: -1 });
+capabilitySchema.index({ organizationId: 1, capabilityId: 1 });
 
 const capabilityInstallationSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true },
     capabilityId: { type: String, required: true },
     version: { type: String, required: true },
+    /** Range used for upgrades ("^1.2.0"); `version` is the pinned, installed version. */
+    versionRange: { type: String, default: '*' },
+    digest: { type: String, default: null },
     scope: { type: String, enum: CAPABILITY_SCOPES, required: true },
     projectId: { type: Schema.Types.ObjectId, default: null },
+    userId: { type: Schema.Types.ObjectId, default: null },
     taskId: { type: Schema.Types.ObjectId, default: null },
     enabled: { type: Boolean, default: true },
     status: { type: String, enum: ['ACTIVE', 'PENDING_APPROVAL', 'BLOCKED', 'DISABLED'], default: 'ACTIVE' },
     approvalReasons: { type: [String], default: [] },
     approvedBy: { type: Schema.Types.ObjectId, default: null },
+    installedBy: { type: Schema.Types.ObjectId, default: null },
     config: { type: Mixed, default: {} },
   },
   opts,
 );
-capabilityInstallationSchema.index({ organizationId: 1, scope: 1, projectId: 1, capabilityId: 1 }, { unique: true });
+capabilityInstallationSchema.index(
+  { organizationId: 1, scope: 1, projectId: 1, userId: 1, taskId: 1, capabilityId: 1 },
+  { unique: true, name: 'installation_scope_unique' },
+);
 
 // ── Providers / secrets / usage ───────────────────────────────────────────────
 const providerConfigSchema = new Schema(
@@ -718,6 +826,8 @@ export const TaskEvent = model('TaskEvent', taskEventSchema);
 export const AuditLog = model('AuditLog', auditSchema);
 export const Notification = model('Notification', notificationSchema);
 export const PushToken = model('PushToken', pushTokenSchema);
+export const Publisher = model('Publisher', publisherSchema);
+export const CapabilityPackage = model('CapabilityPackage', capabilityPackageSchema);
 export const Capability = model('Capability', capabilitySchema);
 export const CapabilityInstallation = model('CapabilityInstallation', capabilityInstallationSchema);
 export const ProviderConfig = model('ProviderConfig', providerConfigSchema);
@@ -738,7 +848,7 @@ export const ALL_MODELS = [
   User, Organization, Membership, Team, RefreshToken, OneTimeToken, Project, Worker, WorkerPairing, Task,
   TaskEvent, AuditLog, Notification, PushToken, Capability, CapabilityInstallation, ProviderConfig, Secret,
   UsageRecord, Setting, ConcurrencySlot, Invitation, OAuthState, OAuthTicket, ApiToken, Integration, DeviceLogin,
-  GitHubApp, GitHubInstallation, GitHubUserToken, GitHubState, DiscoveredRepository,
+  GitHubApp, GitHubInstallation, GitHubUserToken, GitHubState, DiscoveredRepository, Publisher, CapabilityPackage,
 ];
 
 export type TaskDoc = InferSchemaType<typeof taskSchema> & { _id: mongoose.Types.ObjectId; createdAt: Date; updatedAt: Date };

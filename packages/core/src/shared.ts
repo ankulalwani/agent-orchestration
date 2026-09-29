@@ -14,6 +14,8 @@ export * from './backoff.js';
 export * from './events.js';
 export * from './execution-prompt.js';
 export * from './capabilities.js';
+export * from './registry.js';
+export * from './taxonomy.js';
 export * from './readiness.js';
 export * from './features.js';
 export * from './repositories.js';

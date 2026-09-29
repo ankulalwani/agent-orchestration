@@ -23,7 +23,7 @@ describe('seed-demo', () => {
     expect(login.user.platformAdmin).toBe(true);
     const actor = { userId: r.userId, organizationId: r.organizationId, role: 'OWNER' as const, correlationId: 't' };
     expect((await s.projects.get(actor, r.projectId)).knowledge).toContain('Run the tests');
-    expect((await s.capabilities.list(actor)).map((c) => c.capabilityId)).toContain('conventional-commits');
+    expect((await s.capabilities.list(actor)).map((c) => c.capabilityId)).toContainEqual(expect.stringMatching(/^@demo-organization[a-z0-9-]*\/conventional-commits$/));
     await expect(seedDemo(s, { email: 'other@demo.test', password: 'demo-password-2' })).rejects.toMatchObject({ code: 'CONFLICT' });
     await clearDatabase();
     await expect(seedDemo(s, { email: 'x@demo.test', password: 'short' })).rejects.toThrow(/at least 10/);

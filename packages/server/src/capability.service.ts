@@ -1,10 +1,22 @@
-import { createHash } from 'node:crypto';
-import { AppError, capabilityManifestSchema, evaluateCapabilityPolicy, resolvePolicy, type CapabilityManifest, type PolicyLayer } from '@ao/core';
-import { Capability, CapabilityInstallation, Organization, Project, Setting, isDuplicateKeyError, oid } from '@ao/database';
+import {
+  addedPermissions,
+  AppError,
+  compareVersions,
+  evaluateCapabilityPolicy,
+  formatRef,
+  isRef,
+  latestSatisfying,
+  PLATFORM_NAMESPACE,
+  resolvePolicy,
+  type CapabilityManifest,
+  type PolicyLayer,
+} from '@ao/core';
+import { Capability, CapabilityInstallation, CapabilityPackage, Organization, Project, Publisher, Setting, Task, oid } from '@ao/database';
 import type { z } from 'zod';
-import type { installCapabilityRequest } from '@ao/contracts';
+import type { installCapabilityRequest, registerCapabilityRequest } from '@ao/contracts';
 import { requirePermission, type Actor } from './context.js';
 import { audit } from './audit.js';
+import { RegistryService, refreshIndexable } from './registry.service.js';
 
 type AnyDoc = Record<string, any>;
 const toCapabilityDto = (c: AnyDoc) => ({
@@ -12,6 +24,7 @@ const toCapabilityDto = (c: AnyDoc) => ({
   capabilityId: c.capabilityId,
   organizationId: c.organizationId ? String(c.organizationId) : null,
   version: c.version,
+  status: c.status ?? 'ACTIVE',
   type: c.type,
   name: c.name,
   description: c.description ?? '',
@@ -26,8 +39,11 @@ const toInstallationDto = (i: AnyDoc) => ({
   id: String(i._id),
   capabilityId: i.capabilityId,
   version: i.version,
+  versionRange: i.versionRange ?? i.version,
   scope: i.scope,
   projectId: i.projectId ? String(i.projectId) : null,
+  userId: i.userId ? String(i.userId) : null,
+  taskId: i.taskId ? String(i.taskId) : null,
   enabled: Boolean(i.enabled),
   status: i.status,
   approvalReasons: i.approvalReasons ?? [],
@@ -36,47 +52,59 @@ const toInstallationDto = (i: AnyDoc) => ({
 });
 
 /**
- * Capability registry (spec §33). Each control-plane installation owns its registry; there is no
- * mandatory global marketplace. Organization capabilities are private to that organization and
- * never transmitted elsewhere (spec §40). Platform capabilities (organizationId = null) are managed
- * by platform admins of this installation.
+ * Installing capabilities (spec §33–§39). Packages come from this installation's registry (see
+ * RegistryService); organization and personal packages are never transmitted elsewhere (spec §40).
+ * Installations exist at ORGANIZATION, USER (one person), PROJECT and TASK scope, pin an exact version
+ * and digest, and keep a range for upgrades.
  */
 export class CapabilityService {
+  constructor(readonly registry = new RegistryService()) {}
+
+  /** Versions of the packages this organization and person own, the platform's, and anything installed. */
   async list(actor: Actor) {
     requirePermission(actor, 'capability.read');
-    const caps = await Capability.find({ $or: [{ organizationId: oid(actor.organizationId) }, { organizationId: null }] }).sort({ capabilityId: 1, version: -1 }).lean();
+    const [owned, installed] = await Promise.all([
+      CapabilityPackage.find(
+        { $or: [{ ownerKind: 'organization', organizationId: oid(actor.organizationId) }, { ownerKind: 'user', userId: oid(actor.userId) }, { ownerKind: 'platform' }] },
+        { ref: 1 },
+      )
+        .limit(2000)
+        .lean(),
+      CapabilityInstallation.distinct('capabilityId', { organizationId: oid(actor.organizationId) }),
+    ]);
+    const refs = [...new Set([...owned.map((p) => p.ref), ...(installed as string[])])];
+    const caps = await Capability.find({ capabilityId: { $in: refs } }).sort({ capabilityId: 1, createdAt: -1 }).lean();
     return caps.map(toCapabilityDto);
   }
 
-  async register(actor: Actor, rawManifest: unknown, isPrivate = true, platform = false) {
-    requirePermission(actor, 'capability.manage');
-    if (platform && !actor.platformAdmin) throw new AppError('FORBIDDEN', 'Only platform administrators can publish platform capabilities');
-    const manifest = capabilityManifestSchema.parse(rawManifest);
-    // Trust can only be self-declared as LOCAL/UNVERIFIED/COMMUNITY; higher trust is granted by platform admins.
-    if (['OFFICIAL', 'VERIFIED'].includes(manifest.trust) && !actor.platformAdmin) manifest.trust = 'LOCAL';
-    // The checksum pins the exact code that was reviewed and approved; workers refuse anything else.
-    if (manifest.plugin) manifest.plugin.sha256 = manifest.plugin.source ? createHash('sha256').update(manifest.plugin.source).digest('hex') : undefined;
-    try {
-      const c = await Capability.create({
-        organizationId: platform ? null : oid(actor.organizationId),
-        capabilityId: manifest.id,
-        version: manifest.version,
-        type: manifest.type,
-        name: manifest.name,
-        description: manifest.description,
-        publisher: manifest.publisher,
-        trust: manifest.trust,
-        permissions: manifest.permissions,
-        private: platform ? false : isPrivate,
-        manifest,
-        createdBy: oid(actor.userId),
-      });
-      await audit(actor, 'capability.register', { type: 'capability', id: `${manifest.id}@${manifest.version}` }, { type: manifest.type, permissions: manifest.permissions });
-      return toCapabilityDto(c.toObject());
-    } catch (e) {
-      if (isDuplicateKeyError(e)) throw new AppError('CONFLICT', `${manifest.id}@${manifest.version} is already registered; bump the version to publish an update`);
-      throw e;
+  /** Register a version (kept for existing clients; see RegistryService.register). */
+  async register(actor: Actor, rawManifest: unknown, isPrivate = true, platform = false, extra: Partial<Pick<z.output<typeof registerCapabilityRequest>, 'owner' | 'visibility' | 'listing'>> = {}) {
+    const r = await this.registry.register(actor, rawManifest, { platform, owner: extra.owner, visibility: extra.visibility ?? (isPrivate ? undefined : 'ORGANIZATION'), listing: extra.listing });
+    const c = await Capability.findOne({ capabilityId: r.ref, version: r.version }).lean();
+    return { ...toCapabilityDto(c!), findings: r.findings };
+  }
+
+  /**
+   * A reference, or a bare name tried as the organization's package, then the platform's, then the
+   * person's own. Only packages the actor may see resolve.
+   */
+  async resolvePackage(actor: Actor, capabilityId: string): Promise<AnyDoc> {
+    const viewer = { userId: actor.userId, organizationId: actor.organizationId };
+    if (isRef(capabilityId)) {
+      const p = await this.registry.findVisible(viewer, capabilityId);
+      if (p) return p;
+    } else {
+      const [org, user] = await Promise.all([
+        Publisher.findOne({ kind: 'organization', organizationId: oid(actor.organizationId) }, { namespace: 1 }).lean(),
+        Publisher.findOne({ kind: 'user', userId: oid(actor.userId) }, { namespace: 1 }).lean(),
+      ]);
+      for (const ns of [org?.namespace, PLATFORM_NAMESPACE, user?.namespace]) {
+        if (!ns) continue;
+        const p = await this.registry.findVisible(viewer, formatRef(ns, capabilityId));
+        if (p) return p;
+      }
     }
+    throw new AppError('NOT_FOUND', 'Capability not found in this installation’s registry');
   }
 
   private async policyFor(actor: Actor, projectId?: string | null) {
@@ -88,41 +116,101 @@ export class CapabilityService {
     return resolvePolicy(platform?.value as PolicyLayer, org?.policy as PolicyLayer, project?.policy as PolicyLayer).capabilities;
   }
 
-  /** Install at ORGANIZATION/PROJECT/TASK scope, applying trust & permission policy (spec §37–§39). */
+  /** Install at ORGANIZATION/USER/PROJECT/TASK scope, applying trust & permission policy (spec §37–§39). */
   async install(actor: Actor, input: z.output<typeof installCapabilityRequest>) {
-    requirePermission(actor, 'capability.install');
+    requirePermission(actor, input.scope === 'USER' ? 'capability.personal' : 'capability.install');
     if (input.scope === 'PROJECT' && !input.projectId) throw new AppError('VALIDATION_FAILED', 'projectId is required for PROJECT scope');
+    if (input.scope === 'TASK' && !input.taskId) throw new AppError('VALIDATION_FAILED', 'taskId is required for TASK scope');
     const orgId = oid(actor.organizationId);
-    const cap = await Capability.findOne({
-      capabilityId: input.capabilityId,
-      $or: [{ organizationId: orgId }, { organizationId: null }],
-      ...(input.version ? { version: input.version } : {}),
-    })
-      .sort({ createdAt: -1 })
-      .lean();
-    if (!cap) throw new AppError('NOT_FOUND', 'Capability not found in this installation’s registry');
+    let projectId = input.scope === 'PROJECT' ? input.projectId! : null;
+    if (input.scope === 'TASK') {
+      const task = await Task.findOne({ _id: oid(input.taskId!, 'Task'), organizationId: orgId }, { projectId: 1 }).lean();
+      if (!task) throw new AppError('NOT_FOUND', 'Task not found');
+      projectId = String(task.projectId);
+    }
+    const pkg = await this.resolvePackage(actor, input.capabilityId);
+    // A personal package is only for its owner: it cannot reach other people's tasks.
+    if (pkg.ownerKind === 'user' && pkg.visibility === 'PRIVATE' && !['USER', 'TASK'].includes(input.scope)) {
+      throw new AppError('VALIDATION_FAILED', 'This is a personal package. Install it for yourself, or publish it to share it.');
+    }
+    const cap = await this.pickVersion(pkg.ref, input.version, input.versionRange);
     const manifest = cap.manifest as CapabilityManifest;
-    const decision = evaluateCapabilityPolicy(manifest, await this.policyFor(actor, input.projectId));
+    const decision = evaluateCapabilityPolicy(manifest, await this.policyFor(actor, projectId));
     if (decision.decision === 'block') throw new AppError('CAPABILITY_BLOCKED', 'Blocked by organization policy', { context: { reasons: decision.reasons } });
     // Admins installing explicitly count as the approval; others go to PENDING_APPROVAL.
     const autoApproved = decision.decision === 'allow' || actor.role === 'ADMIN' || actor.role === 'OWNER';
     const status = autoApproved ? 'ACTIVE' : 'PENDING_APPROVAL';
+    const key = {
+      organizationId: orgId,
+      scope: input.scope,
+      projectId: input.scope === 'PROJECT' ? oid(projectId!) : null,
+      userId: input.scope === 'USER' ? oid(actor.userId) : null,
+      taskId: input.scope === 'TASK' ? oid(input.taskId!) : null,
+      capabilityId: pkg.ref,
+    };
+    const existed = await CapabilityInstallation.exists(key);
     const doc = await CapabilityInstallation.findOneAndUpdate(
-      { organizationId: orgId, scope: input.scope, projectId: input.projectId ? oid(input.projectId) : null, capabilityId: cap.capabilityId },
+      key,
       {
         $set: {
           version: cap.version,
+          versionRange: input.versionRange ?? (input.version && /-/.test(input.version) ? input.version : `^${cap.version}`),
+          digest: cap.digest ?? null,
           enabled: input.enabled,
           status,
           approvalReasons: decision.decision === 'require_approval' ? decision.reasons : [],
           approvedBy: autoApproved ? oid(actor.userId) : null,
           config: stripSecrets(manifest, input.config),
         },
+        $setOnInsert: { installedBy: oid(actor.userId) },
       },
       { upsert: true, new: true },
     ).lean();
-    await audit(actor, 'capability.install', { type: 'capability', id: `${cap.capabilityId}@${cap.version}` }, { scope: input.scope, projectId: input.projectId, status, reasons: decision.decision === 'require_approval' ? decision.reasons : [] });
+    if (!existed) {
+      await CapabilityPackage.updateOne({ ref: pkg.ref }, { $inc: { installs: 1 } });
+      await refreshIndexable({ ref: pkg.ref });
+    }
+    await audit(actor, 'capability.install', { type: 'capability', id: `${pkg.ref}@${cap.version}` }, { scope: input.scope, projectId, taskId: input.taskId, status, reasons: decision.decision === 'require_approval' ? decision.reasons : [] });
     return toInstallationDto(doc!);
+  }
+
+  /** The requested version, or the latest non-yanked one in the range. */
+  private async pickVersion(ref: string, version?: string, range?: string) {
+    if (version) {
+      const v = await Capability.findOne({ capabilityId: ref, version }).lean();
+      if (!v) throw new AppError('NOT_FOUND', `${ref}@${version} does not exist`);
+      if (v.status === 'YANKED') throw new AppError('VALIDATION_FAILED', `${ref}@${version} was withdrawn by its publisher`);
+      return v;
+    }
+    const versions = await Capability.find({ capabilityId: ref, status: { $ne: 'YANKED' } }, { version: 1 }).lean();
+    // Without a range, a package that only has pre-releases still installs its newest one.
+    const best = latestSatisfying(versions.map((v) => v.version), range ?? '*') ?? (range ? null : (versions.map((v) => v.version).sort(compareVersions).at(-1) ?? null));
+    if (!best) throw new AppError('NOT_FOUND', `No installable version of ${ref}${range ? ` matches ${range}` : ''}`);
+    return (await Capability.findOne({ capabilityId: ref, version: best }).lean())!;
+  }
+
+  /**
+   * Move an installation to the latest version in its range. New permissions need an administrator's
+   * approval again, like a first install.
+   */
+  async upgrade(actor: Actor, installationId: string) {
+    const i = await this.ownInstallation(actor, installationId);
+    const current = await Capability.findOne({ capabilityId: i.capabilityId, version: i.version }).lean();
+    const next = await this.pickVersion(i.capabilityId, undefined, i.versionRange ?? '*').catch(() => null);
+    if (!next || next.version === i.version) return toInstallationDto(i);
+    const added = current ? addedPermissions(current.manifest as CapabilityManifest, next.manifest as CapabilityManifest) : [];
+    const decision = evaluateCapabilityPolicy(next.manifest as CapabilityManifest, await this.policyFor(actor, i.projectId ? String(i.projectId) : null));
+    if (decision.decision === 'block') throw new AppError('CAPABILITY_BLOCKED', 'Blocked by organization policy', { context: { reasons: decision.reasons } });
+    const admin = actor.role === 'ADMIN' || actor.role === 'OWNER';
+    const needsApproval = !admin && (added.length > 0 || decision.decision === 'require_approval');
+    const reasons = [...(added.length ? [`Adds permissions: ${added.join(', ')}`] : []), ...(decision.decision === 'require_approval' ? decision.reasons : [])];
+    const d = await CapabilityInstallation.findOneAndUpdate(
+      { _id: i._id },
+      { $set: { version: next.version, digest: next.digest ?? null, status: needsApproval ? 'PENDING_APPROVAL' : i.status, approvalReasons: needsApproval ? reasons : [], ...(needsApproval ? { approvedBy: null } : {}) } },
+      { new: true },
+    ).lean();
+    await audit(actor, 'capability.upgrade', { type: 'capability', id: `${i.capabilityId}@${next.version}` }, { from: i.version, addedPermissions: added });
+    return toInstallationDto(d!);
   }
 
   async approve(actor: Actor, installationId: string) {
@@ -137,25 +225,39 @@ export class CapabilityService {
     return toInstallationDto(d);
   }
 
+  /** An installation the actor may change: their own USER ones, or any other with capability.install. */
+  private async ownInstallation(actor: Actor, installationId: string): Promise<AnyDoc> {
+    const i = await CapabilityInstallation.findOne({ _id: oid(installationId), organizationId: oid(actor.organizationId) }).lean();
+    if (!i) throw new AppError('NOT_FOUND', 'Installation not found');
+    if (i.scope === 'USER') {
+      if (String(i.userId) !== actor.userId) throw new AppError('NOT_FOUND', 'Installation not found');
+      requirePermission(actor, 'capability.personal');
+    } else requirePermission(actor, 'capability.install');
+    return i;
+  }
+
   async setEnabled(actor: Actor, installationId: string, enabled: boolean) {
-    requirePermission(actor, 'capability.install');
-    const d = await CapabilityInstallation.findOneAndUpdate({ _id: oid(installationId), organizationId: oid(actor.organizationId) }, { enabled }, { new: true }).lean();
-    if (!d) throw new AppError('NOT_FOUND', 'Installation not found');
-    await audit(actor, enabled ? 'capability.enable' : 'capability.disable', { type: 'capability', id: d.capabilityId });
-    return toInstallationDto(d);
+    const i = await this.ownInstallation(actor, installationId);
+    const d = await CapabilityInstallation.findOneAndUpdate({ _id: i._id }, { enabled }, { new: true }).lean();
+    await audit(actor, enabled ? 'capability.enable' : 'capability.disable', { type: 'capability', id: i.capabilityId });
+    return toInstallationDto(d!);
   }
 
   async uninstall(actor: Actor, installationId: string) {
-    requirePermission(actor, 'capability.install');
-    const d = await CapabilityInstallation.findOneAndDelete({ _id: oid(installationId), organizationId: oid(actor.organizationId) }).lean();
-    if (!d) throw new AppError('NOT_FOUND', 'Installation not found');
-    await audit(actor, 'capability.uninstall', { type: 'capability', id: d.capabilityId });
+    const i = await this.ownInstallation(actor, installationId);
+    await CapabilityInstallation.deleteOne({ _id: i._id });
+    await CapabilityPackage.updateOne({ ref: i.capabilityId, installs: { $gt: 0 } }, { $inc: { installs: -1 } });
+    await refreshIndexable({ ref: i.capabilityId });
+    await audit(actor, 'capability.uninstall', { type: 'capability', id: i.capabilityId });
   }
 
+  /** Installations the actor can see: everything in the organization except other people's USER ones. */
   async installations(actor: Actor, projectId?: string) {
     requirePermission(actor, 'capability.read');
+    const mine = { scope: 'USER', userId: oid(actor.userId) };
     const f: Record<string, unknown> = { organizationId: oid(actor.organizationId) };
-    if (projectId) f.$or = [{ scope: 'ORGANIZATION' }, { scope: 'PROJECT', projectId: oid(projectId) }];
+    if (projectId) f.$or = [{ scope: 'ORGANIZATION' }, mine, { scope: 'PROJECT', projectId: oid(projectId) }];
+    else f.$or = [{ scope: { $ne: 'USER' } }, mine];
     return (await CapabilityInstallation.find(f).sort({ capabilityId: 1 }).lean()).map(toInstallationDto);
   }
 }

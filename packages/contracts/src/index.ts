@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   AGENT_STATES,
   CAPABILITY_SCOPES,
+  CATEGORY_SLUGS,
   PRIORITIES,
   ROLES,
   TASK_EVENT_TYPES,
@@ -550,18 +551,139 @@ export const approvePairingRequest = z.object({ userCode: z.string().trim().toUp
 export const setProjectPathRequest = z.object({ projectId: id, localPath: z.string().min(1).max(1000) });
 
 // ── Capabilities ──────────────────────────────────────────────────────────────
-export const registerCapabilityRequest = z.object({ manifest: capabilityManifestSchema, private: z.boolean().default(true) });
+export const packageListingInput = z.object({
+  readme: z.string().max(100_000).nullable().optional(),
+  /** Up to three categories from the taxonomy; the classifier treats them as a strong hint. */
+  categories: z.array(z.enum(CATEGORY_SLUGS)).max(3).optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+  repository: z.string().url().max(500).nullable().optional(),
+});
+export const registerCapabilityRequest = z.object({
+  manifest: capabilityManifestSchema,
+  /** Legacy flag: false makes an organization package visible to the organization (the default anyway). */
+  private: z.boolean().default(true),
+  /** Who owns the package: the organization (needs capability.manage) or the signed-in person. */
+  owner: z.enum(['organization', 'user']).default('organization'),
+  /** Before review: PRIVATE (owner only) or ORGANIZATION. Wider visibility comes from publishing. */
+  visibility: z.enum(['PRIVATE', 'ORGANIZATION']).optional(),
+  listing: packageListingInput.optional(),
+});
 export const installCapabilityRequest = z.object({
+  /** "@namespace/name", or a bare name (the organization's own package first, then the platform's). */
   capabilityId: z.string(),
   version: z.string().optional(),
+  /** Range for later upgrades; defaults to "^<installed version>". */
+  versionRange: z.string().max(40).optional(),
   scope: z.enum(CAPABILITY_SCOPES).exclude(['PLATFORM']),
   projectId: z.string().optional(),
+  taskId: z.string().optional(),
   enabled: z.boolean().default(true),
   config: z.record(z.unknown()).default({}),
 });
+export const catalogQuery = z.object({
+  q: z.string().trim().max(200).optional(),
+  type: z.enum(['skill', 'mcp', 'plugin', 'integration']).optional(),
+  category: z.string().max(40).optional(),
+  technology: z.string().max(40).optional(),
+  /** curated: curated packages only. all: everything visible, curated first. */
+  tier: z.enum(['curated', 'all']).default('all'),
+  /** Include the caller's own and their organization's private packages (dashboard only). */
+  mine: z.coerce.boolean().optional(),
+  page: z.coerce.number().int().min(1).max(200).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(24),
+});
+export const publishPackageRequest = z.object({
+  /** false: UNLISTED (installable by reference, not shown in the marketplace). */
+  listed: z.boolean().default(true),
+});
+export const reviewPackageRequest = z.object({
+  decision: z.enum(['approve', 'reject']),
+  notes: z.string().max(4000).default(''),
+  trust: z.enum(['OFFICIAL', 'VERIFIED', 'COMMUNITY']).optional(),
+});
+export const curatePackageRequest = z.object({ curated: z.boolean(), rank: z.number().int().min(0).max(100_000).nullable().optional() });
+export const versionStatusRequest = z.object({ status: z.enum(['ACTIVE', 'DEPRECATED', 'YANKED']), message: z.string().max(500).optional() });
+export const importRegistryRequest = z.object({
+  url: z.string().url().default('https://registry.modelcontextprotocol.io/v0/servers'),
+  maxPages: z.number().int().min(1).max(1000).default(10),
+  cursor: z.string().max(500).optional(),
+});
+export const packageDto = z.object({
+  id,
+  ref: z.string(),
+  namespace: z.string(),
+  name: z.string(),
+  type: z.string(),
+  displayName: z.string(),
+  description: z.string(),
+  readme: z.string().nullable(),
+  categories: z.array(z.string()),
+  technologies: z.array(z.string()),
+  tags: z.array(z.string()),
+  homepage: z.string().nullable(),
+  repository: z.string().nullable(),
+  publisherName: z.string(),
+  publisherVerified: z.boolean(),
+  ownerKind: z.string(),
+  visibility: z.string(),
+  source: z.string(),
+  latestVersion: z.string(),
+  trust: z.string(),
+  permissions: z.array(z.string()),
+  compatibleAgents: z.array(z.string()),
+  curated: z.boolean(),
+  curatedRank: z.number().nullable(),
+  installs: z.number(),
+  deprecated: z.string().nullable(),
+  indexable: z.boolean(),
+  review: z.object({ status: z.string(), listed: z.boolean(), notes: z.string(), findings: z.array(z.object({ level: z.string(), code: z.string(), message: z.string() })) }).optional(),
+  lastPublishedAt: z.string(),
+  createdAt: z.string(),
+});
+export type PackageDto = z.infer<typeof packageDto>;
+export const catalogPageDto = z.object({
+  items: z.array(packageDto),
+  page: z.number(),
+  limit: z.number(),
+  hasMore: z.boolean(),
+  /** Curated matches for the query; the dashboard falls back to all results when this is 0. */
+  curatedCount: z.number(),
+});
+export const facetsQuery = z.object({ type: z.enum(['skill', 'mcp', 'plugin', 'integration']).optional() });
+const facetDto = z.object({ slug: z.string(), label: z.string(), description: z.string().optional(), count: z.number() });
+export const facetsDto = z.object({ categories: z.array(facetDto), technologies: z.array(facetDto) });
+export const suggestRequest = z.object({
+  /** A prompt, task description or project description. */
+  text: z.string().max(20_000).default(''),
+  /** Adds the project's name, description, knowledge and detected stack. */
+  projectId: z.string().optional(),
+  /** Adds the task's title and prompt (and its project). */
+  taskId: z.string().optional(),
+  type: z.enum(['skill', 'mcp', 'plugin', 'integration']).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+export const publicSuggestQuery = z.object({
+  q: z.string().trim().min(1).max(2000),
+  type: z.enum(['skill', 'mcp', 'plugin', 'integration']).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(12),
+});
+export const suggestionDto = z.object({
+  package: packageDto,
+  score: z.number(),
+  reasons: z.array(z.string()),
+  /** Already installed for the task, project, person or organization. */
+  installed: z.boolean(),
+});
+export const suggestionsDto = z.object({
+  items: z.array(suggestionDto),
+  /** What the text was understood to be about. */
+  signals: z.object({ technologies: z.array(z.string()), categories: z.array(z.string()) }),
+});
+export const categoryOverrideRequest = z.object({ categories: z.array(z.enum(CATEGORY_SLUGS)).min(1).max(3).nullable() });
 export const capabilityDto = z.object({
   id,
   capabilityId: z.string(),
+  status: z.string(),
   organizationId: z.string().nullable(),
   version: z.string(),
   type: z.string(),
@@ -578,8 +700,11 @@ export const capabilityInstallationDto = z.object({
   id,
   capabilityId: z.string(),
   version: z.string(),
+  versionRange: z.string(),
   scope: z.enum(CAPABILITY_SCOPES),
   projectId: z.string().nullable(),
+  userId: z.string().nullable(),
+  taskId: z.string().nullable(),
   enabled: z.boolean(),
   status: z.enum(['ACTIVE', 'PENDING_APPROVAL', 'BLOCKED', 'DISABLED']),
   approvalReasons: z.array(z.string()),

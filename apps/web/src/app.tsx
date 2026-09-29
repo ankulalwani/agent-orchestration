@@ -24,6 +24,7 @@ import { AdminFeaturesPage } from './pages/AdminFeatures';
 import { AdminUsersPage } from './pages/AdminUsers';
 import { DeviceLoginPage } from './pages/DeviceLogin';
 import { AdminReleasesPage } from './pages/AdminReleases';
+import { AdminMarketplacePage } from './pages/AdminMarketplace';
 import { Spinner } from '@ao/ui';
 import { WebExtensionProvider, type WebExtension } from './extension';
 
@@ -80,6 +81,7 @@ export function renderWebApp(extension: WebExtension = {}, root: HTMLElement = d
                   <Route path="/admin/features" element={<AdminFeaturesPage />} />
                   <Route path="/admin/users" element={<AdminUsersPage />} />
                   <Route path="/admin/releases" element={<AdminReleasesPage />} />
+                  <Route path="/admin/marketplace" element={<AdminMarketplacePage />} />
                   {extension.routes?.map((r) => <Route key={r.path} path={r.path} element={r.element} />)}
                   <Route path="*" element={<div className="empty"><h3>Page not found</h3></div>} />
                 </Route>

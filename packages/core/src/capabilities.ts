@@ -9,7 +9,11 @@ import type { ExecutionPolicy } from './policy.js';
 export const CAPABILITY_TYPES = ['skill', 'mcp', 'plugin', 'integration'] as const;
 export type CapabilityType = (typeof CAPABILITY_TYPES)[number];
 
-export const CAPABILITY_SCOPES = ['PLATFORM', 'ORGANIZATION', 'PROJECT', 'TASK'] as const;
+/**
+ * Broad to specific. USER holds one person's defaults; PROJECT overrides it so a repository behaves the
+ * same for the whole team; TASK is a one-off addition or removal.
+ */
+export const CAPABILITY_SCOPES = ['PLATFORM', 'ORGANIZATION', 'USER', 'PROJECT', 'TASK'] as const;
 export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
 
 export const TRUST_LEVELS = ['OFFICIAL', 'VERIFIED', 'COMMUNITY', 'UNVERIFIED', 'LOCAL'] as const;
@@ -137,20 +141,22 @@ export interface ScopedCapability {
   manifest: CapabilityManifest;
   scope: CapabilityScope;
   enabled: boolean;
+  /** Registry reference ("@namespace/name"); identifies the capability across publishers. Defaults to manifest.id. */
+  ref?: string;
   /** Configuration values (non-secret) and secret references. */
   config?: Record<string, unknown>;
 }
 
-const SCOPE_RANK: Record<CapabilityScope, number> = { PLATFORM: 0, ORGANIZATION: 1, PROJECT: 2, TASK: 3 };
+export const SCOPE_RANK: Record<CapabilityScope, number> = { PLATFORM: 0, ORGANIZATION: 1, USER: 2, PROJECT: 3, TASK: 4 };
 
 /**
- * Effective capabilities = platform + org + project + task, where a more specific scope overrides a
+ * Effective capabilities = platform + org + user + project + task, where a more specific scope overrides a
  * broader one for the same id (including disabling it), spec §34.
  */
 export function resolveEffectiveCapabilities(items: ScopedCapability[]): ScopedCapability[] {
   const byId = new Map<string, ScopedCapability>();
   for (const item of [...items].sort((a, b) => SCOPE_RANK[a.scope] - SCOPE_RANK[b.scope])) {
-    byId.set(item.manifest.id, item);
+    byId.set(item.ref ?? item.manifest.id, item);
   }
   return [...byId.values()].filter((c) => c.enabled);
 }
