@@ -1,0 +1,39 @@
+{
+  "name": "@ao/web",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ao/contracts": "workspace:*",
+    "@ao/core": "workspace:*",
+    "@ao/ui": "workspace:*",
+    "@tanstack/react-query": "^5.62.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.5"
+  },
+  "exports": {
+    "./app": "./src/app.tsx",
+    "./extension": "./src/extension.tsx",
+    "./layout": "./src/Layout.tsx",
+    "./lib/api": "./src/lib/api.ts",
+    "./lib/session": "./src/lib/session.tsx",
+    "./lib/format": "./src/lib/format.tsx",
+    "./app.css": "./src/app.css"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@ao/queue",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "@ao/core": "workspace:*", "bullmq": "^5.34.0", "ioredis": "^5.4.2" }
+}

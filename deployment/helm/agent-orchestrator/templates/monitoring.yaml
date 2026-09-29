@@ -1,0 +1,63 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+# Prometheus Operator scraping of /metrics (CLOUD-006). Requires METRICS_ENABLED=true.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ao.name" . }}
+  labels:
+    {{- include "ao.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels: {{- include "ao.labels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "ao.name" . }}
+  labels:
+    {{- include "ao.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: agent-orchestrator
+      rules:
+        - alert: AgentOrchestratorDown
+          expr: absent(up{job=~".*agent-orchestrator.*"} == 1)
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: No Agent Orchestrator API instance is up
+        - alert: AgentOrchestratorServerErrors
+          expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1) > 0.05
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: More than 5% of API requests fail with a server error
+        - alert: AgentOrchestratorNoWorkersOnline
+          expr: max(worker_online_count) == 0 and max(queue_depth) > 0
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: Tasks are queued but no worker is online
+        - alert: AgentOrchestratorTasksFailing
+          expr: sum(increase(tasks_failed_total[1h])) > {{ .Values.monitoring.prometheusRule.failedTasksPerHour }}
+          labels: { severity: warning }
+          annotations:
+            summary: Many tasks failed in the last hour
+        - alert: AgentOrchestratorLeasesExpiring
+          expr: sum(increase(lease_expirations_total[30m])) > 5
+          labels: { severity: warning }
+          annotations:
+            summary: Workers are losing tasks (leases expiring); check worker connectivity
+{{- end }}

@@ -1,0 +1,20 @@
+**/node_modules
+**/dist
+.deploy
+.git
+.turbo
+coverage
+test-results
+playwright-report
+**/.agent-orchestrator
+.env
+.env.*
+!.env.example
+# Local tooling and scratch output (large, never needed in images)
+.tools
+**/.vscode-test
+.tmp-e2e
+.tmp-qa
+**/.terraform
+**/*.vsix
+apps/vscode/test

@@ -1,0 +1,42 @@
+{
+  "name": "agent-orchestrator",
+  "private": true,
+  "version": "0.1.1",
+  "type": "module",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:api": "pnpm --filter @ao/api dev",
+    "dev:worker": "pnpm --filter @ao/worker dev",
+    "dev:web": "pnpm --filter @ao/web dev"
+  },
+  "devDependencies": {
+    "@ao/api": "workspace:*",
+    "@ao/contracts": "workspace:*",
+    "@ao/core": "workspace:*",
+    "@ao/database": "workspace:*",
+    "@ao/queue": "workspace:*",
+    "@ao/server": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1",
+    "@types/node": "^22.10.0",
+    "@types/smtp-server": "^3.5.10",
+    "@types/ws": "^8.5.13",
+    "jose": "^5.9.6",
+    "playwright": "1",
+    "smtp-server": "^3.13.6",
+    "tar": "^7.4.3",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "ws": "^8.18.0"
+  }
+}

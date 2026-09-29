@@ -1,0 +1,5 @@
+# Automatic HTTPS (Let's Encrypt) in front of the control plane. WebSockets are proxied transparently.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy control-plane:4000
+}

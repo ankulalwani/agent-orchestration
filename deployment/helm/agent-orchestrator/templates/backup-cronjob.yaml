@@ -1,0 +1,103 @@
+{{- if .Values.backup.enabled }}
+# Scheduled MongoDB backups (CLOUD-006): mongodump --archive --gzip, kept on a volume (with retention)
+# or uploaded to S3-compatible storage. Restore: docs/self-hosting/backup-restore.md.
+{{- if and (not .Values.backup.s3.bucket) (not .Values.backup.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ao.name" . }}-backups
+  labels: {{- include "ao.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.backup.persistence.size }}
+  {{- with .Values.backup.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ao.name" . }}-backup
+  labels: {{- include "ao.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: agent-orchestrator-backup
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          initContainers:
+            - name: dump
+              image: {{ .Values.backup.image | quote }}
+              command:
+                - sh
+                - -c
+                - mongodump --uri="$MONGODB_URI" --archive="/work/agent-orchestrator-$(date -u +%Y%m%dT%H%M%SZ).archive.gz" --gzip
+              env:
+                - name: MONGODB_URI
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret }}, key: MONGODB_URI }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+              securityContext:
+                allowPrivilegeEscalation: false
+          containers:
+            {{- if .Values.backup.s3.bucket }}
+            - name: upload
+              image: {{ .Values.backup.s3.image | quote }}
+              command:
+                - sh
+                - -c
+                - aws s3 cp /work/ "s3://{{ .Values.backup.s3.bucket }}/{{ .Values.backup.s3.prefix }}" --recursive{{ with .Values.backup.s3.endpoint }} --endpoint-url {{ . }}{{ end }}
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: AWS_DEFAULT_REGION
+                  value: {{ .Values.backup.s3.region | quote }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret }}, key: S3_ACCESS_KEY_ID }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret }}, key: S3_SECRET_ACCESS_KEY }
+              volumeMounts:
+                - { name: work, mountPath: /work }
+              securityContext:
+                allowPrivilegeEscalation: false
+            {{- else }}
+            - name: keep
+              image: {{ .Values.backup.image | quote }}
+              command:
+                - sh
+                - -c
+                - cp /work/*.archive.gz /backups/ && find /backups -name "*.archive.gz" -mtime +{{ .Values.backup.retentionDays }} -delete && ls -l /backups
+              volumeMounts:
+                - { name: work, mountPath: /work }
+                - { name: backups, mountPath: /backups }
+              securityContext:
+                allowPrivilegeEscalation: false
+            {{- end }}
+          volumes:
+            - name: work
+              emptyDir: {}
+            {{- if not .Values.backup.s3.bucket }}
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ .Values.backup.persistence.existingClaim | default (printf "%s-backups" (include "ao.name" .)) }}
+            {{- end }}
+{{- end }}

@@ -1,0 +1,123 @@
+{
+  "name": "agent-orchestrator-vscode",
+  "displayName": "Agent Orchestrator",
+  "description": "Hand work to coding agents from VS Code: tasks from a selection, branch reviews, and your tasks' progress.",
+  "version": "0.1.1",
+  "private": true,
+  "publisher": "agent-orchestrator",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "configuration": {
+      "title": "Agent Orchestrator",
+      "properties": {
+        "agentOrchestrator.serverUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Control plane URL, e.g. https://orchestrator.example.com"
+        },
+        "agentOrchestrator.webUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Dashboard URL for task links (defaults to the server URL)"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "agentOrchestrator.signIn",
+        "title": "Sign in with an API token",
+        "category": "Agent Orchestrator"
+      },
+      {
+        "command": "agentOrchestrator.signOut",
+        "title": "Sign out",
+        "category": "Agent Orchestrator"
+      },
+      {
+        "command": "agentOrchestrator.createTask",
+        "title": "Create task…",
+        "category": "Agent Orchestrator"
+      },
+      {
+        "command": "agentOrchestrator.createTaskFromSelection",
+        "title": "Create task from selection…",
+        "category": "Agent Orchestrator"
+      },
+      {
+        "command": "agentOrchestrator.reviewBranch",
+        "title": "Review the current branch",
+        "category": "Agent Orchestrator"
+      },
+      {
+        "command": "agentOrchestrator.chooseProject",
+        "title": "Choose project for this workspace",
+        "category": "Agent Orchestrator"
+      },
+      {
+        "command": "agentOrchestrator.refresh",
+        "title": "Refresh",
+        "category": "Agent Orchestrator",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentOrchestrator.openTask",
+        "title": "Open in browser",
+        "category": "Agent Orchestrator"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "agentOrchestrator.tasks",
+          "name": "Agent tasks"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentOrchestrator.tasks",
+        "contents": "Connect to your Agent Orchestrator server with a personal API token (dashboard: Settings → Your account → API tokens).\n[Sign in](command:agentOrchestrator.signIn)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "agentOrchestrator.createTaskFromSelection",
+          "when": "editorHasSelection",
+          "group": "agentOrchestrator"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "agentOrchestrator.refresh",
+          "when": "view == agentOrchestrator.tasks",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentOrchestrator.openTask",
+          "when": "view == agentOrchestrator.tasks && viewItem == task"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "package": "npx --yes @vscode/vsce package --no-dependencies",
+    "test:vscode": "node test/run.mjs"
+  },
+  "devDependencies": {
+    "@types/vscode": "~1.90.0",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

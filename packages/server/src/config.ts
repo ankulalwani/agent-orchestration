@@ -1,0 +1,107 @@
+import { z } from 'zod';
+
+/**
+ * Control-plane configuration from environment (spec §104, §122).
+ * Self-hosted defaults impose no task/worker/project limits (spec §2.1) and make no outbound calls.
+ */
+const bool = z
+  .enum(['true', 'false', '1', '0', 'yes', 'no'])
+  .transform((v) => ['true', '1', 'yes'].includes(v));
+
+export const serverConfigSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /** `cloud`: a shared, multi-tenant installation. Only changes defaults (see REQUIRE_PUBLIC_CALLBACK_URLS). */
+  DEPLOYMENT_MODE: z.enum(['self-hosted', 'cloud']).default('self-hosted'),
+  PORT: z.coerce.number().int().default(4000),
+  HOST: z.string().default('0.0.0.0'),
+  PUBLIC_URL: z.string().url().default('http://localhost:4000'),
+  WEB_URL: z.string().url().default('http://localhost:5173'),
+  MONGODB_URI: z.string().min(1).default('mongodb://127.0.0.1:27017/agent_orchestrator'),
+  REDIS_URL: z.string().optional(),
+  /** ≥32 chars. Signs access tokens. */
+  JWT_SECRET: z.string().min(32),
+  /** 32-byte key, base64 or hex. Encrypts control-plane secrets at rest (spec §59). */
+  ENCRYPTION_KEY: z.string().min(32),
+  /** Comma-separated former ENCRYPTION_KEY values, kept only to decrypt and re-encrypt (key rotation). */
+  ENCRYPTION_KEYS_PREVIOUS: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((k) => k.trim()).filter(Boolean)),
+  ACCESS_TOKEN_TTL_SEC: z.coerce.number().int().default(900),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().default(30),
+  CORS_ORIGINS: z.string().default('http://localhost:5173'),
+  ALLOW_REGISTRATION: bool.default('true'),
+  /**
+   * The first account created becomes a platform administrator, so a new installation can be set up from the
+   * browser. Turn off where the public can sign up first (a shared service), and grant the role with
+   * `node dist/main.js platform-admin <email>` instead.
+   */
+  FIRST_USER_IS_PLATFORM_ADMIN: bool.default('true'),
+  REQUIRE_EMAIL_VERIFICATION: bool.default('false'),
+  TRUST_PROXY: bool.default('false'),
+  /**
+   * Integration callback URLs must be public https addresses, so tenants cannot make the server call its own
+   * network (SSRF). Unset: on when DEPLOYMENT_MODE=cloud, off otherwise. See `requirePublicCallbackUrls()`.
+   */
+  REQUIRE_PUBLIC_CALLBACK_URLS: bool.optional(),
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(300),
+  AUTH_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().default(20),
+  /** Error tracking (spec §61), off unless set: a Sentry-compatible DSN and/or a JSON webhook. */
+  ERROR_TRACKING_DSN: z.string().url().optional(),
+  ERROR_TRACKING_WEBHOOK_URL: z.string().url().optional(),
+  ERROR_TRACKING_ENVIRONMENT: z.string().optional(),
+  /** Service name attached to error reports. */
+  ERROR_TRACKING_SERVICE: z.string().default('api'),
+  /**
+   * OAuth / OpenID Connect sign-in. Each provider is off unless its client id and secret are set.
+   * Redirect URI to register with the provider: `${PUBLIC_URL}/api/v1/auth/oauth/<google|github|oidc>/callback`.
+   */
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  /** GitHub Enterprise Server: e.g. https://github.example.com and https://github.example.com/api/v3 */
+  GITHUB_URL: z.string().url().default('https://github.com'),
+  GITHUB_API_URL: z.string().url().default('https://api.github.com'),
+  /** Any OpenID Connect provider (Microsoft Entra ID, Okta, Keycloak, Auth0, GitLab, …). */
+  OIDC_ISSUER: z.string().url().optional(),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
+  OIDC_DISPLAY_NAME: z.string().default('Single sign-on'),
+  OIDC_SCOPES: z.string().default('openid email profile'),
+  SMTP_URL: z.string().optional(),
+  SMTP_FROM: z.string().default('Agent Orchestrator <no-reply@localhost>'),
+  /** Expo push is an outbound call to a third party: disabled unless explicitly enabled (spec §127). */
+  EXPO_PUSH_ENABLED: bool.default('false'),
+  S3_ENDPOINT: z.string().optional(),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_BUCKET: z.string().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_FORCE_PATH_STYLE: bool.default('true'),
+  ARTIFACT_DIR: z.string().default('./data/artifacts'),
+  SCHEDULER_INTERVAL_MS: z.coerce.number().int().default(5000),
+  SWEEP_INTERVAL_MS: z.coerce.number().int().default(10_000),
+  METRICS_ENABLED: bool.default('true'),
+  /** Anonymous usage telemetry; never contains code, prompts or secrets. Off by default (spec §128). */
+  TELEMETRY_ENABLED: bool.default('false'),
+  FEATURE_FLAGS: z.string().default(''),
+});
+export type ServerConfig = z.infer<typeof serverConfigSchema>;
+
+export function loadServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+  const parsed = serverConfigSchema.safeParse(env);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+    throw new Error(`Invalid control-plane configuration:\n${issues}`);
+  }
+  return parsed.data;
+}
+
+export function requirePublicCallbackUrls(config: Pick<ServerConfig, 'REQUIRE_PUBLIC_CALLBACK_URLS' | 'DEPLOYMENT_MODE'>): boolean {
+  return config.REQUIRE_PUBLIC_CALLBACK_URLS ?? config.DEPLOYMENT_MODE === 'cloud';
+}
+
+export function featureEnabled(config: Pick<ServerConfig, 'FEATURE_FLAGS'>, flag: string): boolean {
+  return config.FEATURE_FLAGS.split(',').map((s) => s.trim()).includes(flag);
+}

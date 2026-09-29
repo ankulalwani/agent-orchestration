@@ -1,0 +1,38 @@
+{
+  "name": "@ao/worker",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ao-worker": "./dist/main.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ao/agents": "workspace:*",
+    "@ao/contracts": "workspace:*",
+    "@ao/core": "workspace:*",
+    "@ao/git": "workspace:*",
+    "@ao/providers": "workspace:*",
+    "@ao/verification": "workspace:*",
+    "@fastify/static": "^8.0.3",
+    "@napi-rs/keyring": "^1.1.0",
+    "fastify": "^5.2.0",
+    "pidusage": "^3.0.2",
+    "pino": "^9.5.0",
+    "tar": "^7.4.3",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
+  }
+}

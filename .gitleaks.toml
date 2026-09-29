@@ -1,0 +1,15 @@
+# Secret scanning (CI: gitleaks). Default rules, plus an allowlist for test files whose purpose is to prove
+# that secret-shaped strings are redacted, or that start throwaway local servers with made-up credentials.
+# Every value in these files is synthetic (reviewed 2026-09-29). Keep this list to individual files.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic secret-shaped fixtures in redaction and local-server tests"
+paths = [
+  '''^packages/core/src/redact\.test\.ts$''',
+  '''^packages/core/src/misc\.test\.ts$''',
+  '''^tests/integration/error-tracking\.test\.ts$''',
+  '''^tests/integration/s3\.test\.ts$''',
+  '''^tests/integration/task-engine\.test\.ts$''',
+]

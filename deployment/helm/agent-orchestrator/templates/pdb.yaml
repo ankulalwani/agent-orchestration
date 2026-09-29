@@ -1,0 +1,12 @@
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) }}
+# Keeps one API instance up during node drains and upgrades.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ao.name" . }}
+  labels: {{- include "ao.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {{- include "ao.labels" . | nindent 6 }}
+{{- end }}

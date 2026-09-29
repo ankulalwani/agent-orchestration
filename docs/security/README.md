@@ -1,0 +1,25 @@
+# Security model
+
+## Control plane
+- **Authentication:** passwords hashed with scrypt; optional sign-in with Google, GitHub or any OpenID Connect provider (authorization code flow with PKCE, single-use `state` and `nonce`, ID tokens verified against the provider's keys, no open redirects); optional two-factor authentication with an authenticator app (TOTP: each code accepted once, 10 one-time recovery codes stored hashed, the secret encrypted, wrong codes count towards lockout; for a lost device an administrator can turn it off: server administrators for anyone, organization owners and admins only for members who belong to no other organization and don't outrank them, always with a reason, sign-out everywhere, an email to the person and an audit entry); account lockout after repeated failures; login timing does not reveal whether an email exists; rotating refresh tokens with reuse detection.
+- **Authorization:** RBAC (`OWNER` > `ADMIN` > `MANAGER` > `DEVELOPER` > `VIEWER`) enforced in the service layer on every operation. The UI only mirrors it. Users cannot grant roles above their own.
+- **Tenant isolation:** organization IDs come from verified membership, never from request bodies. Every organization-owned query is scoped. Tested with cross-organization access attempts.
+- **Transport and browser:** Helmet security headers and CSP, CORS allow-list, rate limits (stricter on auth routes), and CSRF protection via `SameSite=Strict` cookie plus a required custom header.
+- **Secrets:** organization secrets are encrypted with AES-256-GCM using `ENCRYPTION_KEY` and only ever returned masked. Each value records which key encrypted it, so the key can be rotated (see [self-hosting](../self-hosting/README.md#rotating-encryption_key)). Secret-like values are redacted from logs, events, errors and verification output.
+- **Audit:** append-only audit log. Update and delete are blocked at the model layer.
+
+## Worker (a sensitive execution boundary)
+- **Local UI/API:** bound to `127.0.0.1` by default. Requires a per-worker token, rejects foreign `Host` headers (DNS rebinding) and refuses CORS preflights.
+- **Credentials:** stored in the OS credential store (encrypted-file fallback), never in plaintext configuration.
+- **Project isolation:** agents run only inside mapped project paths; path traversal and symlink escapes are rejected.
+- **Environment:** agents receive an allow-listed environment plus the selected provider's credential. Unrelated secrets in the worker's environment (for example `GITHUB_TOKEN`) are not passed on.
+- **Command execution:** argv arrays with `shell: false`. Windows `.cmd` shims are validated so arguments cannot inject commands. Prompts go through stdin or files, never the command line.
+- **Git:** force-push, `reset --hard`, `clean`, branch deletion and discarding changes are refused. Pre-existing uncommitted user changes are never committed.
+- **Leases:** a worker that lost its lease is fenced off and cannot change the task any more.
+- **Environment profiles (project → Environments):** a task that targets an environment gets that profile's variables and the values of its referenced secrets as environment variables, for the agent and the verification steps. Secrets are sent to the worker only for that task, and each delivery is audited by name. Their values are removed from recorded agent output, tool summaries and verification output. A reference to a secret that doesn't exist stops the task with `RECOVERY_REQUIRED` instead of running with an empty value. `requiresApproval` makes every task in that environment wait for approval (production also follows `requireApprovalFor.production`).
+- **OS sandbox for agents (policy `sandbox`):** `off` (default), `preferred` or `required`. On Linux the agent runs under bubblewrap, and on macOS under `sandbox-exec`. The whole file system stays readable, but writes are allowed only to the project, temporary folders and the agent's own state folders (for example `~/.claude`, `~/.codex`, `~/.cache`). `~/.ssh`, `~/.gnupg`, `~/.netrc`, `~/.git-credentials`, `~/.docker`, `~/.kube`, `~/.azure`, `~/.password-store` and the worker's data folder are hidden. `network: false` also cuts network access (the agent then can't reach its model API, so this only suits local models). `writable` and `hidden` add paths. Workers with a sandbox advertise the `os-sandbox` tool, so a task can require one. With `required`, a task on a worker without a sandbox stops with `RECOVERY_REQUIRED` and the reason. Windows has no sandbox: `preferred` runs unsandboxed there and records it in the task's recovery notes. Cloud credential files (`~/.aws`, gcloud) stay readable, because Bedrock and Vertex agents may use them.
+
+## Known gaps
+
+See [KNOWN_LIMITATIONS](../KNOWN_LIMITATIONS.md):
+- the OS sandbox is off by default and not available on Windows. It has only been verified with a stand-in for bubblewrap, not on real Linux or macOS systems. Without it, agents run with the user's OS permissions, and enforcement relies on the agent's own permission mode plus the project-path and environment controls above.

@@ -1,0 +1,22 @@
+{
+  "name": "@ao/agents",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ao/core": "workspace:*",
+    "@ao/providers": "workspace:*",
+    "pidusage": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/pidusage": "^2.0.5"
+  }
+}

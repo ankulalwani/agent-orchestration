@@ -1,0 +1,43 @@
+# Production overrides: TLS via Caddy, no direct exposure of the app port, resource limits.
+#   DOMAIN=orchestrator.example.com docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+services:
+  control-plane:
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY: "true"
+      PUBLIC_URL: https://${DOMAIN:?set DOMAIN}
+      WEB_URL: https://${DOMAIN}
+      CORS_ORIGINS: https://${DOMAIN}
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  mongo:
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  caddy:
+    image: caddy:2
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deployment/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - control-plane
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
