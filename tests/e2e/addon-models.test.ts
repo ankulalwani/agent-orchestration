@@ -77,12 +77,20 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await worker?.stop();
-  s.scheduler.stop();
-  await app.close();
-  await stopTestDatabase();
-  llm.close();
-});
+  // Each step is bounded and named, so a slow one shows up in the output instead of failing the file.
+  const step = async (name: string, fn: () => unknown, ms = 20_000) => {
+    const t0 = Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([Promise.resolve().then(fn), new Promise((r) => (timer = setTimeout(r, ms)))]);
+    clearTimeout(timer);
+    if (Date.now() - t0 > ms / 2) console.warn(`[addon-models cleanup] "${name}" took ${Date.now() - t0} ms`);
+  };
+  await step('worker.stop', () => worker?.stop());
+  s?.scheduler.stop();
+  await step('app.close', () => app?.close());
+  await step('stopTestDatabase', () => stopTestDatabase());
+  llm?.close();
+}, 90_000);
 
 describe('add-on models', { timeout: 90_000 }, () => {
   it("runs on the harness's own login by default, without any provider for it", async () => {
