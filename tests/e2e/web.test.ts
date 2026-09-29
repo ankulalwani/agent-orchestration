@@ -373,12 +373,12 @@ describe.runIf(hasBuild)('web dashboard (browser)', () => {
     // Reuse the session via cookie from the main page context.
     await mobile.context().addCookies(await page.context().cookies());
     await mobile.goto(base + '/tasks');
-    await mobile.getByRole('heading', { name: 'Tasks' }).waitFor();
+    await mobile.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
     const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
     await mobile.getByRole('button', { name: 'Open menu' }).click();
     await mobile.getByRole('link', { name: 'Workers' }).click();
-    await mobile.getByRole('heading', { name: 'Workers' }).waitFor();
+    await mobile.getByRole('heading', { name: 'Workers', exact: true }).waitFor();
     await mobile.screenshot({ path: path.join(shots, '05-mobile.png') });
     await mobile.close();
   }, 60_000);

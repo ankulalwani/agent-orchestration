@@ -62,7 +62,7 @@ describe.runIf(fs.existsSync(VITE))('web dashboard extension point (browser)', (
     await page.getByText('active tasks: 0').waitFor();
     // Core pages are unchanged.
     await nav.getByRole('link', { name: 'Tasks' }).click();
-    await page.getByRole('heading', { name: 'Tasks' }).waitFor();
+    await page.getByRole('heading', { name: 'Tasks', exact: true }).waitFor();
     expect(errors).toEqual([]);
   }, 120_000);
 });
