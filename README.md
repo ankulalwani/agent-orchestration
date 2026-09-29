@@ -6,7 +6,7 @@
 
 Self-hostable · any coding agent · any model provider · your Git policy
 
-[![CI](https://github.com/ankulalwani/agent-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/ankulalwani/agent-orchestrator/actions/workflows/ci.yml)
+[![CI](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml/badge.svg)](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml)
 ![Version](https://img.shields.io/badge/version-0.1.2-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
 ![License](https://img.shields.io/badge/license-pending-orange)
@@ -58,7 +58,7 @@ The completion report separates **verified facts** (what your checks proved) fro
 ### Self-host with Docker Compose
 
 ```bash
-git clone https://github.com/ankulalwani/agent-orchestrator.git && cd agent-orchestrator
+git clone https://github.com/ankulalwani/agent-orchestration.git && cd agent-orchestration
 cp .env.example .env              # then set JWT_SECRET and ENCRYPTION_KEY (see below)
 docker compose up -d --build      # control plane + dashboard, MongoDB, Redis
 curl http://localhost:4000/healthz

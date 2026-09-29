@@ -16,7 +16,7 @@ const FORBIDDEN_PATHS = [/^cloud\//, /(^|\/)(billing|subscriptions?|provisioning
 
 /** Content that must not appear in tracked files. */
 const FORBIDDEN_CONTENT = [
-  { rule: 'private package', re: /@ao\/cloud|agent-orchestrator-cloud/ },
+  { rule: 'private package', re: /@ao\/cloud|agent-orchestra(?:tor|tion)-cloud/ },
   { rule: 'import from a sibling private checkout', re: /from\s+['"](\.\.\/)+(cloud|private|saas)[/'"]/ },
   { rule: 'payment provider', re: /\bstripe\b|STRIPE_|\bpaddle\b|\bchargebee\b|\bbraintree\b/i },
 ];

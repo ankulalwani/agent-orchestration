@@ -6,7 +6,7 @@ in [self-hosting/README.md](self-hosting/README.md).
 ## 1. Control plane (Docker Compose)
 
 ```bash
-git clone https://github.com/ankulalwani/agent-orchestrator.git && cd agent-orchestrator
+git clone https://github.com/ankulalwani/agent-orchestration.git && cd agent-orchestration
 cp .env.example .env
 # Set the two required secrets:
 node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'))"

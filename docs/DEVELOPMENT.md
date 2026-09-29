@@ -14,7 +14,7 @@ suites, test tools and conventions: [development/README.md](development/README.m
 ## 2. Install and test
 
 ```bash
-git clone https://github.com/ankulalwani/agent-orchestrator.git && cd agent-orchestrator
+git clone https://github.com/ankulalwani/agent-orchestration.git && cd agent-orchestration
 pnpm install
 pnpm typecheck
 pnpm test                          # unit, integration, e2e, chaos, browser (browser tests need step 3)
