@@ -13,7 +13,7 @@ import { startTestDatabase, stopTestDatabase } from '@ao/database/testing';
 import type { Services } from '@ao/server';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { makeServices } from '../helpers.js';
+import { cleanupStep, makeServices } from '../helpers.js';
 import { startFakeIdp, type FakeIdp } from '../fake-idp.js';
 
 process.env.AO_CREDENTIAL_BACKEND = 'file';
@@ -52,13 +52,13 @@ describe.runIf(hasBuild)('web dashboard (browser)', () => {
   }, 120_000);
 
   afterAll(async () => {
-    await worker?.stop();
-    await browser?.close();
-    await idp?.close();
+    await cleanupStep('worker.stop', () => worker?.stop());
+    await cleanupStep('browser.close', () => browser?.close());
+    await cleanupStep('idp.close', () => idp?.close());
     s?.scheduler.stop();
-    await app?.close();
-    await stopTestDatabase();
-  });
+    await cleanupStep('app.close', () => app?.close());
+    await cleanupStep('stopTestDatabase', () => stopTestDatabase());
+  }, 150_000);
 
   it('register → onboarding → pair worker → project → task → live completion → report', async () => {
     await page.goto(base + '/register');

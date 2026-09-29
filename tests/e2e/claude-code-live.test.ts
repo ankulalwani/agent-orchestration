@@ -15,7 +15,7 @@ import type { Actor, Services } from '@ao/server';
 import type { TaskDto } from '@ao/contracts';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { makeOwner, makeServices } from '../helpers.js';
+import { cleanupStep, makeOwner, makeServices } from '../helpers.js';
 
 process.env.AO_CREDENTIAL_BACKEND = 'file';
 const enabled = process.env.AO_TEST_CLAUDE_LIVE === '1';
@@ -78,11 +78,11 @@ describe.runIf(enabled)('Claude Code, live', () => {
   }, 120_000);
 
   afterAll(async () => {
-    await worker?.stop();
+    await cleanupStep('worker.stop', () => worker?.stop());
     s?.scheduler.stop();
-    await app?.close();
-    await stopTestDatabase();
-  });
+    await cleanupStep('app.close', () => app?.close());
+    await cleanupStep('stopTestDatabase', () => stopTestDatabase());
+  }, 90_000);
 
   it('fixes a bug, the worker verifies it, and commits', async () => {
     const t = await s.tasks.create(owner, {

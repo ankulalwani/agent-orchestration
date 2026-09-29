@@ -11,7 +11,7 @@ import { interruptTestDatabase, resumeTestDatabase, startTestDatabase, stopTestD
 import type { Actor, Services } from '@ao/server';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { expireLease, makeOwner, makeServices } from '../helpers.js';
+import { cleanupStep, expireLease, makeOwner, makeServices } from '../helpers.js';
 
 process.env.AO_CREDENTIAL_BACKEND = 'file';
 
@@ -82,11 +82,11 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  for (const w of workers) await w.stop().catch(() => undefined);
+  for (const w of workers) await cleanupStep('worker.stop', () => w.stop());
   s.scheduler.stop();
-  await app.close().catch(() => undefined);
-  await stopTestDatabase();
-});
+  await cleanupStep('app.close', () => app.close());
+  await cleanupStep('stopTestDatabase', () => stopTestDatabase());
+}, 120_000);
 
 describe('chaos', () => {
   it('control plane outage mid-task: worker keeps working, buffers events, resyncs, completes', async () => {

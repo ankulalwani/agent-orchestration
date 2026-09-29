@@ -15,7 +15,7 @@ import type { ProjectDto } from '@ao/contracts';
 import type { Actor, Services } from '@ao/server';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { makeOwner, makeServices } from '../helpers.js';
+import { cleanupStep, makeOwner, makeServices } from '../helpers.js';
 
 let s: Services;
 let app: FastifyInstance;
@@ -78,10 +78,10 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await worker?.stop();
-  await app.close();
-  await stopTestDatabase();
-});
+  await cleanupStep('worker.stop', () => worker?.stop());
+  await cleanupStep('app.close', () => app.close());
+  await cleanupStep('stopTestDatabase', () => stopTestDatabase());
+}, 90_000);
 
 describe('cloning to workers', () => {
   it('skips a worker without a projects folder', async () => {

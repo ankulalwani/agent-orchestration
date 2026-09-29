@@ -13,7 +13,7 @@ import { createServices, type Actor, type Services } from '@ao/server';
 import type { LiveMessage } from '@ao/contracts';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { makeOwner, testConfig } from '../helpers.js';
+import { cleanupStep, makeOwner, testConfig } from '../helpers.js';
 import { REDIS_BIN, startRedis, type TestRedis } from '../redis-helper.js';
 
 process.env.AO_CREDENTIAL_BACKEND = 'file';
@@ -104,17 +104,17 @@ describe.runIf(REDIS_BIN)('two API instances on real Redis', () => {
   }, 120_000);
 
   afterAll(async () => {
-    await worker?.stop().catch(() => undefined);
+    await cleanupStep('worker.stop', () => worker?.stop());
     for (const i of [A, B]) {
       if (!i) continue;
       i.s.scheduler.stop();
       i.s.live.stop();
-      await i.app.close().catch(() => undefined);
-      await i.s.queue.close().catch(() => undefined);
+      await cleanupStep('app.close', () => i.app.close());
+      await cleanupStep('queue.close', () => i.s.queue.close());
     }
-    await redis?.kill();
-    await stopTestDatabase();
-  });
+    await cleanupStep('redis.kill', () => redis?.kill());
+    await cleanupStep('stopTestDatabase', () => stopTestDatabase());
+  }, 180_000);
 
   it('B knows about a worker connected to A, dispatches to it, and sees its live updates', async () => {
     // The worker sees its socket open slightly before A has processed its hello and registered it.

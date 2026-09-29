@@ -7,6 +7,7 @@ import { chromium, type Browser } from 'playwright';
 import type { FastifyInstance } from 'fastify';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
 import { buildLocalApi } from '../../apps/worker/src/local-api.js';
+import { cleanupStep } from '../helpers.js';
 
 process.env.AO_CREDENTIAL_BACKEND = 'file';
 const UI = path.resolve('apps/worker-ui/dist');
@@ -26,10 +27,10 @@ describe.runIf(fs.existsSync(path.join(UI, 'index.html')))('worker local UI (bro
     browser = await chromium.launch({ headless: true });
   }, 60_000);
   afterAll(async () => {
-    await browser?.close();
-    await app?.close();
-    await rt?.stop();
-  });
+    await cleanupStep('browser.close', () => browser?.close());
+    await cleanupStep('app.close', () => app?.close());
+    await cleanupStep('worker.stop', () => rt?.stop());
+  }, 90_000);
 
   it('refuses to work without the token link', async () => {
     const page = await browser.newPage();

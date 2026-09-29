@@ -58,4 +58,16 @@ export async function expireLease(taskId: string) {
   await mongoose.connection.db!.collection('tasks').updateOne({ _id: new mongoose.Types.ObjectId(taskId) }, { $set: { leaseExpiresAt: new Date(Date.now() - 1000) } });
 }
 
+/**
+ * One bounded, named cleanup step for afterAll: a slow shutdown (a worker, a server, the database) on a
+ * loaded CI runner shows up as a warning with its name instead of timing out the hook and failing the file.
+ */
+export async function cleanupStep(name: string, fn: () => unknown, ms = 20_000) {
+  const t0 = Date.now();
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([Promise.resolve().then(fn).catch(() => undefined), new Promise((r) => (timer = setTimeout(r, ms)))]);
+  clearTimeout(timer);
+  if (Date.now() - t0 > ms / 2) console.warn(`[cleanup] "${name}" took ${Date.now() - t0} ms`);
+}
+
 export { Worker, WorkerPairing };

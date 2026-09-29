@@ -14,7 +14,7 @@ import type { Actor, Services } from '@ao/server';
 import type { TaskDto } from '@ao/contracts';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { makeOwner, makeServices } from '../helpers.js';
+import { cleanupStep, makeOwner, makeServices } from '../helpers.js';
 import { FakeLlm } from '../fake-llm.js';
 
 process.env.AO_CREDENTIAL_BACKEND = 'file';
@@ -77,18 +77,10 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  // Each step is bounded and named, so a slow one shows up in the output instead of failing the file.
-  const step = async (name: string, fn: () => unknown, ms = 20_000) => {
-    const t0 = Date.now();
-    let timer: NodeJS.Timeout | undefined;
-    await Promise.race([Promise.resolve().then(fn), new Promise((r) => (timer = setTimeout(r, ms)))]);
-    clearTimeout(timer);
-    if (Date.now() - t0 > ms / 2) console.warn(`[addon-models cleanup] "${name}" took ${Date.now() - t0} ms`);
-  };
-  await step('worker.stop', () => worker?.stop());
+  await cleanupStep('worker.stop', () => worker?.stop());
   s?.scheduler.stop();
-  await step('app.close', () => app?.close());
-  await step('stopTestDatabase', () => stopTestDatabase());
+  await cleanupStep('app.close', () => app?.close());
+  await cleanupStep('stopTestDatabase', () => stopTestDatabase());
   llm?.close();
 }, 90_000);
 
