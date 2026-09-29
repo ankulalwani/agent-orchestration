@@ -32,7 +32,7 @@ variable "image_repository" {
 
 variable "image_tag" {
   type    = string
-  default = "0.1.1"
+  default = "0.1.2"
 }
 
 variable "public_url" {

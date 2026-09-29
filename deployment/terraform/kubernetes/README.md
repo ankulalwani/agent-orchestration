@@ -13,7 +13,7 @@ Optionally it adds autoscaling (`autoscaling_max_replicas`) and Prometheus Opera
 # terraform.tfvars
 kubeconfig_context       = "prod"             # after aws eks / gcloud / az get-credentials
 image_repository         = "registry.example.com/agent-orchestrator"
-image_tag                = "0.1.1"
+image_tag                = "0.1.2"
 public_url               = "https://orchestrator.example.com"
 mongodb_uri              = "mongodb+srv://…/agent_orchestrator"
 redis_url                = "rediss://…"

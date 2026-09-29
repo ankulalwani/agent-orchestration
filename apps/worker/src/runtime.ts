@@ -21,7 +21,7 @@ import { tokenAuthEnv } from '@ao/git';
 import { ModelGateway } from './gateway/server.js';
 
 const log = createLogger('worker');
-export const WORKER_VERSION = process.env.AO_WORKER_VERSION ?? '0.1.1';
+export const WORKER_VERSION = process.env.AO_WORKER_VERSION ?? '0.1.2';
 
 export interface PairingState {
   status: 'idle' | 'waiting' | 'approved' | 'denied' | 'expired' | 'error';

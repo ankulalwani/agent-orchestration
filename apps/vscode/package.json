@@ -2,7 +2,7 @@
   "name": "agent-orchestrator-vscode",
   "displayName": "Agent Orchestrator",
   "description": "Hand work to coding agents from VS Code: tasks from a selection, branch reviews, and your tasks' progress.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "publisher": "agent-orchestrator",
   "license": "SEE LICENSE IN ../../LICENSE",
