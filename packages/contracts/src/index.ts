@@ -232,7 +232,7 @@ export const reviewRequest = z.object({
   pullRequest: z.object({ url: z.string().url(), number: z.number().int() }).optional(),
 });
 export const REVIEW_VERDICTS = ['approve', 'comment', 'request_changes'] as const;
-/** What a review agent writes to .agent-orchestrator/progress/<task>.review.json. */
+/** What a review agent writes to .agent-orchestration/progress/<task>.review.json. */
 export const reviewResult = z.object({
   summary: z.string().min(1).max(20_000),
   verdict: z.enum(REVIEW_VERDICTS),
@@ -244,7 +244,7 @@ export const reviewResult = z.object({
 export type ReviewResult = z.infer<typeof reviewResult>;
 
 // ── Plans (FUT-001, AI project manager) ──────────────────────────────────────
-/** What a planning agent writes to .agent-orchestrator/progress/<task>.plan.json. */
+/** What a planning agent writes to .agent-orchestration/progress/<task>.plan.json. */
 export const planResult = z
   .object({
     summary: z.string().min(1).max(20_000),

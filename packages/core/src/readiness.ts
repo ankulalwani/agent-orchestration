@@ -58,7 +58,7 @@ export function analyzeReadiness(input: ReadinessInput): ReadinessReport {
   const prompt = (input.prompt ?? '').toLowerCase();
 
   // Git
-  if (!repo.isGitRepo) add({ id: 'git.repo', area: 'git', category: 'required', title: 'Initialize a Git repository', explanation: 'Without Git the orchestrator cannot isolate task changes, commit results or protect existing work.', confidence: 'high' });
+  if (!repo.isGitRepo) add({ id: 'git.repo', area: 'git', category: 'required', title: 'Initialize a Git repository', explanation: 'Without Git the orchestration platform cannot isolate task changes, commit results or protect existing work.', confidence: 'high' });
   else {
     add({ id: 'git.repo', area: 'git', category: 'available', title: 'Git repository', explanation: 'Task changes are committed on a task branch according to the Git policy.', confidence: 'high' });
     if (repo.gitClean === false) add({ id: 'git.clean', area: 'git', category: 'recommended', title: 'Commit or stash local changes', explanation: 'Uncommitted changes are preserved and never included in task commits, but a clean tree makes results easier to review.', confidence: 'high' });
@@ -119,7 +119,7 @@ export function analyzeReadiness(input: ReadinessInput): ReadinessReport {
       : { id: 'docs.agent', area: 'docs', category: 'recommended', title: 'Add project knowledge', explanation: 'Describe architecture, conventions and how to run things in the project knowledge (dashboard) or an AGENTS.md/CLAUDE.md file.', confidence: 'medium' },
   );
   if (repo.readmeLength < 200) add({ id: 'docs.readme', area: 'docs', category: 'recommended', title: 'Expand the README', explanation: 'Agents rely on it to understand setup and structure.', confidence: 'low' });
-  if (!repo.hasCi) add({ id: 'ci', area: 'build', category: 'not_required', title: 'CI configuration', explanation: 'Not needed by the orchestrator (it verifies on the worker), but useful for pull requests.', confidence: 'low' });
+  if (!repo.hasCi) add({ id: 'ci', area: 'build', category: 'not_required', title: 'CI configuration', explanation: 'Not needed by the orchestration platform (it verifies on the worker), but useful for pull requests.', confidence: 'low' });
 
   // Capabilities from the registry whose triggers match
   for (const cap of input.capabilities) {

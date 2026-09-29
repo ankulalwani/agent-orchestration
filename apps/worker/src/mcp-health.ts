@@ -28,7 +28,7 @@ export interface McpHealth {
 }
 
 const PROTOCOL_VERSION = '2025-06-18';
-const CLIENT_INFO = { name: 'agent-orchestrator-worker', version: process.env.AO_WORKER_VERSION ?? '0.1.2' };
+const CLIENT_INFO = { name: 'agent-orchestration-worker', version: process.env.AO_WORKER_VERSION ?? '0.1.2' };
 
 type Rpc = { jsonrpc: '2.0'; id?: number; method?: string; params?: unknown; result?: any; error?: { code: number; message: string } };
 const request = (id: number, method: string, params: unknown = {}): Rpc => ({ jsonrpc: '2.0', id, method, params });

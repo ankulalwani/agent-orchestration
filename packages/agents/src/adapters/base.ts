@@ -114,7 +114,7 @@ export function gatewayLaunch(agentId: string, p: ProviderBinding): { env: Recor
       return {
         env: {
           OPENCODE_CONFIG_CONTENT: JSON.stringify({
-            provider: { ao_gateway: { npm: '@ai-sdk/openai-compatible', name: 'Agent Orchestrator add-on models', options: { baseURL: `${root}/openai/v1`, apiKey: token }, models: { [model]: { name: model, tool_call: true } } } },
+            provider: { ao_gateway: { npm: '@ai-sdk/openai-compatible', name: 'Agent Orchestration add-on models', options: { baseURL: `${root}/openai/v1`, apiKey: token }, models: { [model]: { name: model, tool_call: true } } } },
           }),
         },
         args: [],

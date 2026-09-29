@@ -1,5 +1,5 @@
-# Agent Orchestrator on any Kubernetes cluster (EKS, GKE, AKS, or your own), with the Helm chart in
-# deployment/helm/agent-orchestrator. MongoDB (and optionally Redis) are external: pass their URLs.
+# Agent Orchestration on any Kubernetes cluster (EKS, GKE, AKS, or your own), with the Helm chart in
+# deployment/helm/agent-orchestration. MongoDB (and optionally Redis) are external: pass their URLs.
 #
 # The generated JWT secret and encryption key are stored in the Terraform state. Use an encrypted remote
 # backend, and back up the encryption key: without it, stored secrets can't be recovered.
@@ -56,7 +56,7 @@ resource "random_id" "encryption_key" {
 
 resource "kubernetes_secret" "app" {
   metadata {
-    name      = "${var.release_name}-agent-orchestrator"
+    name      = "${var.release_name}-agent-orchestration"
     namespace = local.namespace
   }
   data = merge(
@@ -74,7 +74,7 @@ resource "kubernetes_secret" "app" {
 resource "helm_release" "this" {
   name      = var.release_name
   namespace = local.namespace
-  chart     = "${path.module}/../../helm/agent-orchestrator"
+  chart     = "${path.module}/../../helm/agent-orchestration"
 
   values = [yamlencode({
     image          = { repository = var.image_repository, tag = var.image_tag }

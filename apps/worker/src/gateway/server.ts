@@ -89,7 +89,7 @@ export class ModelGateway {
       if (/\/models$/.test(path)) {
         if (dialect === 'anthropic') return json(res, { data: [{ id: session.alias, type: 'model', display_name: 'Add-on models', created_at: new Date().toISOString() }], has_more: false, first_id: session.alias, last_id: session.alias });
         if (dialect === 'gemini') return json(res, { models: [{ name: `models/${session.alias}`, displayName: 'Add-on models', supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'] }] });
-        return json(res, { object: 'list', data: [{ id: session.alias, object: 'model', created: 0, owned_by: 'agent-orchestrator' }] });
+        return json(res, { object: 'list', data: [{ id: session.alias, object: 'model', created: 0, owned_by: 'agent-orchestration' }] });
       }
       return fail(404, `Not found: ${path}`);
     }

@@ -7,7 +7,7 @@ import path from 'node:path';
 const scenario = process.env.AO_MOCK_SCENARIO ?? 'success';
 const session = process.env.AO_MOCK_SESSION ?? 'mock-session';
 const taskId = process.env.AO_MOCK_TASK ?? 'task';
-const stateDir = process.env.AO_MOCK_STATE_DIR ?? '.agent-orchestrator';
+const stateDir = process.env.AO_MOCK_STATE_DIR ?? '.agent-orchestration';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 
 let prompt = '';

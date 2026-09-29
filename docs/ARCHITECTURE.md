@@ -116,7 +116,7 @@ replays from the worker's local buffer idempotent.
 
 ## 7. Checkpoints
 
-The worker writes `.agent-orchestrator/` in the project directory (task-state, checkpoints,
+The worker writes `.agent-orchestration/` in the project directory (task-state, checkpoints,
 progress, plans, verification, logs, metadata). Checkpoints are also sent to the control plane
 as `CheckpointCreated` events. This directory is added to the project's `.git/info/exclude`, not
 committed.

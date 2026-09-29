@@ -17,7 +17,7 @@ the MongoDB server (no installation needed; unzip and run).
 
 ```bash
 # Docker Compose
-docker compose exec -T mongo mongodump --archive --gzip --db agent_orchestrator > backup-$(date +%F).archive.gz
+docker compose exec -T mongo mongodump --archive --gzip --db agent_orchestration > backup-$(date +%F).archive.gz
 # restore
 docker compose exec -T mongo mongorestore --archive --gzip --drop < backup-2026-09-27.archive.gz
 ```
@@ -25,7 +25,7 @@ docker compose exec -T mongo mongorestore --archive --gzip --drop < backup-2026-
 Without Docker, run the same tools against `MONGODB_URI`:
 
 ```bash
-mongodump    --uri "$MONGODB_URI" --db agent_orchestrator --archive=backup.archive.gz --gzip
+mongodump    --uri "$MONGODB_URI" --db agent_orchestration --archive=backup.archive.gz --gzip
 mongorestore --uri "$MONGODB_URI" --archive=backup.archive.gz --gzip --drop
 ```
 
@@ -35,8 +35,8 @@ Restore it into a **separate database** on the same server and look at it; this 
 
 ```bash
 mongorestore --uri "$MONGODB_URI" --archive=backup.archive.gz --gzip \
-  --nsFrom='agent_orchestrator.*' --nsTo='agent_orchestrator_restore_check.*'
-# …inspect, then drop agent_orchestrator_restore_check
+  --nsFrom='agent_orchestration.*' --nsTo='agent_orchestration_restore_check.*'
+# …inspect, then drop agent_orchestration_restore_check
 ```
 
 ### Verification

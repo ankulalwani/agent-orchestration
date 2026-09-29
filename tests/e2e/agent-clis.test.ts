@@ -40,7 +40,7 @@ async function run(adapter: AgentAdapter, provider: { providerId: string; kind: 
     prompt: 'Say hello.',
     provider: { ...provider, apiKey: provider.apiKey ?? 'invalid-key-for-verification' },
     sessionId: randomUUID(),
-    stateDir: path.join(repo, '.agent-orchestrator'),
+    stateDir: path.join(repo, '.agent-orchestration'),
     // Keep every CLI's config/cache out of the real user profile.
     env: { HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData'), LOCALAPPDATA: path.join(home, 'Local'), XDG_CONFIG_HOME: path.join(home, '.config'), XDG_DATA_HOME: path.join(home, '.data'), CODEX_HOME: path.join(home, 'codex') },
   };
@@ -80,6 +80,6 @@ describe.runIf(enabled)('real agent CLIs (invalid credentials)', () => {
     // .gitignore untouched and no chat history in the project; only the repo-map cache, which the
     // worker hides via .git/info/exclude (AiderAdapter gitExcludes), and our own state directory.
     const untracked = r.status.split('\n').filter(Boolean).map((l) => l.slice(3));
-    expect(untracked.filter((f) => !f.startsWith('.aider.tags.cache') && !f.startsWith('.agent-orchestrator'))).toEqual([]);
+    expect(untracked.filter((f) => !f.startsWith('.aider.tags.cache') && !f.startsWith('.agent-orchestration'))).toEqual([]);
   }, 240_000);
 });

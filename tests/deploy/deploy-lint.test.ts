@@ -12,7 +12,7 @@ const HELM = tool('AO_TEST_HELM', 'helm/windows-amd64/helm.exe');
 const KUBECONFORM = tool('AO_TEST_KUBECONFORM', 'kubeconform/kubeconform.exe');
 const HADOLINT = tool('AO_TEST_HADOLINT', 'hadolint.exe');
 const SHELLCHECK = tool('AO_TEST_SHELLCHECK', 'shellcheck/shellcheck.exe');
-const CHART = 'deployment/helm/agent-orchestrator';
+const CHART = 'deployment/helm/agent-orchestration';
 
 const run = (bin: string, args: string[], input?: string) => execFileSync(bin, args, { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -24,7 +24,7 @@ describe.runIf(fs.existsSync(HELM))('Helm chart', () => {
   it.runIf(fs.existsSync(KUBECONFORM))('renders valid Kubernetes objects, with and without the optional parts', () => {
     const variants: Array<[string, string[]]> = [
       ['defaults', []],
-      ['ingress+tls+replicas', ['--set', 'ingress.enabled=true', '--set', 'ingress.className=nginx', '--set', 'ingress.tls[0].secretName=tls', '--set', 'ingress.tls[0].hosts[0]=orchestrator.example.com', '--set', 'replicaCount=3', '--set', 'service.type=LoadBalancer']],
+      ['ingress+tls+replicas', ['--set', 'ingress.enabled=true', '--set', 'ingress.className=nginx', '--set', 'ingress.tls[0].secretName=tls', '--set', 'ingress.tls[0].hosts[0]=orchestration.example.com', '--set', 'replicaCount=3', '--set', 'service.type=LoadBalancer']],
       ['autoscaling+volume backups', ['--set', 'autoscaling.enabled=true', '--set', 'backup.enabled=true']],
       ['S3 backups', ['--set', 'backup.enabled=true', '--set', 'backup.s3.bucket=backups', '--set', 'backup.s3.endpoint=https://s3.example.com']],
     ];
@@ -41,7 +41,7 @@ describe.runIf(fs.existsSync(HELM))('Helm chart', () => {
     expect(kinds(['--set', 'autoscaling.enabled=true', '--set', 'backup.enabled=true'])).toEqual(['CronJob', 'Deployment', 'HorizontalPodAutoscaler', 'PersistentVolumeClaim', 'PodDisruptionBudget', 'Service']);
     expect(run(HELM, ['template', 'ao', CHART, '--set', 'autoscaling.enabled=true'])).not.toMatch(/^\s+replicas:/m); // the autoscaler owns the replica count
     const s3 = run(HELM, ['template', 'ao', CHART, '--set', 'backup.enabled=true', '--set', 'backup.s3.bucket=backups']);
-    expect(s3).toContain('s3://backups/agent-orchestrator/');
+    expect(s3).toContain('s3://backups/agent-orchestration/');
     expect(s3).not.toContain('PersistentVolumeClaim');
     // Prometheus Operator objects: CRDs, so only structure is checked offline.
     const monitoring = run(HELM, ['template', 'ao', CHART, '--set', 'monitoring.serviceMonitor.enabled=true', '--set', 'monitoring.prometheusRule.enabled=true']);

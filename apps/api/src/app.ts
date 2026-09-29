@@ -83,7 +83,7 @@ export async function buildApp(services: Services, opts: BuildAppOptions = {}): 
     });
   }
   app.get(API_PREFIX + '/server-info', async () => ({
-    name: 'Agent Orchestrator',
+    name: 'Agent Orchestration',
     apiVersion: 'v1',
     deploymentMode: cfg.DEPLOYMENT_MODE,
     registrationOpen: cfg.ALLOW_REGISTRATION,
@@ -129,7 +129,7 @@ export async function buildApp(services: Services, opts: BuildAppOptions = {}): 
   app.get(API_PREFIX + '/worker-releases/:channel/:version/package.tgz', async (req, reply) => {
     const { channel, version } = req.params as { channel: string; version: string };
     const body = await services.workerReleases.package(channel, version);
-    return reply.type('application/gzip').header('content-disposition', `attachment; filename="agent-orchestrator-worker-${version}.tgz"`).send(body);
+    return reply.type('application/gzip').header('content-disposition', `attachment; filename="agent-orchestration-worker-${version}.tgz"`).send(body);
   });
 
   const { route, specs } = createRouter(app, services, API_PREFIX);

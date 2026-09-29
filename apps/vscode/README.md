@@ -1,4 +1,4 @@
-# Agent Orchestrator for VS Code
+# Agent Orchestration for VS Code
 
 Hand work to coding agents without leaving the editor.
 
@@ -15,18 +15,18 @@ Hand work to coding agents without leaving the editor.
 
 1. In the dashboard, open **Settings → Your account → API tokens** and create a token for your
    organization (for example with the *Developer* role).
-2. In VS Code, run **Agent Orchestrator: Sign in with an API token** and enter the server URL and the token.
+2. In VS Code, run **Agent Orchestration: Sign in with an API token** and enter the server URL and the token.
    The token is kept in VS Code's secret storage.
 
 The first task from a workspace asks which project it belongs to, and the answer is remembered for that
-workspace (**Agent Orchestrator: Choose project for this workspace** changes it). Set
-`agentOrchestrator.webUrl` if the dashboard is not served from the server URL.
+workspace (**Agent Orchestration: Choose project for this workspace** changes it). Set
+`agentOrchestration.webUrl` if the dashboard is not served from the server URL.
 
 ## Build
 
 ```bash
-pnpm --filter agent-orchestrator-vscode build      # dist/extension.js
-cd apps/vscode && npx @vscode/vsce package --no-dependencies   # agent-orchestrator-vscode-0.1.0.vsix
+pnpm --filter agent-orchestration-vscode build      # dist/extension.js
+cd apps/vscode && npx @vscode/vsce package --no-dependencies   # agent-orchestration-vscode-0.1.0.vsix
 ```
 
 Install the `.vsix` with **Extensions → … → Install from VSIX**.

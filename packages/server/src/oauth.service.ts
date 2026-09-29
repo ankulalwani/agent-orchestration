@@ -294,7 +294,7 @@ export class OAuthService {
     const api = this.config.GITHUB_API_URL.replace(/\/+$/, '');
     const get = async <T>(path: string) => {
       const r = await fetch(`${api}${path}`, {
-        headers: { authorization: `Bearer ${accessToken}`, accept: 'application/vnd.github+json', 'user-agent': 'agent-orchestrator' },
+        headers: { authorization: `Bearer ${accessToken}`, accept: 'application/vnd.github+json', 'user-agent': 'agent-orchestration' },
         signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
       });
       if (!r.ok) throw new OAuthFailure('provider_error', `GitHub ${path} HTTP ${r.status}`);

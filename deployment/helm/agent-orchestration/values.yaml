@@ -1,7 +1,7 @@
 # Checked with `helm lint --strict` and kubeconform, and installed on Docker Desktop's Kubernetes (v1.36) with
 # autoscaling, backups and monitoring on. Not yet on a managed cloud cluster.
 image:
-  repository: agent-orchestrator   # build with deployment/docker/control-plane.Dockerfile and push to your registry
+  repository: agent-orchestration   # build with deployment/docker/control-plane.Dockerfile and push to your registry
   tag: "0.1.2"
   pullPolicy: IfNotPresent
 
@@ -10,12 +10,12 @@ replicaCount: 1
 
 # Existing Secret with keys: JWT_SECRET, ENCRYPTION_KEY, MONGODB_URI, and optionally ENCRYPTION_KEYS_PREVIOUS, REDIS_URL, SMTP_URL,
 # S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY. Create it yourself (kubectl create secret generic ...).
-existingSecret: agent-orchestrator
+existingSecret: agent-orchestration
 
 env:
-  PUBLIC_URL: https://orchestrator.example.com
-  WEB_URL: https://orchestrator.example.com
-  CORS_ORIGINS: https://orchestrator.example.com
+  PUBLIC_URL: https://orchestration.example.com
+  WEB_URL: https://orchestration.example.com
+  CORS_ORIGINS: https://orchestration.example.com
   TRUST_PROXY: "true"
   ALLOW_REGISTRATION: "false"
   METRICS_ENABLED: "true"
@@ -27,8 +27,8 @@ service:
 ingress:
   enabled: false
   className: ""
-  host: orchestrator.example.com
-  tls: []          # e.g. [{ secretName: orchestrator-tls, hosts: [orchestrator.example.com] }]
+  host: orchestration.example.com
+  tls: []          # e.g. [{ secretName: orchestration-tls, hosts: [orchestration.example.com] }]
   annotations: {}  # WebSockets must be allowed by your ingress controller
 
 resources:
@@ -57,7 +57,7 @@ backup:
     existingClaim: ""
   s3:
     bucket: ""
-    prefix: agent-orchestrator/
+    prefix: agent-orchestration/
     region: us-east-1
     endpoint: ""       # for S3-compatible storage (MinIO, SeaweedFS, R2, ...)
     image: amazon/aws-cli:2.22.35

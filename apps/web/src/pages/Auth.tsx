@@ -10,7 +10,7 @@ function AuthShell({ title, children }: { title: string; children: React.ReactNo
     <div className="center-screen">
       <div className="auth-card stack">
         <div className="brand" style={{ justifyContent: 'center' }}>
-          <span className="brand-mark" aria-hidden="true">▲</span> Agent Orchestrator
+          <span className="brand-mark" aria-hidden="true">▲</span> Agent Orchestration
         </div>
         <Card title={title}>{children}</Card>
       </div>

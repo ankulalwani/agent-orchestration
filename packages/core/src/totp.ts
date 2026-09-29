@@ -72,7 +72,7 @@ export function verifyTotp(secret: string, code: string, opts: { at?: number; wi
 }
 
 /** `otpauth://` URI that authenticator apps import (usually via QR code). */
-export function totpUri(secret: string, account: string, issuer = 'Agent Orchestrator') {
+export function totpUri(secret: string, account: string, issuer = 'Agent Orchestration') {
   const label = encodeURIComponent(`${issuer}:${account}`);
   return `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=${DIGITS}&period=${STEP_SECONDS}`;
 }

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Installs the Agent Orchestrator worker for the current macOS user as a launchd LaunchAgent
+# Installs the Agent Orchestration worker for the current macOS user as a launchd LaunchAgent
 # (starts at login, restarts on failure). Runs as you: agent logins, Git credentials and repositories are per-user.
 #   ./installers/macos/install-worker.sh [--source DIR] [--no-service] [--no-browser]
 set -euo pipefail
 
-LABEL="com.agent-orchestrator.worker"
-INSTALL_DIR="${AO_INSTALL_DIR:-$HOME/Library/Application Support/AgentOrchestrator/worker-app}"
+LABEL="com.agent-orchestration.worker"
+INSTALL_DIR="${AO_INSTALL_DIR:-$HOME/Library/Application Support/AgentOrchestration/worker-app}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG_DIR="$HOME/Library/Logs/AgentOrchestrator"
+LOG_DIR="$HOME/Library/Logs/AgentOrchestration"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SOURCE_DIR=""; NO_SERVICE=0; NO_BROWSER=0
 while [ $# -gt 0 ]; do

@@ -109,7 +109,7 @@ export class GitHubService {
         headers: {
           accept: 'application/vnd.github+json',
           'x-github-api-version': '2022-11-28',
-          'user-agent': 'agent-orchestrator',
+          'user-agent': 'agent-orchestration',
           ...(auth?.bearer ? { authorization: `Bearer ${auth.bearer}` } : {}),
           ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         },
@@ -204,7 +204,7 @@ export class GitHubService {
     const local = isLocalUrl(this.config.PUBLIC_URL);
     const state = await this.newState(actor, 'manifest');
     // GitHub app names are at most 34 characters and unique on GitHub; the form on GitHub lets the admin change it.
-    const name = `Agent Orchestrator ${org?.name ?? ''}`.trim().slice(0, 34).trim();
+    const name = `Agent Orchestration ${org?.name ?? ''}`.trim().slice(0, 34).trim();
     const manifest = {
       name,
       url: this.config.PUBLIC_URL,

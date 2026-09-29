@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Installs the Agent Orchestrator worker for the current Linux user as a systemd *user* service.
+# Installs the Agent Orchestration worker for the current Linux user as a systemd *user* service.
 # Runs as you: agent logins, Git credentials and repositories are per-user.
 #   ./installers/linux/install-worker.sh [--source DIR] [--no-service] [--no-browser] [--linger]
 # --linger keeps the worker running without an active login session (requires sudo for loginctl).
 set -euo pipefail
 
-UNIT="agent-orchestrator-worker.service"
-INSTALL_DIR="${AO_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-orchestrator/worker-app}"
+UNIT="agent-orchestration-worker.service"
+INSTALL_DIR="${AO_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-orchestration/worker-app}"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SOURCE_DIR=""; NO_SERVICE=0; NO_BROWSER=0; LINGER=0
@@ -65,7 +65,7 @@ if [ "$NO_SERVICE" -eq 0 ]; then
   # Capture the user's PATH so agent CLIs installed via npm/pipx/etc. are found by the service.
   cat > "$UNIT_DIR/$UNIT" <<EOF
 [Unit]
-Description=Agent Orchestrator worker (local UI on 127.0.0.1:47821)
+Description=Agent Orchestration worker (local UI on 127.0.0.1:47821)
 After=network-online.target
 Wants=network-online.target
 

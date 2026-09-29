@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Installs the Agent Orchestrator worker for the current Windows user and starts it at logon.
+  Installs the Agent Orchestration worker for the current Windows user and starts it at logon.
 
 .DESCRIPTION
   1. Validates dependencies (Node.js >= 20, Git).
@@ -10,7 +10,7 @@
   4. Starts the worker, opens the local UI (http://127.0.0.1:47821) to begin pairing, runs diagnostics.
 
 .PARAMETER SourceDir   Packaged worker directory (default: <repo>\.deploy\worker, built if missing).
-.PARAMETER InstallDir  Where to install (default: %LOCALAPPDATA%\AgentOrchestrator\worker-app).
+.PARAMETER InstallDir  Where to install (default: %LOCALAPPDATA%\AgentOrchestration\worker-app).
 .PARAMETER NoService   Install files only; do not register or start the scheduled task.
 .PARAMETER NoBrowser   Do not open the local UI.
 .PARAMETER NoPath      Do not add the agentctl shim directory to the user PATH.
@@ -18,13 +18,13 @@
 [CmdletBinding()]
 param(
   [string]$SourceDir,
-  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AgentOrchestrator\worker-app'),
+  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AgentOrchestration\worker-app'),
   [switch]$NoService,
   [switch]$NoBrowser,
   [switch]$NoPath
 )
 $ErrorActionPreference = 'Stop'
-$TaskName = 'AgentOrchestratorWorker'
+$TaskName = 'AgentOrchestrationWorker'
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 
 function Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
@@ -94,7 +94,7 @@ if (-not $NoService) {
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
   $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-    -Description 'Agent Orchestrator worker (local UI on 127.0.0.1:47821)' -Force | Out-Null
+    -Description 'Agent Orchestration worker (local UI on 127.0.0.1:47821)' -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
   Step 'Waiting for the worker to start'
   $ok = $false

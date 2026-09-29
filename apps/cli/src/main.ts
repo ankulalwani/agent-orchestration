@@ -12,7 +12,7 @@ import { ConfigStore, LOCAL_UI_TOKEN, createCredentialStore, defaultDataDir } fr
  * contracts as the web and mobile apps; worker commands talk to the loopback worker API.
  */
 
-const HELP = `agentctl — Agent Orchestrator CLI
+const HELP = `agentctl — Agent Orchestration CLI
 
 Usage: agentctl <command> [options]
 

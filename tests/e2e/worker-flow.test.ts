@@ -145,7 +145,7 @@ describe('worker end-to-end', () => {
     expect(order.indexOf('GitCommitCreated')).toBeLessThan(order.indexOf('TaskCompleted'));
     expect(order.indexOf('AgentExited')).toBeLessThan(order.indexOf('TaskCompleted'));
     // State dir is excluded from Git.
-    expect((await runCommand('git', ['status', '--porcelain'], { cwd: repo })).stdout).not.toContain('.agent-orchestrator');
+    expect((await runCommand('git', ['status', '--porcelain'], { cwd: repo })).stdout).not.toContain('.agent-orchestration');
     // Timeline via buffered events reached the server.
     await worker.flush();
     const types = (await s.tasks.events(owner, t.id, { limit: 500, includeOutput: true })).items.map((e) => e.type);
@@ -501,7 +501,7 @@ describe('worker end-to-end', () => {
     expect((await g('rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe('main');
     expect((await g('branch', '--list', 'ao/*')).stdout.trim()).toBe('');
     expect(fs.existsSync(path.join(repo, 'feature.txt'))).toBe(false);
-    expect(fs.existsSync(path.join(repo, '.agent-orchestrator', 'worktrees', t.id))).toBe(false);
+    expect(fs.existsSync(path.join(repo, '.agent-orchestration', 'worktrees', t.id))).toBe(false);
 
     // A reviewer that edits files is sent back; its edits never reach the user's checkout.
     const dirty = await reviewTask('review that edits', 'review_dirty');
@@ -536,7 +536,7 @@ describe('worker end-to-end', () => {
     expect(done.gitStatus).toBe('NONE');
     expect((await runCommand('git', ['status', '--porcelain'], { cwd: repo })).stdout.trim()).toBe('');
     expect((await runCommand('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo })).stdout.trim()).toBe('main');
-    expect(fs.existsSync(path.join(repo, '.agent-orchestrator', 'worktrees', t.id))).toBe(false);
+    expect(fs.existsSync(path.join(repo, '.agent-orchestration', 'worktrees', t.id))).toBe(false);
 
     const cyc = await planTask('plan with a cycle', 'plan_cycle');
     const fixed = await waitFor(() => getTask(cyc.id), settled, 60_000, 'cyclic plan');

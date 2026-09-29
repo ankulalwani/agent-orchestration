@@ -109,7 +109,7 @@ describe('execution prompt', () => {
       taskId: 't1',
       title: 'Add Razorpay',
       prompt: 'Add Razorpay support',
-      stateDir: '.agent-orchestrator',
+      stateDir: '.agent-orchestration',
       checkpoint: {
         taskId: 't1',
         phase: 'implement',
@@ -124,7 +124,7 @@ describe('execution prompt', () => {
     });
     expect(p).toContain('Do NOT start over');
     expect(p).toContain('write tests');
-    expect(p).toContain('.agent-orchestrator/progress/t1.json');
+    expect(p).toContain('.agent-orchestration/progress/t1.json');
     expect(p).toMatch(/Never claim completion without/);
     expect(p.toLowerCase()).not.toContain('claude');
   });

@@ -172,7 +172,7 @@ export function evaluateCapabilityPolicy(
   for (const p of m.permissions) {
     if (policy.approvalRequiredPermissions.some((a) => p === a || p.startsWith(`${a}.`))) reasons.push(`Requests "${p}"`);
   }
-  if (m.type === 'plugin') reasons.push('Plugins run code inside the orchestrator');
+  if (m.type === 'plugin') reasons.push('Plugins run code inside the orchestration platform');
   if (policy.installPolicy === 'ASK') reasons.push('Installation policy is ASK');
   if (policy.installPolicy === 'RESTRICTED' && reasons.length) return { decision: 'block', reasons };
   return reasons.length ? { decision: 'require_approval', reasons } : { decision: 'allow' };

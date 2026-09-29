@@ -212,7 +212,7 @@ function sentrySender(d: ParsedDsn): Sender {
   return (r) =>
     post(d.envelopeUrl, toSentryEnvelope(r, d.dsn), {
       'content-type': 'application/x-sentry-envelope',
-      'x-sentry-auth': `Sentry sentry_version=7, sentry_key=${d.publicKey}, sentry_client=agent-orchestrator/1.0`,
+      'x-sentry-auth': `Sentry sentry_version=7, sentry_key=${d.publicKey}, sentry_client=agent-orchestration/1.0`,
     });
 }
 

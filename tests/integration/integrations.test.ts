@@ -24,7 +24,7 @@ const received: Array<{ path: string; headers: http.IncomingHttpHeaders; body: a
 
 beforeAll(async () => {
   await startTestDatabase();
-  s = (await makeServices({ WEB_URL: 'https://orchestrator.test' })).services;
+  s = (await makeServices({ WEB_URL: 'https://orchestration.test' })).services;
   app = await buildApp(s);
   const o = await makeOwner(s, 'integrations');
   owner = o.actor;
@@ -107,7 +107,7 @@ describe('GitHub integration', () => {
     await until(() => received.some((r) => r.path === '/repos/acme/site/issues/2/comments'), 'the reply comment');
     const reply = received.find((r) => r.path === '/repos/acme/site/issues/2/comments')!;
     expect(reply.headers.authorization).toBe('Bearer ghp_reply_token_value');
-    expect(reply.body.body).toContain(`https://orchestrator.test/tasks/${taskId}`);
+    expect(reply.body.body).toContain(`https://orchestration.test/tasks/${taskId}`);
   });
 
   it('comment commands create tasks; other comments and bots are ignored', async () => {
@@ -243,7 +243,7 @@ describe('GitLab and generic integrations', () => {
     await s.tasks.transition(worker, task.id, { to: 'RECOVERY_REQUIRED', transitionId: randomUUID(), patch: {}, reason: 'Needs a person' });
     await until(() => received.some((x) => x.path === '/callback'), 'the callback');
     const cb = received.find((x) => x.path === '/callback')!;
-    expect(cb.body).toMatchObject({ taskId: task.id, status: 'RECOVERY_REQUIRED', summary: 'Needs a person', url: `https://orchestrator.test/tasks/${task.id}` });
+    expect(cb.body).toMatchObject({ taskId: task.id, status: 'RECOVERY_REQUIRED', summary: 'Needs a person', url: `https://orchestration.test/tasks/${task.id}` });
     expect(cb.headers['x-ao-signature']).toBe(sign(secret, cb.raw));
   });
 });

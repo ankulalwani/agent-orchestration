@@ -46,7 +46,7 @@ afterAll(async () => {
 });
 
 const services = (smtpUrl: string) =>
-  createServices(testConfig({ SMTP_URL: smtpUrl, SMTP_FROM: 'Orchestrator <noreply@orchestrator.test>', WEB_URL: 'https://app.test' }), { queue: new MemoryQueue() });
+  createServices(testConfig({ SMTP_URL: smtpUrl, SMTP_FROM: 'Orchestration <noreply@orchestration.test>', WEB_URL: 'https://app.test' }), { queue: new MemoryQueue() });
 const waitForMail = async (to: string) => {
   for (let i = 0; i < 50; i++) {
     const m = inbox.find((x) => x.to.includes(to));
@@ -66,7 +66,7 @@ describe('SMTP delivery (NOTIFY-002)', () => {
     const reg = await s.auth.register({ email, password: 'smtp-password-123', name: 'Smtp' });
 
     const verify = await waitForMail(email);
-    expect(verify).toMatchObject({ from: 'noreply@orchestrator.test', user: 'mailer' });
+    expect(verify).toMatchObject({ from: 'noreply@orchestration.test', user: 'mailer' });
     expect(verify.raw).toMatch(/Subject: Verify your email/);
     const token = /verify-email\?token=([A-Za-z0-9_-]+)/.exec(body(verify.raw))![1]!;
     await s.auth.verifyEmail(token); // the emailed link works

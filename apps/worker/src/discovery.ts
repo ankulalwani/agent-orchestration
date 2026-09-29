@@ -15,7 +15,7 @@ const SKIP_NAMES = new Set(
     'node_modules', 'bower_components', '.pnpm-store', '.npm', '.yarn', '.cache', '.gradle', '.m2', '.nuget', '.cargo', '.rustup', '.pub-cache',
     '.venv', 'venv', '__pycache__', 'site-packages', '.tox', '.mypy_cache', '.pytest_cache', '.next', '.nuxt', '.turbo', '.parcel-cache',
     'dist', 'build', 'target', 'out', 'vendor', 'Pods', 'DerivedData', '.vscode', '.vscode-server', '.vscode-test', '.cursor', '.idea',
-    '.agent-orchestrator', '.Trash', '.Trashes', '$Recycle.Bin', 'System Volume Information', 'Recovery', 'PerfLogs', 'Config.Msi',
+    '.agent-orchestration', '.Trash', '.Trashes', '$Recycle.Bin', 'System Volume Information', 'Recovery', 'PerfLogs', 'Config.Msi',
     'Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', 'AppData', 'MSOCache', 'Intel', 'AMD', 'NVIDIA',
   ].map((n) => n.toLowerCase()),
 );

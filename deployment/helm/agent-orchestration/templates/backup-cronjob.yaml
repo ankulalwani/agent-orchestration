@@ -33,7 +33,7 @@ spec:
       template:
         metadata:
           labels:
-            app.kubernetes.io/name: agent-orchestrator-backup
+            app.kubernetes.io/name: agent-orchestration-backup
             app.kubernetes.io/instance: {{ .Release.Name }}
         spec:
           restartPolicy: OnFailure
@@ -47,7 +47,7 @@ spec:
               command:
                 - sh
                 - -c
-                - mongodump --uri="$MONGODB_URI" --archive="/work/agent-orchestrator-$(date -u +%Y%m%dT%H%M%SZ).archive.gz" --gzip
+                - mongodump --uri="$MONGODB_URI" --archive="/work/agent-orchestration-$(date -u +%Y%m%dT%H%M%SZ).archive.gz" --gzip
               env:
                 - name: MONGODB_URI
                   valueFrom:

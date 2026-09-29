@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { createLogger } from '@ao/core';
 
 const log = createLogger('credentials');
-const SERVICE = 'agent-orchestrator-worker';
+const SERVICE = 'agent-orchestration-worker';
 
 /**
  * Credential store (spec §13, §59, decision D-006). Prefers the OS store (Windows Credential Manager,

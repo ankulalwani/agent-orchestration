@@ -1,6 +1,6 @@
 <div align="center">
 
-# Agent Orchestrator
+# Agent Orchestration
 
 **Run AI coding agents across your own machines — and only call a task done once it is verified.**
 
@@ -23,7 +23,7 @@ Self-hostable · any coding agent · any model provider · your Git policy
 
 ## How it works
 
-You describe a task. Agent Orchestrator finds a machine that can do it, runs a coding agent there, checks the
+You describe a task. Agent Orchestration finds a machine that can do it, runs a coding agent there, checks the
 result with your own tests, and only then commits it.
 
 ```mermaid
@@ -79,7 +79,7 @@ npm install -g pnpm        # pnpm switches to the version pinned in package.json
 pnpm install
 pnpm test                  # ~430 tests; uses a local mongod binary if installed
 
-export MONGODB_URI=mongodb://127.0.0.1:27017/agent_orchestrator
+export MONGODB_URI=mongodb://127.0.0.1:27017/agent_orchestration
 export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 export ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 pnpm dev:api               # http://127.0.0.1:4000

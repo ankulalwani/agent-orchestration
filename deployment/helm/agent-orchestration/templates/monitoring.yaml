@@ -30,32 +30,32 @@ metadata:
     {{- end }}
 spec:
   groups:
-    - name: agent-orchestrator
+    - name: agent-orchestration
       rules:
-        - alert: AgentOrchestratorDown
-          expr: absent(up{job=~".*agent-orchestrator.*"} == 1)
+        - alert: AgentOrchestrationDown
+          expr: absent(up{job=~".*agent-orchestration.*"} == 1)
           for: 5m
           labels: { severity: critical }
           annotations:
-            summary: No Agent Orchestrator API instance is up
-        - alert: AgentOrchestratorServerErrors
+            summary: No Agent Orchestration API instance is up
+        - alert: AgentOrchestrationServerErrors
           expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1) > 0.05
           for: 10m
           labels: { severity: warning }
           annotations:
             summary: More than 5% of API requests fail with a server error
-        - alert: AgentOrchestratorNoWorkersOnline
+        - alert: AgentOrchestrationNoWorkersOnline
           expr: max(worker_online_count) == 0 and max(queue_depth) > 0
           for: 15m
           labels: { severity: warning }
           annotations:
             summary: Tasks are queued but no worker is online
-        - alert: AgentOrchestratorTasksFailing
+        - alert: AgentOrchestrationTasksFailing
           expr: sum(increase(tasks_failed_total[1h])) > {{ .Values.monitoring.prometheusRule.failedTasksPerHour }}
           labels: { severity: warning }
           annotations:
             summary: Many tasks failed in the last hour
-        - alert: AgentOrchestratorLeasesExpiring
+        - alert: AgentOrchestrationLeasesExpiring
           expr: sum(increase(lease_expirations_total[30m])) > 5
           labels: { severity: warning }
           annotations:

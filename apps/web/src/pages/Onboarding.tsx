@@ -24,7 +24,7 @@ export function OnboardingPage() {
       post<TaskDto>(`/orgs/${orgId}/tasks`, {
         projectId,
         title: 'Readiness check',
-        prompt: 'Inspect this repository and write a short summary of its structure, how to build it and how to run its tests to .agent-orchestrator/plans/readiness.md. Do not modify any other files.',
+        prompt: 'Inspect this repository and write a short summary of its structure, how to build it and how to run its tests to .agent-orchestration/plans/readiness.md. Do not modify any other files.',
         policy: { git: { policy: 'NONE' } },
       }),
     onSuccess: (t) => nav(`/tasks/${t.id}`),
@@ -115,7 +115,7 @@ export function OnboardingPage() {
 
       <Card title="4. Run a test task">
         <div className="stack">
-          <p style={{ margin: 0 }}>A read-only readiness check: the agent inspects the repository and writes a summary into the orchestrator's state folder. Git policy is set to “don't commit”.</p>
+          <p style={{ margin: 0 }}>A read-only readiness check: the agent inspects the repository and writes a summary into the orchestration state folder. Git policy is set to “don't commit”.</p>
           {createTask.error && <Alert tone="danger">{(createTask.error as ApiError).message}</Alert>}
           <div>
             <Button variant="primary" disabled={!mapped} loading={createTask.isPending} onClick={() => mapped && createTask.mutate(mapped.id)}>Run readiness check</Button>

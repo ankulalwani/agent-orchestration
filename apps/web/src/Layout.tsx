@@ -37,7 +37,7 @@ export function Layout() {
       <aside className={`sidebar${menuOpen ? ' open' : ''}`} aria-label="Main navigation">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">▲</span>
-          Agent Orchestrator
+          Agent Orchestration
         </div>
         {session!.memberships.length > 1 && (
           <div className="field">

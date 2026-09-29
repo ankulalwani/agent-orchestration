@@ -10,7 +10,7 @@ A project is one or more Git repositories. Projects come from three places:
 ## Projects with several repositories
 
 A project can hold several repositories, for example an API and a web app. One of them is the **primary**
-repository: it holds the task state (`.agent-orchestrator/`), and the project's `repositoryUrl` and
+repository: it holds the task state (`.agent-orchestration/`), and the project's `repositoryUrl` and
 `defaultBranch` are its values (kept for older clients).
 
 - Manage them on the project page (**Repositories**): add one by URL, move one in from another project,

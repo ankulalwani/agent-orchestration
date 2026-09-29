@@ -59,8 +59,8 @@ describe('GitManager', () => {
     // Agent work:
     fs.writeFileSync(path.join(dir, 'a.txt'), 'a changed\n');
     fs.writeFileSync(path.join(dir, 'new.ts'), 'export {}\n');
-    fs.mkdirSync(path.join(dir, '.agent-orchestrator', 'progress'), { recursive: true });
-    fs.writeFileSync(path.join(dir, '.agent-orchestrator', 'progress', 't.json'), '{}');
+    fs.mkdirSync(path.join(dir, '.agent-orchestration', 'progress'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.agent-orchestration', 'progress', 't.json'), '{}');
 
     const r = await git.applyPolicy({ policy: 'COMMIT', baseline: base, branch: 'ao/task-1', message: 'feat: task\n\nbody', prTitle: '', prBody: '' });
     expect(r.commit).toMatch(/^[0-9a-f]{40}$/);

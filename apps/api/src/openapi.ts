@@ -29,7 +29,7 @@ export function buildOpenApi(specs: RouteSpec[], serverUrl: string) {
   }
   return {
     openapi: '3.1.0',
-    info: { title: 'Agent Orchestrator API', version: '1.0.0' },
+    info: { title: 'Agent Orchestration API', version: '1.0.0' },
     servers: [{ url: serverUrl }],
     paths,
     components: {

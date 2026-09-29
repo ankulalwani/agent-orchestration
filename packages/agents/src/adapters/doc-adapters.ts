@@ -339,7 +339,7 @@ const LITELLM_ERRORS: Record<string, AgentState> = {
  *     .aider.input.history into the project: `--no-gitignore` plus history files in the state
  *     directory prevent that; its repo-map cache (.aider.tags.cache.v4/) is excluded from Git locally;
  *   - `--analytics-disable` and `--no-check-update` keep it from phoning home.
- * `--no-auto-commits` is essential: the orchestrator owns Git operations (spec §42).
+ * `--no-auto-commits` is essential: the orchestration platform owns Git operations (spec §42).
  */
 export class AiderAdapter extends CliAdapter {
   readonly id = 'aider';

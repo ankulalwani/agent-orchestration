@@ -186,7 +186,7 @@ describe('runtime with mock agent', () => {
   async function run(scenario: string, opts: Parameters<typeof startAgentSession>[4] = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-rt-'));
     const inst = await mock.detect();
-    const req = { taskId: 't1', cwd: dir, prompt: 'go', provider: { providerId: 'mock', kind: 'mock', modelId: 'm' }, sessionId: randomUUID(), stateDir: path.join(dir, '.agent-orchestrator'), settings: { scenario } };
+    const req = { taskId: 't1', cwd: dir, prompt: 'go', provider: { providerId: 'mock', kind: 'mock', modelId: 'm' }, sessionId: randomUUID(), stateDir: path.join(dir, '.agent-orchestration'), settings: { scenario } };
     const session = startAgentSession(mock, inst, req, await mock.buildInvocation(req), opts);
     const events: AgentEvent[] = [];
     for await (const e of session.events) events.push(e);

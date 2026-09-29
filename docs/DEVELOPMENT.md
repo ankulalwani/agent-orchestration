@@ -31,7 +31,7 @@ Git), to run those too.
 ```bash
 docker run -d --name ao-mongo -p 27017:27017 mongo:7      # or your own mongod
 docker run -d --name ao-redis -p 6379:6379 redis:7-alpine  # optional; or your own redis-server
-export MONGODB_URI=mongodb://127.0.0.1:27017/agent_orchestrator REDIS_URL=redis://127.0.0.1:6379
+export MONGODB_URI=mongodb://127.0.0.1:27017/agent_orchestration REDIS_URL=redis://127.0.0.1:6379
 export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 export ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 pnpm dev:api        # http://127.0.0.1:4000 (migrations run on start)

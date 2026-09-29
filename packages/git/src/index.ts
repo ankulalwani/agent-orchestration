@@ -205,8 +205,8 @@ export class GitManager {
     return r.exitCode === 0 ? r.stdout.trim() : null;
   }
 
-  /** Keep the orchestrator state dir out of Git without touching the project's .gitignore. */
-  async excludeStateDir(dir = '.agent-orchestrator/') {
+  /** Keep the orchestration state dir out of Git without touching the project's .gitignore. */
+  async excludeStateDir(dir = '.agent-orchestration/') {
     const gitDir = (await this.run(['rev-parse', '--git-dir'])).stdout.trim();
     const file = path.resolve(this.cwd, gitDir, 'info', 'exclude');
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -236,7 +236,7 @@ export class GitManager {
     const skipped: FileChange[] = [];
     const warnings: string[] = [];
     for (const f of await this.status()) {
-      if (f.path.startsWith('.agent-orchestrator/')) continue;
+      if (f.path.startsWith('.agent-orchestration/')) continue;
       if (f.path in base.dirty) {
         const now = f.status.includes('D') ? null : await this.hashFile(f.path);
         if (now !== base.dirty[f.path]) warnings.push(`${f.path} had uncommitted changes before the task and was modified by the task; left unstaged for review`);
@@ -255,7 +255,7 @@ export class GitManager {
       ...(this.opts.authorName ? ['-c', `user.name=${this.opts.authorName}`] : []),
       ...(this.opts.authorEmail ? ['-c', `user.email=${this.opts.authorEmail}`] : []),
     ];
-    const msgFile = path.join(this.cwd, '.agent-orchestrator', 'metadata', `commit-msg-${Date.now()}.txt`);
+    const msgFile = path.join(this.cwd, '.agent-orchestration', 'metadata', `commit-msg-${Date.now()}.txt`);
     await fs.mkdir(path.dirname(msgFile), { recursive: true });
     await fs.writeFile(msgFile, message, 'utf8');
     try {
@@ -294,7 +294,7 @@ export class GitManager {
       a.kind === 'github'
         ? await f(`${api}/repos/${repoPath}/pulls`, {
             method: 'POST',
-            headers: { authorization: `Bearer ${a.token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestrator' },
+            headers: { authorization: `Bearer ${a.token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestration' },
             body: JSON.stringify({ title: cleanTitle, body, head, base }),
             signal: AbortSignal.timeout(30_000),
           })
@@ -314,7 +314,7 @@ export class GitManager {
 
   /** PR creation through the GitHub CLI integration, when installed and authenticated. */
   private async createPullRequestWithGh(title: string, body: string, base: string | null): Promise<string | null> {
-    const bodyFile = path.join(this.cwd, '.agent-orchestrator', 'metadata', `pr-body-${Date.now()}.md`);
+    const bodyFile = path.join(this.cwd, '.agent-orchestration', 'metadata', `pr-body-${Date.now()}.md`);
     await fs.mkdir(path.dirname(bodyFile), { recursive: true });
     await fs.writeFile(bodyFile, body, 'utf8');
     try {

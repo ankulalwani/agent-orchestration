@@ -30,7 +30,7 @@ describe('TOTP (RFC 6238)', () => {
   });
 
   it('builds otpauth URIs and unique recovery codes', () => {
-    expect(totpUri('ABC', 'a@b.c')).toBe('otpauth://totp/Agent%20Orchestrator%3Aa%40b.c?secret=ABC&issuer=Agent%20Orchestrator&algorithm=SHA1&digits=6&period=30');
+    expect(totpUri('ABC', 'a@b.c')).toBe('otpauth://totp/Agent%20Orchestration%3Aa%40b.c?secret=ABC&issuer=Agent%20Orchestration&algorithm=SHA1&digits=6&period=30');
     const codes = newRecoveryCodes();
     expect(new Set(codes).size).toBe(10);
     expect(codes[0]).toMatch(/^[a-z2-7]{5}-[a-z2-7]{5}$/);

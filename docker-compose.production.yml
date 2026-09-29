@@ -1,5 +1,5 @@
 # Production overrides: TLS via Caddy, no direct exposure of the app port, resource limits.
-#   DOMAIN=orchestrator.example.com docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+#   DOMAIN=orchestration.example.com docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
 services:
   control-plane:
     ports: !reset []

@@ -131,7 +131,7 @@ describe('server settings managed in the web app', () => {
   it('stores secrets encrypted, never returns them, and uses them (SMTP with a password, sign-in client secret)', async () => {
     const smtpUrl = `smtp://mailer:smtp-pass-stored@127.0.0.1:${smtpPort}`;
     const res = await inject('PATCH', '/admin/server/settings', adminToken, {
-      values: { SMTP_URL: smtpUrl, SMTP_FROM: 'Stored <stored@orchestrator.test>', GOOGLE_CLIENT_ID: 'google-client-id', GOOGLE_CLIENT_SECRET: 'google-secret-stored' },
+      values: { SMTP_URL: smtpUrl, SMTP_FROM: 'Stored <stored@orchestration.test>', GOOGLE_CLIENT_ID: 'google-client-id', GOOGLE_CLIENT_SECRET: 'google-secret-stored' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.body).not.toContain('smtp-pass-stored');
@@ -152,7 +152,7 @@ describe('server settings managed in the web app', () => {
     await s.auth.register({ email, password: 'reset-password-123', name: 'Reset' });
     await s.auth.requestPasswordReset(email);
     await until(() => inbox.some((m) => m.to.includes(email)), 'the reset email');
-    expect(inbox.find((m) => m.to.includes(email))!.raw).toContain('stored@orchestrator.test');
+    expect(inbox.find((m) => m.to.includes(email))!.raw).toContain('stored@orchestration.test');
     expect((await inject('GET', '/admin/server', adminToken)).json().status.email.ok).toBe(true);
   });
 

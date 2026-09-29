@@ -12,7 +12,7 @@ variable "kubeconfig_context" {
 
 variable "namespace" {
   type    = string
-  default = "agent-orchestrator"
+  default = "agent-orchestration"
 }
 
 variable "create_namespace" {
@@ -36,7 +36,7 @@ variable "image_tag" {
 }
 
 variable "public_url" {
-  description = "Public HTTPS URL of the control plane, e.g. https://orchestrator.example.com"
+  description = "Public HTTPS URL of the control plane, e.g. https://orchestration.example.com"
   type        = string
   validation {
     condition     = can(regex("^https?://", var.public_url))

@@ -55,7 +55,7 @@ export async function collectRepoFacts(root: string): Promise<RepoFacts> {
     dependencies: [...deps].slice(0, 2000),
     languages,
     isGitRepo: isRepo,
-    gitClean: status ? status.stdout.split('\n').filter((l) => l.trim() && !l.includes('.agent-orchestrator/')).length === 0 : null,
+    gitClean: status ? status.stdout.split('\n').filter((l) => l.trim() && !l.includes('.agent-orchestration/')).length === 0 : null,
     hasRemote: remotes ? remotes.stdout.trim().length > 0 : null,
     hasTests: ['test', 'tests', '__tests__', 'spec', 'e2e'].some(exists) || entries.some((e) => /\.(test|spec)\.[jt]sx?$/.test(e)) || exists('phpunit.xml') || exists('pytest.ini'),
     hasCi: exists('.github/workflows') || exists('.gitlab-ci.yml') || exists('.circleci'),

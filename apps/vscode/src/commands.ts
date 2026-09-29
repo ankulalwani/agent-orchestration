@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { OrchestratorClient, TaskSummary } from './client.js';
+import type { OrchestrationClient, TaskSummary } from './client.js';
 
 /**
  * The extension's behaviour, independent of the VS Code API so it can be tested against a real
@@ -21,7 +21,7 @@ export interface Memory {
   update(key: string, value: unknown): PromiseLike<void>;
 }
 export interface Context {
-  client: OrchestratorClient;
+  client: OrchestrationClient;
   ui: Ui;
   memory: Memory;
   webUrl: string;
@@ -36,7 +36,7 @@ export interface Selection {
   languageId: string;
 }
 
-const PROJECT_KEY = 'agentOrchestrator.projectId';
+const PROJECT_KEY = 'agentOrchestration.projectId';
 export const taskUrl = (webUrl: string, id: string) => `${webUrl.replace(/\/+$/, '')}/tasks/${id}`;
 
 /** The project tasks from this workspace go to: remembered, or picked once. */

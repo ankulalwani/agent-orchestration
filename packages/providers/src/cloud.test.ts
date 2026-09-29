@@ -133,7 +133,7 @@ describe('Bedrock provider', () => {
 
 describe('Vertex provider', () => {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const sa = { type: 'service_account', client_email: 'orchestrator@proj-1.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), token_uri: 'https://oauth2.example.test/token', project_id: 'proj-1' };
+  const sa = { type: 'service_account', client_email: 'orchestration@proj-1.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), token_uri: 'https://oauth2.example.test/token', project_id: 'proj-1' };
 
   /** Fake Google: verifies the JWT assertion with the service account's public key, then the bearer token. */
   function fakeGoogle(calls: string[]): typeof fetch {

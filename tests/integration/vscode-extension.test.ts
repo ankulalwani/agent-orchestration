@@ -11,7 +11,7 @@ import { runCommand } from '@ao/core';
 import { startTestDatabase, stopTestDatabase } from '@ao/database/testing';
 import type { Actor, Services } from '@ao/server';
 import { buildApp } from '../../apps/api/src/app.js';
-import { OrchestratorClient } from '../../apps/vscode/src/client.js';
+import { OrchestrationClient } from '../../apps/vscode/src/client.js';
 import { chooseProject, createTask, reviewCurrentBranch, selectionPrompt, taskRows, type Context, type Ui } from '../../apps/vscode/src/commands.js';
 import { makeOwner, makeServices } from '../helpers.js';
 
@@ -74,7 +74,7 @@ describe('VS Code extension commands', () => {
   it('create a task from a selection: project picked once, prompt includes the code, link opens in the browser', async () => {
     const mem = memory();
     const { ui, shown, opened } = scriptedUi(['api', 'Handle the empty cart', 'Fix empty cart crash', 'Open in browser']);
-    const ctx: Context = { client: new OrchestratorClient(base, token), ui, memory: mem, webUrl: 'https://orchestrator.test' };
+    const ctx: Context = { client: new OrchestrationClient(base, token), ui, memory: mem, webUrl: 'https://orchestration.test' };
     const task = await createTask(ctx, { text: 'const total = cart.items.reduce(sum);', file: 'src/cart.ts', startLine: 12, endLine: 12, languageId: 'typescript' });
     expect(task).toBeDefined();
     const stored = await s.tasks.get(owner, task!.id);
@@ -82,7 +82,7 @@ describe('VS Code extension commands', () => {
     expect(stored.originalPrompt).toBe(selectionPrompt('Handle the empty cart', { text: 'const total = cart.items.reduce(sum);', file: 'src/cart.ts', startLine: 12, endLine: 12, languageId: 'typescript' }));
     expect(stored.originalPrompt).toContain('`src/cart.ts` line 12');
     expect(shown[0]).toBe('pick: Project for tasks from this workspace [api, web]');
-    expect(opened).toEqual([`https://orchestrator.test/tasks/${task!.id}`]);
+    expect(opened).toEqual([`https://orchestration.test/tasks/${task!.id}`]);
 
     // The project is remembered for this workspace.
     const second = scriptedUi(['Add a README', 'Add a README', undefined]);
@@ -103,23 +103,23 @@ describe('VS Code extension commands', () => {
     await g('commit', '-qm', 'init');
     await g('checkout', '-q', '-b', 'feature/login');
     const mem = memory();
-    await mem.update('agentOrchestrator.projectId', projects[0]);
+    await mem.update('agentOrchestration.projectId', projects[0]);
     const { ui, shown } = scriptedUi(['main', undefined]);
-    const task = await reviewCurrentBranch({ client: new OrchestratorClient(base, token), ui, memory: mem, webUrl: base }, repo);
+    const task = await reviewCurrentBranch({ client: new OrchestrationClient(base, token), ui, memory: mem, webUrl: base }, repo);
     expect(shown[0]).toBe('input: Review feature/login against which branch?');
     expect(await s.tasks.get(owner, task!.id)).toMatchObject({ kind: 'review', title: 'Review feature/login', review: { base: 'main', head: 'feature/login' } });
 
     const notRepo = scriptedUi([]);
-    expect(await reviewCurrentBranch({ client: new OrchestratorClient(base, token), ui: notRepo.ui, memory: mem, webUrl: base }, os.tmpdir())).toBeUndefined();
+    expect(await reviewCurrentBranch({ client: new OrchestrationClient(base, token), ui: notRepo.ui, memory: mem, webUrl: base }, os.tmpdir())).toBeUndefined();
     expect(notRepo.shown).toEqual(['error: This workspace folder is not a Git repository.']);
   });
 
   it('task list rows, and a revoked token is reported', async () => {
-    const client = new OrchestratorClient(base, token);
+    const client = new OrchestrationClient(base, token);
     const rows = taskRows(await client.tasks((await client.whoami()).organizationId));
     expect(rows.map((r) => r.label)).toEqual(expect.arrayContaining(['Fix empty cart crash', 'Review feature/login']));
     expect(rows.find((r) => r.label === 'Review feature/login')).toMatchObject({ description: 'queued · review', icon: 'clock' });
-    await expect(new OrchestratorClient(base, 'aot_revoked').whoami()).rejects.toMatchObject({ status: 401 });
+    await expect(new OrchestrationClient(base, 'aot_revoked').whoami()).rejects.toMatchObject({ status: 401 });
   });
 
   it('every command in the extension manifest is registered by the extension', () => {

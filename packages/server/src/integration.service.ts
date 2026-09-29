@@ -218,7 +218,7 @@ export class IntegrationService {
     await record(duplicate ? `duplicate of task ${task.id}` : `created task ${task.id}`);
     if (!duplicate) {
       await audit(actor, 'integration.task_created', { type: 'task', id: task.id }, { integrationId: String(i._id), ref: parsed.ref });
-      void this.reply(i, settings, parsed.ref, parsed.refType ?? 'issue', parsed.review ? `An agent is reviewing this: ${this.taskUrl(String(i.organizationId), task.id)}` : `Task created in Agent Orchestrator: ${this.taskUrl(String(i.organizationId), task.id)}`).catch((e) => log.warn({ err: String(e) }, 'could not reply to the issue'));
+      void this.reply(i, settings, parsed.ref, parsed.refType ?? 'issue', parsed.review ? `An agent is reviewing this: ${this.taskUrl(String(i.organizationId), task.id)}` : `Task created in Agent Orchestration: ${this.taskUrl(String(i.organizationId), task.id)}`).catch((e) => log.warn({ err: String(e) }, 'could not reply to the issue'));
     }
     return { status: duplicate ? 'duplicate' : 'created', taskId: task.id };
   }
@@ -278,7 +278,7 @@ export class IntegrationService {
     const [repo, number] = ref.split('#') as [string, string];
     if (i.kind === 'github') {
       const api = (settings.apiBaseUrl || this.config.GITHUB_API_URL).replace(/\/+$/, '');
-      const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestrator' };
+      const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestration' };
       const inline = review.comments.filter((c) => c.line);
       const general = review.comments.filter((c) => !c.line);
       const post = (body: object) => this.fetchImpl(`${api}/repos/${repo}/pulls/${number}/reviews`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
@@ -312,7 +312,7 @@ export class IntegrationService {
       const api = (settings.apiBaseUrl || this.config.GITHUB_API_URL).replace(/\/+$/, '');
       res = await this.fetchImpl(`${api}/repos/${repo}/issues/${number}/comments`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestrator' },
+        headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestration' },
         body: JSON.stringify({ body: text }),
         signal: AbortSignal.timeout(15_000),
       });

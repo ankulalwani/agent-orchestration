@@ -6,7 +6,7 @@ coverage/
 .env
 .env.*
 !.env.example
-.agent-orchestrator/
+.agent-orchestration/
 .expo/
 playwright-report/
 test-results/

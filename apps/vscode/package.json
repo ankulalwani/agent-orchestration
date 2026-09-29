@@ -1,10 +1,10 @@
 {
-  "name": "agent-orchestrator-vscode",
-  "displayName": "Agent Orchestrator",
+  "name": "agent-orchestration-vscode",
+  "displayName": "Agent Orchestration",
   "description": "Hand work to coding agents from VS Code: tasks from a selection, branch reviews, and your tasks' progress.",
   "version": "0.1.2",
   "private": true,
-  "publisher": "agent-orchestrator",
+  "publisher": "agent-orchestration",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
     "vscode": "^1.90.0"
@@ -16,14 +16,14 @@
   "activationEvents": [],
   "contributes": {
     "configuration": {
-      "title": "Agent Orchestrator",
+      "title": "Agent Orchestration",
       "properties": {
-        "agentOrchestrator.serverUrl": {
+        "agentOrchestration.serverUrl": {
           "type": "string",
           "default": "",
-          "description": "Control plane URL, e.g. https://orchestrator.example.com"
+          "description": "Control plane URL, e.g. https://orchestration.example.com"
         },
-        "agentOrchestrator.webUrl": {
+        "agentOrchestration.webUrl": {
           "type": "string",
           "default": "",
           "description": "Dashboard URL for task links (defaults to the server URL)"
@@ -32,80 +32,80 @@
     },
     "commands": [
       {
-        "command": "agentOrchestrator.signIn",
+        "command": "agentOrchestration.signIn",
         "title": "Sign in with an API token",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       },
       {
-        "command": "agentOrchestrator.signOut",
+        "command": "agentOrchestration.signOut",
         "title": "Sign out",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       },
       {
-        "command": "agentOrchestrator.createTask",
+        "command": "agentOrchestration.createTask",
         "title": "Create task…",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       },
       {
-        "command": "agentOrchestrator.createTaskFromSelection",
+        "command": "agentOrchestration.createTaskFromSelection",
         "title": "Create task from selection…",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       },
       {
-        "command": "agentOrchestrator.reviewBranch",
+        "command": "agentOrchestration.reviewBranch",
         "title": "Review the current branch",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       },
       {
-        "command": "agentOrchestrator.chooseProject",
+        "command": "agentOrchestration.chooseProject",
         "title": "Choose project for this workspace",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       },
       {
-        "command": "agentOrchestrator.refresh",
+        "command": "agentOrchestration.refresh",
         "title": "Refresh",
-        "category": "Agent Orchestrator",
+        "category": "Agent Orchestration",
         "icon": "$(refresh)"
       },
       {
-        "command": "agentOrchestrator.openTask",
+        "command": "agentOrchestration.openTask",
         "title": "Open in browser",
-        "category": "Agent Orchestrator"
+        "category": "Agent Orchestration"
       }
     ],
     "views": {
       "explorer": [
         {
-          "id": "agentOrchestrator.tasks",
+          "id": "agentOrchestration.tasks",
           "name": "Agent tasks"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "agentOrchestrator.tasks",
-        "contents": "Connect to your Agent Orchestrator server with a personal API token (dashboard: Settings → Your account → API tokens).\n[Sign in](command:agentOrchestrator.signIn)"
+        "view": "agentOrchestration.tasks",
+        "contents": "Connect to your Agent Orchestration server with a personal API token (dashboard: Settings → Your account → API tokens).\n[Sign in](command:agentOrchestration.signIn)"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "agentOrchestrator.createTaskFromSelection",
+          "command": "agentOrchestration.createTaskFromSelection",
           "when": "editorHasSelection",
-          "group": "agentOrchestrator"
+          "group": "agentOrchestration"
         }
       ],
       "view/title": [
         {
-          "command": "agentOrchestrator.refresh",
-          "when": "view == agentOrchestrator.tasks",
+          "command": "agentOrchestration.refresh",
+          "when": "view == agentOrchestration.tasks",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "agentOrchestrator.openTask",
-          "when": "view == agentOrchestrator.tasks && viewItem == task"
+          "command": "agentOrchestration.openTask",
+          "when": "view == agentOrchestration.tasks && viewItem == task"
         }
       ]
     }

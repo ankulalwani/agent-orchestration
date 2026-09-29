@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the self-hosted image
-        run: docker build -f deployment/docker/control-plane.Dockerfile -t agent-orchestrator:ci .
+        run: docker build -f deployment/docker/control-plane.Dockerfile -t agent-orchestration:ci .
       - name: Start with Docker Compose and check health
         run: |
           cp .env.example .env

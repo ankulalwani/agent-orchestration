@@ -58,7 +58,7 @@ export class InvitationService {
     await this.mailer.send(
       normalized,
       `You're invited to ${org?.name ?? 'an organization'}`,
-      `${inviter?.name ?? 'A member'} invited you to join ${org?.name ?? 'their organization'} on Agent Orchestrator as ${role.toLowerCase()}.\n\nAccept: ${inviteUrl}\nThis link expires in 7 days.`,
+      `${inviter?.name ?? 'A member'} invited you to join ${org?.name ?? 'their organization'} on Agent Orchestration as ${role.toLowerCase()}.\n\nAccept: ${inviteUrl}\nThis link expires in 7 days.`,
     );
     await audit(actor, 'member.invite', { type: 'invitation', id: String(inv._id) }, { email: normalized, role });
     // The link is also returned so the inviter can share it when the server has no email configured.

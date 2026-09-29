@@ -5,7 +5,7 @@ COMPLETE means implemented, integrated, tested, verified and documented (spec §
 **Evidence** names the tests or manual verification behind each status. Paths are relative to the repository root.
 
 Last full refresh: 2026-09-28.
-- Test suite: **391 tests in 60 files, all passing** (5 are opt-in: 4 real-agent-CLI tests and the live Claude Code task; the VS Code host test runs with `pnpm --filter agent-orchestrator-vscode test:vscode`) (`npx vitest run`: unit, integration on MongoDB 8.3, end-to-end, chaos, and Playwright/Chromium browser tests).
+- Test suite: **391 tests in 60 files, all passing** (5 are opt-in: 4 real-agent-CLI tests and the live Claude Code task; the VS Code host test runs with `pnpm --filter agent-orchestration-vscode test:vscode`) (`npx vitest run`: unit, integration on MongoDB 8.3, end-to-end, chaos, and Playwright/Chromium browser tests).
 - Manual verification: separately started `mongod` + API + worker + CLI processes, and the production API bundle run with plain `node`.
 
 ## CORE — repository & foundation
@@ -155,7 +155,7 @@ Last full refresh: 2026-09-28.
 | FUT-004 | QA agent flow | 76 | COMPLETE | Browser/smoke steps can start the app and stop it afterwards; `discover` visits linked pages, configured paths and routes from file-based routers (Next.js, Nuxt, SvelteKit, Remix, Astro), reporting each broken page with screenshots (`qa-discovery.test.ts` in real Chromium, `routes.test.ts`). No form filling or signed-in crawling |
 | FUT-005 | Project knowledge | 77 | COMPLETE | Organization, project and task knowledge, each under its own heading in the prompt's Knowledge section, also after a worker restart (`task-engine.test.ts`, `misc.test.ts`); web (Settings, project page, New task) and CLI (`--knowledge-file`) |
 | FUT-006 | Environment profiles | 78 | COMPLETE | A task's environment profile reaches the worker with its variables and resolved secret values (audited), as environment variables of the agent and the verification steps; values are scrubbed from recorded output; a missing secret stops the task; per-environment approval (`worker-flow.test.ts`: approval, agent and verification see the values, scrubbing mutation-checked, missing secret) |
-| FUT-007 | IDE/extension entry points | 87 | COMPLETE | VS Code extension (`apps/vscode`): sign in with an API token (secret storage), create a task from a selection (code, file and lines in the prompt) or free text, review the current branch, Explorer task list with status and attention states, links to the dashboard; commands tested against a real control plane (`vscode-extension.test.ts`); activation and command registration verified in VS Code 1.139.1 (`pnpm --filter agent-orchestrator-vscode test:vscode`, opt-in); packaged with `vsce`. Not published to the Marketplace; no JetBrains plugin |
+| FUT-007 | IDE/extension entry points | 87 | COMPLETE | VS Code extension (`apps/vscode`): sign in with an API token (secret storage), create a task from a selection (code, file and lines in the prompt) or free text, review the current branch, Explorer task list with status and attention states, links to the dashboard; commands tested against a real control plane (`vscode-extension.test.ts`); activation and command registration verified in VS Code 1.139.1 (`pnpm --filter agent-orchestration-vscode test:vscode`, opt-in); packaged with `vsce`. Not published to the Marketplace; no JetBrains plugin |
 
 ## TEST / DOCS / LEGAL
 | ID | Requirement | § | Status | Evidence / notes |

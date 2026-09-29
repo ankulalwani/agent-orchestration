@@ -1,5 +1,5 @@
 # Control plane image: API + web dashboard in one container (web served by the API).
-# Build from the repository root:  docker build -f deployment/docker/control-plane.Dockerfile -t agent-orchestrator .
+# Build from the repository root:  docker build -f deployment/docker/control-plane.Dockerfile -t agent-orchestration .
 
 FROM node:22-bookworm-slim AS build
 WORKDIR /repo

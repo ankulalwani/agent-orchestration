@@ -107,7 +107,7 @@ export default function Login() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen>
         <View style={{ height: 48 }} />
-        <T bold style={{ fontSize: 24 }}>Agent Orchestrator</T>
+        <T bold style={{ fontSize: 24 }}>Agent Orchestration</T>
         <T muted>Monitor tasks, approve work and respond to agents.</T>
         <Card>
           {HOSTED_URL ? (
@@ -116,7 +116,7 @@ export default function Login() {
               <Switch accessibilityLabel="Use my self-hosted server" value={selfHosted} onValueChange={setSelfHosted} />
             </Row>
           ) : null}
-          {selfHosted && <Input label="Server URL" value={server} onChangeText={setServer} placeholder="https://orchestrator.example.com" autoCapitalize="none" autoCorrect={false} keyboardType="url" />}
+          {selfHosted && <Input label="Server URL" value={server} onChangeText={setServer} placeholder="https://orchestration.example.com" autoCapitalize="none" autoCorrect={false} keyboardType="url" />}
           <Input label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
           <Input label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="password" textContentType="password" />
           <ErrorText error={error} />

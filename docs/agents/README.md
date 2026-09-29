@@ -49,7 +49,7 @@ Targets are ranked by preference, not by a hard-coded "best agent" list.
 
 Every agent receives the same agent-neutral instructions (`packages/core/src/execution-prompt.ts`). These tell it to:
 - inspect before changing anything;
-- keep progress in `.agent-orchestrator/progress/<task>.json`;
+- keep progress in `.agent-orchestration/progress/<task>.json`;
 - write and run tests;
 - never run destructive Git commands;
 - stay inside the project;
@@ -68,10 +68,10 @@ diverged from `base`, instead of changing code. The worker:
 
 1. resolves both refs, fetching them from `origin` when there is one (for pull and merge requests it
    fetches `pull/<n>/head` or `refs/merge-requests/<n>/head`);
-2. checks the head out into a **separate Git worktree** under `.agent-orchestrator/worktrees/`, so your
+2. checks the head out into a **separate Git worktree** under `.agent-orchestration/worktrees/`, so your
    own checkout and branch are never touched, and runs the agent there with the diff in its prompt;
 3. accepts the review only if the agent changed no files and wrote a valid
-   `.agent-orchestrator/progress/<task>.review.json` (`summary`, `verdict`: approve / comment /
+   `.agent-orchestration/progress/<task>.review.json` (`summary`, `verdict`: approve / comment /
    request_changes, `comments` with `path`, optional `line`, `severity` and `body`). Otherwise the
    agent's changes are discarded and it is sent back with the reason;
 4. completes the task with the review in the report (no commit, no branch), and removes the worktree.
@@ -82,7 +82,7 @@ A task of type **Plan** (`kind: "plan"`, **New task → Plan**, or `agentctl tas
 agent to act as project manager: study the repository and break the goal into up to 30 tasks, each
 self-contained and verifiable, with dependencies where one needs another first. Like a review, it runs
 in a worktree of the current commit and must not change files. The plan is accepted only if
-`.agent-orchestrator/progress/<task>.plan.json` is valid: unique keys, known dependencies, no cycles.
+`.agent-orchestration/progress/<task>.plan.json` is valid: unique keys, known dependencies, no cycles.
 Otherwise the agent is sent back.
 
 Nothing is created until someone with permission to create tasks clicks **Create N tasks** on the

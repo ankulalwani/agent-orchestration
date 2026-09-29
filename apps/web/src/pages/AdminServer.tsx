@@ -120,7 +120,7 @@ export function AdminServerPage() {
             <tr>
               <td>Version</td>
               <td />
-              <td className="small">Agent Orchestrator {o.version} · Node.js {o.node} · {o.deploymentMode}</td>
+              <td className="small">Agent Orchestration {o.version} · Node.js {o.node} · {o.deploymentMode}</td>
             </tr>
           </tbody>
         </table>

@@ -16,7 +16,7 @@ export const serverConfigSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PUBLIC_URL: z.string().url().default('http://localhost:4000'),
   WEB_URL: z.string().url().default('http://localhost:5173'),
-  MONGODB_URI: z.string().min(1).default('mongodb://127.0.0.1:27017/agent_orchestrator'),
+  MONGODB_URI: z.string().min(1).default('mongodb://127.0.0.1:27017/agent_orchestration'),
   REDIS_URL: z.string().optional(),
   /** ≥32 chars. Signs access tokens. */
   JWT_SECRET: z.string().min(32),
@@ -70,7 +70,7 @@ export const serverConfigSchema = z.object({
   OIDC_DISPLAY_NAME: z.string().default('Single sign-on'),
   OIDC_SCOPES: z.string().default('openid email profile'),
   SMTP_URL: z.string().optional(),
-  SMTP_FROM: z.string().default('Agent Orchestrator <no-reply@localhost>'),
+  SMTP_FROM: z.string().default('Agent Orchestration <no-reply@localhost>'),
   /** Expo push is an outbound call to a third party: disabled unless explicitly enabled (spec §127). */
   EXPO_PUSH_ENABLED: bool.default('false'),
   S3_ENDPOINT: z.string().optional(),

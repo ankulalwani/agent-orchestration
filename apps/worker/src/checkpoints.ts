@@ -3,18 +3,18 @@ import path from 'node:path';
 import type { Checkpoint } from '@ao/core';
 
 /**
- * Checkpoints and task state in `<project>/.agent-orchestrator/` (spec §26). The agent maintains
+ * Checkpoints and task state in `<project>/.agent-orchestration/` (spec §26). The agent maintains
  * progress/<taskId>.json (instructed by the execution wrapper); the worker turns it into immutable
  * checkpoint files and sends each checkpoint to the control plane.
  */
-export const STATE_DIR = '.agent-orchestrator';
+export const STATE_DIR = '.agent-orchestration';
 export const STATE_SUBDIRS = ['task-state', 'checkpoints', 'progress', 'logs', 'plans', 'verification', 'metadata', 'prompts'];
 
 export function ensureStateDir(projectRoot: string) {
   const root = path.join(projectRoot, STATE_DIR);
   for (const d of STATE_SUBDIRS) fs.mkdirSync(path.join(root, d), { recursive: true });
   const readme = path.join(root, 'README.md');
-  if (!fs.existsSync(readme)) fs.writeFileSync(readme, 'Orchestrator task state. Excluded from Git via .git/info/exclude. Do not store secrets here.\n');
+  if (!fs.existsSync(readme)) fs.writeFileSync(readme, 'Orchestration task state. Excluded from Git via .git/info/exclude. Do not store secrets here.\n');
   return root;
 }
 

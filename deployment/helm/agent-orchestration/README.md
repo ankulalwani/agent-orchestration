@@ -6,10 +6,10 @@ Kubernetes is not required; Docker Compose or plain Node.js are fully supported 
 not been rendered or installed.
 
 ```bash
-kubectl create secret generic agent-orchestrator \
+kubectl create secret generic agent-orchestration \
   --from-literal=JWT_SECRET=... --from-literal=ENCRYPTION_KEY=... \
   --from-literal=MONGODB_URI=mongodb://... --from-literal=REDIS_URL=redis://...
-helm install ao deployment/helm/agent-orchestrator --set image.repository=<registry>/agent-orchestrator
+helm install ao deployment/helm/agent-orchestration --set image.repository=<registry>/agent-orchestration
 ```
 
 Use MongoDB (self-managed or MongoDB Atlas) and Redis. Only real MongoDB (7/8) has been tested; "MongoDB-compatible"

@@ -29,7 +29,7 @@ One-off commands run in the container, for example `docker compose exec control-
 ### Production
 
 ```bash
-DOMAIN=orchestrator.example.com docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+DOMAIN=orchestration.example.com docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
 ```
 
 This adds Caddy with automatic HTTPS, stops exposing port 4000 directly, trusts the proxy, and sets resource limits. `ports: !reset []` needs Docker Compose 2.24 or newer.
@@ -43,13 +43,13 @@ npm install -g pnpm        # switches to the version pinned in package.json
 pnpm install --frozen-lockfile
 pnpm --filter @ao/web build
 pnpm --filter @ao/api build
-pnpm --config.node-linker=hoisted --filter @ao/api deploy --prod /opt/agent-orchestrator/api
-cp -r apps/web/dist /opt/agent-orchestrator/web
+pnpm --config.node-linker=hoisted --filter @ao/api deploy --prod /opt/agent-orchestration/api
+cp -r apps/web/dist /opt/agent-orchestration/web
 
-cd /opt/agent-orchestrator/api
-MONGODB_URI=mongodb://127.0.0.1:27017/agent_orchestrator \
+cd /opt/agent-orchestration/api
+MONGODB_URI=mongodb://127.0.0.1:27017/agent_orchestration \
 JWT_SECRET=… ENCRYPTION_KEY=… \
-WEB_DIST_DIR=/opt/agent-orchestrator/web PUBLIC_URL=https://orchestrator.example.com WEB_URL=https://orchestrator.example.com \
+WEB_DIST_DIR=/opt/agent-orchestration/web PUBLIC_URL=https://orchestration.example.com WEB_URL=https://orchestration.example.com \
 node dist/main.js
 ```
 

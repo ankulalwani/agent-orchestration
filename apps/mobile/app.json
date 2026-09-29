@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "Agent Orchestrator",
-    "slug": "agent-orchestrator",
+    "name": "Agent Orchestration",
+    "slug": "agent-orchestration",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.agentorchestrator.mobile"
+      "bundleIdentifier": "com.agentorchestration.mobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.agentorchestrator.mobile"
+      "package": "com.agentorchestration.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -31,6 +31,6 @@
         {}
       ]
     ],
-    "scheme": "agentorchestrator"
+    "scheme": "agentorchestration"
   }
 }

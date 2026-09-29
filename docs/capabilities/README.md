@@ -6,7 +6,7 @@ Four distinct types share one manifest format (`packages/core/src/capabilities.t
 |---|---|---|
 | `skill` | Instructions or knowledge for agents | Injected into the execution prompt for compatible agents |
 | `mcp` | External tool/data server (stdio, http, sse) | Passed to agents that support MCP (Claude Code via `--mcp-config`) |
-| `plugin` | Extension of the orchestrator itself | Code run by workers at task hooks, in a restricted process (see [Plugins](#plugins)). Off unless the `plugins.execution` feature flag is on. |
+| `plugin` | Extension of the orchestration platform itself | Code run by workers at task hooks, in a restricted process (see [Plugins](#plugins)). Off unless the `plugins.execution` feature flag is on. |
 | `integration` | Connection to an external service | Registry only |
 
 ## No mandatory marketplace

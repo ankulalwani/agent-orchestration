@@ -1,15 +1,15 @@
 <#
-.SYNOPSIS  Removes the Agent Orchestrator worker for the current user.
+.SYNOPSIS  Removes the Agent Orchestration worker for the current user.
 .PARAMETER RemoveData  Also delete worker data (configuration, event buffer, encrypted credentials file) and
                        the worker entries in Windows Credential Manager. Project directories are never touched.
 #>
 [CmdletBinding()]
 param(
-  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AgentOrchestrator\worker-app'),
+  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AgentOrchestration\worker-app'),
   [switch]$RemoveData
 )
 $ErrorActionPreference = 'Stop'
-$TaskName = 'AgentOrchestratorWorker'
+$TaskName = 'AgentOrchestrationWorker'
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
@@ -24,15 +24,15 @@ $Bin = Join-Path $InstallDir 'bin'
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 [Environment]::SetEnvironmentVariable('Path', (($userPath -split ';') | Where-Object { $_ -and $_ -ne $Bin }) -join ';', 'User')
 if ($RemoveData) {
-  $data = Join-Path $env:APPDATA 'AgentOrchestrator\worker'
+  $data = Join-Path $env:APPDATA 'AgentOrchestration\worker'
   if (Test-Path $data) { Remove-Item -Recurse -Force $data; Write-Host "Removed worker data $data" }
-  $creds = cmdkey /list | Select-String 'agent-orchestrator-worker' | ForEach-Object { ($_ -split 'target=')[1].Trim() }
+  $creds = cmdkey /list | Select-String 'agent-orchestration-worker' | ForEach-Object { ($_ -split 'target=')[1].Trim() }
   foreach ($c in $creds) { cmdkey /delete:$c | Out-Null }
   Write-Host 'Removed worker credentials from Windows Credential Manager'
 } else {
   Write-Host 'Worker data and credentials were kept (use -RemoveData to delete them).'
 }
-# The AgentOrchestrator folders the installer created, once nothing is left in them.
-foreach ($parent in @((Split-Path $InstallDir -Parent), (Join-Path $env:APPDATA 'AgentOrchestrator'))) {
+# The AgentOrchestration folders the installer created, once nothing is left in them.
+foreach ($parent in @((Split-Path $InstallDir -Parent), (Join-Path $env:APPDATA 'AgentOrchestration'))) {
   if ((Test-Path $parent) -and -not (Get-ChildItem -Force $parent)) { Remove-Item $parent }
 }

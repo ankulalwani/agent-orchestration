@@ -3,13 +3,13 @@ const assert = require('node:assert');
 const vscode = require('vscode');
 
 exports.run = async function run() {
-  const ext = vscode.extensions.getExtension('agent-orchestrator.agent-orchestrator-vscode');
+  const ext = vscode.extensions.getExtension('agent-orchestration.agent-orchestration-vscode');
   assert.ok(ext, 'extension is installed');
   await ext.activate();
   const commands = await vscode.commands.getCommands(true);
   const ours = ext.packageJSON.contributes.commands.map((c) => c.command);
   for (const c of ours) assert.ok(commands.includes(c), `command ${c} is registered`);
   // Without a server or token, the tree is empty rather than failing.
-  await vscode.commands.executeCommand('agentOrchestrator.refresh');
+  await vscode.commands.executeCommand('agentOrchestration.refresh');
   console.log(`VSCODE-EXTENSION-OK ${ours.length} commands, VS Code ${vscode.version}`);
 };

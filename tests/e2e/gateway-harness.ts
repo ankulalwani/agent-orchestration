@@ -50,7 +50,7 @@ export async function runThroughGateway(agentId: string, opts: { timeoutMs?: num
   const llm = await new FakeLlm().start();
   const gateway = new ModelGateway();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ao-gw-${agentId}-`));
-  const stateDir = path.join(dir, '.agent-orchestrator');
+  const stateDir = path.join(dir, '.agent-orchestration');
   fs.mkdirSync(stateDir, { recursive: true });
   await runCommand('git', ['init', '-q', '-b', 'main'], { cwd: dir });
   llm.handler = scriptedModel(dir);

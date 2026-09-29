@@ -260,7 +260,7 @@ export class AuthService {
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(claims.sub)
       .setIssuedAt()
-      .setIssuer('agent-orchestrator')
+      .setIssuer('agent-orchestration')
       .setAudience('ao-api')
       .setExpirationTime(`${this.config.ACCESS_TOKEN_TTL_SEC}s`)
       .sign(this.secret);
@@ -268,7 +268,7 @@ export class AuthService {
 
   async verifyAccess(token: string): Promise<AccessClaims> {
     try {
-      const { payload } = await jwtVerify(token, this.secret, { issuer: 'agent-orchestrator', audience: 'ao-api', algorithms: ['HS256'] });
+      const { payload } = await jwtVerify(token, this.secret, { issuer: 'agent-orchestration', audience: 'ao-api', algorithms: ['HS256'] });
       if (!payload.sub) throw new Error('no sub');
       return { sub: payload.sub, pa: payload.pa === true };
     } catch {
@@ -383,7 +383,7 @@ export class AuthService {
     await this.mailer.send(
       target.email,
       'Two-factor authentication was turned off on your account',
-      `An administrator turned off two-factor authentication on your Agent Orchestrator account and signed you out everywhere.\nReason given: ${reason}\n\nSign in with your password and turn two-factor authentication on again in Settings → Your account. If you did not ask for this, change your password and contact your administrator.`,
+      `An administrator turned off two-factor authentication on your Agent Orchestration account and signed you out everywhere.\nReason given: ${reason}\n\nSign in with your password and turn two-factor authentication on again in Settings → Your account. If you did not ask for this, change your password and contact your administrator.`,
     );
   }
 

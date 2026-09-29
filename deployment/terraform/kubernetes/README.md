@@ -1,6 +1,6 @@
-# Terraform: Agent Orchestrator on Kubernetes
+# Terraform: Agent Orchestration on Kubernetes
 
-Deploys the control plane with the [Helm chart](../../helm/agent-orchestrator) into any Kubernetes cluster:
+Deploys the control plane with the [Helm chart](../../helm/agent-orchestration) into any Kubernetes cluster:
 Amazon EKS, Google GKE, Azure AKS or your own. MongoDB (and Redis, for more than one replica) are external,
 for example MongoDB Atlas and a managed Redis.
 
@@ -12,16 +12,16 @@ Optionally it adds autoscaling (`autoscaling_max_replicas`) and Prometheus Opera
 ```hcl
 # terraform.tfvars
 kubeconfig_context       = "prod"             # after aws eks / gcloud / az get-credentials
-image_repository         = "registry.example.com/agent-orchestrator"
+image_repository         = "registry.example.com/agent-orchestration"
 image_tag                = "0.1.2"
-public_url               = "https://orchestrator.example.com"
-mongodb_uri              = "mongodb+srv://…/agent_orchestrator"
+public_url               = "https://orchestration.example.com"
+mongodb_uri              = "mongodb+srv://…/agent_orchestration"
 redis_url                = "rediss://…"
 replicas                 = 2
 autoscaling_max_replicas = 6
-ingress_host             = "orchestrator.example.com"
+ingress_host             = "orchestration.example.com"
 ingress_class_name       = "nginx"
-ingress_tls_secret       = "orchestrator-tls"
+ingress_tls_secret       = "orchestration-tls"
 backup_s3_bucket         = "my-backups"
 s3_access_key_id         = "…"
 s3_secret_access_key     = "…"

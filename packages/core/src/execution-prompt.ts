@@ -25,7 +25,7 @@ export interface ExecutionPromptInput {
   title: string;
   prompt: string; // normalizedPrompt ?? originalPrompt
   plan?: string | null;
-  stateDir: string; // relative, normally ".agent-orchestrator"
+  stateDir: string; // relative, normally ".agent-orchestration"
   checkpoint?: Checkpoint | null;
   verificationFailures?: string | null;
   remediationAttempt?: number;
@@ -55,7 +55,7 @@ export function buildExecutionPrompt(i: ExecutionPromptInput): string {
     parts.push(
       [
         '## Repositories',
-        'This project consists of several Git repositories. Change whichever of them the task needs; the orchestrator commits each one separately.',
+        'This project consists of several Git repositories. Change whichever of them the task needs; the orchestration platform commits each one separately.',
         ...i.repositories!.map((r) => `- ${r.name}: \`${r.path}\`${r.primary ? ' (primary; your working directory)' : ''}`),
       ].join('\n'),
     );
@@ -148,9 +148,9 @@ export function buildExecutionPrompt(i: ExecutionPromptInput): string {
       '5. Write or update tests for the change. Run the tests, type checking, linting and build that the project provides.',
       '6. Where the change affects a UI or API, perform the applicable browser/API/smoke verification.',
       '7. Fix failures you find. Never claim completion without having run verification.',
-      '8. Never run destructive Git commands (force push, reset --hard, clean, branch deletion). Do not commit; the orchestrator handles Git.',
+      '8. Never run destructive Git commands (force push, reset --hard, clean, branch deletion). Do not commit; the orchestration platform handles Git.',
       '9. Never print, log or commit secrets.',
-      `10. Stay inside the project ${multiRepo ? 'repositories listed above' : 'directory'}. The directory \`${i.stateDir}/\` is for orchestrator state — do not delete it.`,
+      `10. Stay inside the project ${multiRepo ? 'repositories listed above' : 'directory'}. The directory \`${i.stateDir}/\` is for orchestration state — do not delete it.`,
       `11. Finish by writing a completion report to \`${reportFile}\` with sections: Summary, Requirements (each marked done/not done), Implementation, Files changed, Tests executed, Verification, Known limitations, Remaining work, Warnings.`,
       '12. If anything remains incomplete, say so explicitly in the report and in the progress file.',
     ].join('\n'),

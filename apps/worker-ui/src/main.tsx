@@ -240,7 +240,7 @@ function Connection({ s, reload }: { s: Status; reload: () => void }) {
               {s.hostedUrl && <label className="row"><input type="radio" name="mode" checked={mode === 'hosted'} onChange={() => setMode('hosted')} /> Hosted service ({new URL(s.hostedUrl).host})</label>}
               <label className="row"><input type="radio" name="mode" checked={mode === 'self-hosted'} onChange={() => setMode('self-hosted')} /> My self-hosted server</label>
             </fieldset>
-            {mode === 'self-hosted' && <Field label="Control plane URL">{(id) => <Input id={id} placeholder="https://orchestrator.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />}</Field>}
+            {mode === 'self-hosted' && <Field label="Control plane URL">{(id) => <Input id={id} placeholder="https://orchestration.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />}</Field>}
             <Field label="Worker name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
             <div><Button variant="primary" loading={busy} disabled={mode === 'self-hosted' && !url} onClick={() => void connect()}>Start pairing</Button></div>
           </div>

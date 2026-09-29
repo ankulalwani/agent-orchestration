@@ -43,7 +43,7 @@ async function setSession(s: AuthResponse | null) {
 
 export function normalizeServer(url: string): string {
   const u = url.trim().replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(u)) throw new Error('Enter a full URL, e.g. https://orchestrator.example.com');
+  if (!/^https?:\/\//i.test(u)) throw new Error('Enter a full URL, e.g. https://orchestration.example.com');
   return u;
 }
 

@@ -9,7 +9,7 @@ services:
       dockerfile: deployment/docker/control-plane.Dockerfile
     env_file: .env
     environment:
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/agent_orchestrator}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/agent_orchestration}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
       - "4000:4000"

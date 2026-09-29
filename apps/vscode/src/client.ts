@@ -1,5 +1,5 @@
 /**
- * Minimal Agent Orchestrator API client for the VS Code extension, authenticated with a personal API
+ * Minimal Agent Orchestration API client for the VS Code extension, authenticated with a personal API
  * token (`aot_…`). No dependencies: the extension host provides `fetch` (Node 18+).
  */
 export interface TaskSummary {
@@ -27,7 +27,7 @@ export class ApiError extends Error {
   }
 }
 
-export class OrchestratorClient {
+export class OrchestrationClient {
   constructor(
     readonly serverUrl: string,
     private readonly token: string,

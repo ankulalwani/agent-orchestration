@@ -98,7 +98,7 @@ export async function openCompletion(chain: GatewayTarget[], req: ChatRequest, h
           'content-type': 'application/json',
           accept: 'text/event-stream',
           ...(target.apiKey ? { authorization: `Bearer ${target.apiKey}` } : {}),
-          ...(target.kind === 'openrouter' ? { 'x-title': 'Agent Orchestrator' } : {}),
+          ...(target.kind === 'openrouter' ? { 'x-title': 'Agent Orchestration' } : {}),
         },
         body: JSON.stringify(body),
         signal,
