@@ -136,7 +136,7 @@ function Suggested({ projects, onInstall }: { projects: ProjectDto[]; onInstall:
       <Card>
         <div className="stack">
           <Field label="What are you working on?" hint="A task, a feature, or a description of the project. Technologies and kinds of work are picked out of the text.">
-            {(id) => <Textarea id={id} rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add Stripe subscriptions to our Next.js app, with Playwright tests for checkout…" />}
+            {(id) => <Textarea id={id} rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add OAuth sign-in to our Next.js app, with Playwright tests for the login flow…" />}
           </Field>
           <div className="row" style={{ flexWrap: 'wrap' }}>
             <Select aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ maxWidth: 260 }}>

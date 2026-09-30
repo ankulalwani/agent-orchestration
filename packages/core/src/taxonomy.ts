@@ -172,7 +172,6 @@ export const TECHNOLOGIES: readonly TechnologyDef[] = [
   T('google-drive', 'Google Drive', ['files', 'productivity'], ['google drive', 'google docs', 'google sheets']),
   T('dropbox', 'Dropbox', ['files']),
   T('figma', 'Figma', ['design'], ['figma_access_token']),
-  T('stripe', 'Stripe', ['commerce'], ['stripe_secret_key'], ['stripe']),
   T('shopify', 'Shopify', ['commerce']),
   T('salesforce', 'Salesforce', ['commerce']),
   T('hubspot', 'HubSpot', ['commerce', 'communication']),
