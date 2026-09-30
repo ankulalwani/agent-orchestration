@@ -1,0 +1,80 @@
+name: Agent Orchestration
+description:
+  Agent Orchestration is a self-hosted control plane for AI coding agents. It
+  dispatches tasks to workers on your own machines, where Claude Code, Codex,
+  Gemini CLI, OpenCode or Aider do the work. Every task is verified with your
+  own commands (tests, typecheck, build) and committed on a task branch, and the
+  report separates verified results from the agent's claims. This template runs
+  the API and web dashboard with MongoDB and Redis. Self-hosted installations
+  make no calls to vendor infrastructure and have no limits on tasks, workers,
+  members or projects.
+instructions:
+  Open the app domain and create the first account right away. The first
+  account becomes the platform administrator. Then set ALLOW_REGISTRATION=false
+  in the app's environment, or turn off registration in the dashboard (Server
+  settings), and invite members from Settings → Members. Back up the
+  ENCRYPTION_KEY value from the app's environment. Without it, stored secrets
+  cannot be recovered. Workers run on developer machines and connect outbound to
+  this server; see the self-hosting guide to install one.
+changeLog:
+  - date: 2026-09-30
+    description: first release (0.2.0)
+links:
+  - label: Github
+    url: https://github.com/ankulalwani/agent-orchestration
+  - label: Self-hosting guide
+    url: https://github.com/ankulalwani/agent-orchestration/blob/main/docs/SELF_HOSTING.md
+contributors:
+  - name: Ankul Alwani
+    url: https://github.com/ankulalwani
+schema:
+  type: object
+  required:
+    - appServiceName
+    - appServiceImage
+  properties:
+    appServiceName:
+      type: string
+      title: App Service Name
+      default: agent-orchestration
+    appServiceImage:
+      type: string
+      title: App Service Image
+      default: ghcr.io/ankulalwani/agent-orchestration:0.2.0
+    allowRegistration:
+      type: boolean
+      title: Allow registration after the first account
+      default: true
+benefits:
+  - title: Your Agents, Your Machines
+    description:
+      Tasks run on workers you control, with the coding agents already signed
+      in there. Code, prompts and keys stay on your infrastructure.
+  - title: Verified Results
+    description:
+      Each task runs your verification commands and is committed on its own
+      branch. Reports show what was verified and what the agent only claimed.
+  - title: No Limits
+    description:
+      The self-hosted control plane has no licence checks, telemetry or limits
+      on tasks, workers, members or projects.
+features:
+  - title: Multi-Agent Dispatch
+    description:
+      Works with Claude Code, Codex, Gemini CLI, OpenCode and Aider, with
+      fallback models when an agent reaches its usage limit.
+  - title: Web Dashboard, Mobile App and IDE
+    description:
+      Manage projects, tasks and workers from the dashboard, the mobile app or
+      the VS Code extension.
+  - title: Single Sign-On
+    description:
+      Sign in with Google, GitHub or any OpenID Connect provider.
+  - title: Capability Registry
+    description:
+      Share skills, MCP servers and capabilities across your installation.
+tags:
+  - AI
+  - Developer Tools
+  - Automation
+  - Agents
