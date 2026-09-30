@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prints an Easypanel template schema (JSON) with fresh secrets, for installations that don't use the
 // official template: Easypanel → project → Templates → Create from Schema → paste the output.
-//   node deployment/easypanel/generate-schema.mjs [--name agent-orchestration] [--image ghcr.io/...:0.2.0]
+//   node deployment/easypanel/generate-schema.mjs [--name agent-orchestration] [--image ghcr.io/...:0.2.1]
 // Mirrors deployment/easypanel/agent-orchestration/index.ts; keep the two in sync.
 import { randomBytes } from 'node:crypto';
 
@@ -12,7 +12,7 @@ const arg = (flag, fallback) => {
 };
 
 const name = arg('--name', 'agent-orchestration');
-const image = arg('--image', 'ghcr.io/ankulalwani/agent-orchestration:1');
+const image = arg('--image', 'ghcr.io/ankulalwani/agent-orchestration:0.2.1');
 // Easypanel passwords: letters and digits only, so they need no escaping in connection URLs.
 const password = () => randomBytes(15).toString('base64url').replace(/[-_]/g, '').slice(0, 20).padEnd(20, '0');
 const hex = (bytes) => randomBytes(bytes).toString('hex');
