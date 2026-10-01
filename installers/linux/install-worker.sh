@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs the Agent Orchestration worker for the current Linux user as a systemd *user* service.
 # Runs as you: agent logins, Git credentials and repositories are per-user.
-#   ./installers/linux/install-worker.sh [--source DIR] [--no-service] [--no-browser] [--linger]
+#   ./installers/linux/install-worker.sh [--source DIR] [--no-service] [--no-browser] [--linger] [--pair-server URL]
+# --pair-server connects the worker to that control plane and opens its approval page (used by the one-click install).
 # --linger keeps the worker running without an active login session (requires sudo for loginctl).
 set -euo pipefail
 
@@ -9,13 +10,14 @@ UNIT="agent-orchestration-worker.service"
 INSTALL_DIR="${AO_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/agent-orchestration/worker-app}"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE_DIR=""; NO_SERVICE=0; NO_BROWSER=0; LINGER=0
+SOURCE_DIR=""; NO_SERVICE=0; NO_BROWSER=0; LINGER=0; PAIR_SERVER=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --source) SOURCE_DIR="$2"; shift 2 ;;
     --no-service) NO_SERVICE=1; shift ;;
     --no-browser) NO_BROWSER=1; shift ;;
     --linger) LINGER=1; shift ;;
+    --pair-server) PAIR_SERVER="$2"; shift 2 ;;
     *) echo "Unknown option $1"; exit 2 ;;
   esac
 done
@@ -88,8 +90,13 @@ EOF
 fi
 
 URL="$("$NODE" "$LAUNCHER" --print-ui-url | tail -n 1)"
-if [ "$NO_SERVICE" -eq 0 ] && [ "$NO_BROWSER" -eq 0 ] && command -v xdg-open >/dev/null; then step "Opening the local UI"; xdg-open "$URL" >/dev/null 2>&1 || true; fi
+if [ "$NO_SERVICE" -eq 0 ] && [ "$NO_BROWSER" -eq 0 ] && [ -z "$PAIR_SERVER" ] && command -v xdg-open >/dev/null; then step "Opening the local UI"; xdg-open "$URL" >/dev/null 2>&1 || true; fi
 [ "$NO_SERVICE" -eq 0 ] && { step "Diagnostics"; "$NODE" "$LAUNCHER" agentctl doctor || true; }
 echo
 echo "Installed. Local UI link: $URL"
 echo "Logs: journalctl --user -u $UNIT -f    Uninstall: installers/linux/uninstall-worker.sh"
+if [ "$NO_SERVICE" -eq 0 ] && [ -n "$PAIR_SERVER" ]; then
+  step "Connecting this worker to $PAIR_SERVER"
+  PAIR_ARGS=""; [ "$NO_BROWSER" -eq 1 ] && PAIR_ARGS="--no-open"
+  "$NODE" "$(dirname "${BASH_SOURCE[0]}")/../pair-worker.mjs" "$LAUNCHER" "$PAIR_SERVER" $PAIR_ARGS || true
+fi

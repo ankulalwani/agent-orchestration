@@ -14,6 +14,7 @@
 .PARAMETER NoService   Install files only; do not register or start the scheduled task.
 .PARAMETER NoBrowser   Do not open the local UI.
 .PARAMETER NoPath      Do not add the agentctl shim directory to the user PATH.
+.PARAMETER PairServer  Connect the worker to this control plane and open its approval page (used by the one-click install).
 #>
 [CmdletBinding()]
 param(
@@ -21,7 +22,8 @@ param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AgentOrchestration\worker-app'),
   [switch]$NoService,
   [switch]$NoBrowser,
-  [switch]$NoPath
+  [switch]$NoPath,
+  [string]$PairServer
 )
 $ErrorActionPreference = 'Stop'
 $TaskName = 'AgentOrchestrationWorker'
@@ -107,7 +109,7 @@ if (-not $NoService) {
 $urlOut = & node $Launcher --print-ui-url | Select-Object -Last 1
 if ($LASTEXITCODE -ne 0 -or -not $urlOut) { Fail "The installed worker failed to run (node `"$Launcher`" --print-ui-url). See the error above." }
 $url = "$urlOut".Trim()
-if (-not $NoBrowser -and -not $NoService) {
+if (-not $NoBrowser -and -not $NoService -and -not $PairServer) {
   Step 'Opening the local UI to connect this worker'
   Start-Process $url
 }
@@ -116,3 +118,9 @@ if (-not $NoService) { & node $Launcher agentctl doctor }
 Write-Host ''
 Write-Host "Installed. Local UI: http://127.0.0.1:47821 (use the link above or run: agentctl worker status)" -ForegroundColor Green
 Write-Host "Uninstall with: installers\windows\uninstall-worker.ps1"
+if (-not $NoService -and $PairServer) {
+  Step "Connecting this worker to $PairServer"
+  $pairArgs = @((Join-Path $PSScriptRoot '..\pair-worker.mjs'), $Launcher, $PairServer)
+  if ($NoBrowser) { $pairArgs += '--no-open' }
+  & node @pairArgs
+}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs the Agent Orchestration worker for the current macOS user as a launchd LaunchAgent
 # (starts at login, restarts on failure). Runs as you: agent logins, Git credentials and repositories are per-user.
-#   ./installers/macos/install-worker.sh [--source DIR] [--no-service] [--no-browser]
+#   ./installers/macos/install-worker.sh [--source DIR] [--no-service] [--no-browser] [--pair-server URL]
+# --pair-server connects the worker to that control plane and opens its approval page (used by the one-click install).
 set -euo pipefail
 
 LABEL="com.agent-orchestration.worker"
@@ -9,12 +10,13 @@ INSTALL_DIR="${AO_INSTALL_DIR:-$HOME/Library/Application Support/AgentOrchestrat
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/AgentOrchestration"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE_DIR=""; NO_SERVICE=0; NO_BROWSER=0
+SOURCE_DIR=""; NO_SERVICE=0; NO_BROWSER=0; PAIR_SERVER=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --source) SOURCE_DIR="$2"; shift 2 ;;
     --no-service) NO_SERVICE=1; shift ;;
     --no-browser) NO_BROWSER=1; shift ;;
+    --pair-server) PAIR_SERVER="$2"; shift 2 ;;
     *) echo "Unknown option $1"; exit 2 ;;
   esac
 done
@@ -84,8 +86,13 @@ EOF
 fi
 
 URL="$("$NODE" "$LAUNCHER" --print-ui-url | tail -n 1)"
-if [ "$NO_SERVICE" -eq 0 ] && [ "$NO_BROWSER" -eq 0 ]; then step "Opening the local UI"; open "$URL"; fi
+if [ "$NO_SERVICE" -eq 0 ] && [ "$NO_BROWSER" -eq 0 ] && [ -z "$PAIR_SERVER" ]; then step "Opening the local UI"; open "$URL"; fi
 [ "$NO_SERVICE" -eq 0 ] && { step "Diagnostics"; "$NODE" "$LAUNCHER" agentctl doctor || true; }
 echo
 echo "Installed. Local UI: http://127.0.0.1:47821 — logs in $LOG_DIR. Ensure ~/.local/bin is on your PATH for agentctl."
 echo "Uninstall with: installers/macos/uninstall-worker.sh"
+if [ "$NO_SERVICE" -eq 0 ] && [ -n "$PAIR_SERVER" ]; then
+  step "Connecting this worker to $PAIR_SERVER"
+  PAIR_ARGS=""; [ "$NO_BROWSER" -eq 1 ] && PAIR_ARGS="--no-open"
+  "$NODE" "$(dirname "${BASH_SOURCE[0]}")/../pair-worker.mjs" "$LAUNCHER" "$PAIR_SERVER" $PAIR_ARGS || true
+fi

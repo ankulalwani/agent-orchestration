@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -131,6 +131,14 @@ export async function buildApp(services: Services, opts: BuildAppOptions = {}): 
     const body = await services.workerReleases.package(channel, version);
     return reply.type('application/gzip').header('content-disposition', `attachment; filename="agent-orchestration-worker-${version}.tgz"`).send(body);
   });
+
+  // One-click worker install (public; the scripts hold nothing secret). `curl … | sh` and `irm … | iex` fetch these.
+  const text = (reply: FastifyReply, type: string, body: string) => reply.type(type).header('cache-control', 'no-cache').send(body);
+  app.get(API_PREFIX + '/install/worker.sh', async (_req, reply) => text(reply, 'text/x-shellscript; charset=utf-8', services.workerInstall.shellScript()));
+  app.get(API_PREFIX + '/install/worker.ps1', async (_req, reply) => text(reply, 'text/plain; charset=utf-8', services.workerInstall.powershellScript()));
+  app.get(API_PREFIX + '/install/bootstrap.mjs', async (_req, reply) => text(reply, 'text/javascript; charset=utf-8', services.workerInstall.bootstrap()));
+  app.get(API_PREFIX + '/install/config', async () => services.workerInstall.settings());
+  app.get(API_PREFIX + '/install/commands', async () => services.workerInstall.commands());
 
   const { route, specs } = createRouter(app, services, API_PREFIX);
   userRoutes(route, services);

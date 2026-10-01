@@ -22,6 +22,7 @@ import { FeatureFlags } from './feature-flags.js';
 import { ApiTokenService } from './api-token.service.js';
 import { IntegrationService } from './integration.service.js';
 import { WorkerReleaseService } from './worker-releases.js';
+import { WorkerInstallService } from './worker-install.js';
 import { DeviceLoginService } from './device-login.service.js';
 import { GitHubService } from './github.service.js';
 import { DiscoveryService } from './discovery.service.js';
@@ -43,6 +44,7 @@ export * from './feature-flags.js';
 export * from './api-token.service.js';
 export * from './integration.service.js';
 export * from './worker-releases.js';
+export * from './worker-install.js';
 export * from './seed.js';
 export * from './device-login.service.js';
 export * from './github.service.js';
@@ -119,6 +121,7 @@ export async function createServices(config: ServerConfig, overrides: { queue?: 
   const apiTokens = new ApiTokenService();
   const integrations = new IntegrationService(config, box, tasks);
   const workerReleases = new WorkerReleaseService(config, artifacts);
+  const workerInstall = new WorkerInstallService(config, workerReleases);
   const deviceLogins = new DeviceLoginService(config, auth);
   const github = new GitHubService(config, box, projects);
   const discovery = new DiscoveryService(live, projects, github);
@@ -127,6 +130,6 @@ export async function createServices(config: ServerConfig, overrides: { queue?: 
   const rematch = (organizationId: string) => void discovery.rematch(organizationId).catch(() => undefined);
   github.onRepositoriesChanged(rematch);
   projects.onRepositoriesChanged(rematch);
-  return { github, discovery, apiTokens, integrations, workerReleases, deviceLogins, artifacts, config, settings, features, live, metrics, queue, mailer, box, notifications, auth, oauth, orgs, invitations, projects, workers, tasks, capabilities, registry, queries, scheduler, timing };
+  return { github, discovery, apiTokens, integrations, workerReleases, workerInstall, deviceLogins, artifacts, config, settings, features, live, metrics, queue, mailer, box, notifications, auth, oauth, orgs, invitations, projects, workers, tasks, capabilities, registry, queries, scheduler, timing };
 }
 export type Services = Awaited<ReturnType<typeof createServices>>;

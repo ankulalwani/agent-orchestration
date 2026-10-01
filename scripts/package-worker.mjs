@@ -29,6 +29,8 @@ fs.rmSync(path.join(out, '.deploy'), { recursive: true, force: true });
 fs.cpSync(path.join(root, 'apps', 'worker-ui', 'dist'), path.join(out, 'dist', 'ui'), { recursive: true });
 // agentctl ships inside the worker package (it uses the worker's credential-store code).
 fs.copyFileSync(path.join(root, 'apps', 'cli', 'dist', 'main.js'), path.join(out, 'dist', 'agentctl.js'));
+// The installers ship inside the package so the one-click install (/api/v1/install/worker.sh|ps1) can run them.
+fs.cpSync(path.join(root, 'installers'), path.join(out, 'installers'), { recursive: true });
 const version = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'worker', 'package.json'), 'utf8')).version;
 fs.writeFileSync(path.join(out, 'VERSION'), version + '\n');
 const hostedArg = process.argv.indexOf('--hosted-url');

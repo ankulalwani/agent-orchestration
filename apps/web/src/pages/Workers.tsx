@@ -7,6 +7,7 @@ import { ApiError, del, get, patch, post } from '../lib/api';
 import { useOrgId, useSession } from '../lib/session';
 import { WorkerStatusBadge } from '../lib/format';
 import { PageHeader } from '../Layout';
+import { InstallWorkerCard } from '../InstallWorker';
 
 export function WorkersPage() {
   const orgId = useOrgId();
@@ -14,7 +15,7 @@ export function WorkersPage() {
   const workers = useQuery({ queryKey: ['workers', orgId], queryFn: () => get<WorkerDto[]>(`/orgs/${orgId}/workers`), refetchInterval: 30_000 });
   return (
     <div>
-      <PageHeader title="Workers" description="Machines that execute tasks. Workers connect outbound; no inbound ports are needed." actions={<Link className="btn btn-primary" to="/pair">Pair a worker</Link>} />
+      <PageHeader title="Workers" description="Machines that execute tasks. Workers connect outbound; no inbound ports are needed." actions={<Link className="btn btn-primary" to="/pair">Pair with a code</Link>} />
       <Card padded={false}>
         {workers.isLoading ? (
           <div className="card-body"><Spinner /></div>
@@ -49,9 +50,10 @@ export function WorkersPage() {
             </table>
           </div>
         ) : (
-          <EmptyState title="No workers yet" action={<Link to="/pair">Pair your first worker</Link>}>Install the worker on a machine with your code and AI agents, then pair it here.</EmptyState>
+          <EmptyState title="No workers yet">Install the worker on a machine with your code and AI agents (command below), then approve it here.</EmptyState>
         )}
       </Card>
+      {!workers.isLoading && <div style={{ marginTop: 'var(--space-4)' }}><InstallWorkerCard /></div>}
     </div>
   );
 }
@@ -193,7 +195,7 @@ export function PairPage() {
 
   return (
     <div className="stack" style={{ maxWidth: 560 }}>
-      <PageHeader title="Pair a worker" description="Install the worker, choose this server, and enter the code it shows." />
+      <PageHeader title="Pair a worker" description="The install command opens this page with the code filled in. You can also enter a code by hand." />
       <Card>
         <div className="stack">
           <Field label="Pairing code" hint="Shown by the worker, e.g. ABCD-1234">{(id) => <Input id={id} className="code-block" value={code} maxLength={9} onChange={(e) => setCode(e.target.value.toUpperCase())} />}</Field>
@@ -222,10 +224,7 @@ export function PairPage() {
           </div>
         </div>
       </Card>
-      <Card title="Install the worker">
-        <p className="muted" style={{ marginTop: 0 }}>Run the installer for your OS on the machine that has your code and AI agents. See the self-hosting guide for full instructions.</p>
-        <pre className="log">{`# Windows (PowerShell)\n.\\installers\\windows\\install-worker.ps1\n\n# macOS\n./installers/macos/install-worker.sh\n\n# Linux\n./installers/linux/install-worker.sh`}</pre>
-      </Card>
+      <InstallWorkerCard />
     </div>
   );
 }

@@ -90,6 +90,23 @@ export const serverConfigSchema = z.object({
   REGISTRY_SEARCH: z.enum(['text', 'atlas']).default('text'),
   /** Serve public marketplace packages without sign-in (/catalog, for a marketing site). Unset: on when DEPLOYMENT_MODE=cloud. */
   PUBLIC_CATALOG: bool.optional(),
+  /**
+   * One-click worker install: Ed25519 release public keys (PEM) by key id, as JSON, e.g.
+   * {"release-2026":"-----BEGIN PUBLIC KEY-----\n…"}. The install script checks the signed release against them
+   * and gives them to the new worker for its later updates. Without a key, the install script refuses to install.
+   */
+  WORKER_RELEASE_TRUSTED_KEYS: z
+    .string()
+    .default('')
+    .transform((v, ctx) => {
+      if (!v.trim()) return {} as Record<string, string>;
+      try {
+        return z.record(z.string().regex(/^[A-Za-z0-9._-]{1,100}$/), z.string().includes('PUBLIC KEY')).parse(JSON.parse(v));
+      } catch {
+        ctx.addIssue({ code: 'custom', message: 'Must be a JSON object of key id → PEM public key' });
+        return z.NEVER;
+      }
+    }),
 });
 export type ServerConfig = z.infer<typeof serverConfigSchema>;
 

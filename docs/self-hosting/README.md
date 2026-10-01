@@ -138,6 +138,23 @@ a compromised server can't push code to workers:
 Workers with automatic updates install it within 6 hours; others show it under **Updates**. Uploads and
 publications are recorded in the audit log.
 
+### One-click worker install
+
+Once a release is published, the dashboard (**Workers**, and **Getting started**) shows a one-line install
+command for each OS, for example `curl -fsSL https://<server>/api/v1/install/worker.sh | sh` or
+`irm https://<server>/api/v1/install/worker.ps1 | iex`. It needs two things from you:
+
+- **A release built with installers inside.** `node scripts/package-worker.mjs --tarball` puts them in the
+  package. A package from an older build is refused with a message that says so.
+- **`WORKER_RELEASE_TRUSTED_KEYS`**: the release public key(s) as JSON, `{"release-2026":"<PEM>"}`. The
+  install command checks the release signature against them, and without a key it refuses to install. The
+  new worker also trusts these keys for its own later updates.
+
+Trust: the one-liner runs a script served by this server, so the server is trusted at install time, as with
+any `curl | sh`. The signature check protects against a swapped or tampered package, not against a server
+that serves a different script. Anyone can read the scripts first (`/api/v1/install/worker.sh`, `.ps1`,
+`bootstrap.mjs`); they contain nothing secret. `PUBLIC_URL` must be the address users reach the server on.
+
 ## Backups
 
 See [backup-restore.md](backup-restore.md).

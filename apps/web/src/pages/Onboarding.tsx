@@ -6,6 +6,7 @@ import { Alert, Badge, Button, Card, Field, Input, Spinner } from '@ao/ui';
 import { ApiError, get, post } from '../lib/api';
 import { useOrgId } from '../lib/session';
 import { PageHeader } from '../Layout';
+import { InstallWorkerCard } from '../InstallWorker';
 
 /**
  * First-run wizard (spec §79): connect worker → detect agents → detect providers → connect project →
@@ -65,11 +66,12 @@ export function OnboardingPage() {
           <p style={{ margin: 0 }}>Connected: {online.map((w) => w.name).join(', ')}.</p>
         ) : (
           <div className="stack">
-            <p style={{ margin: 0 }}>Install the worker on the machine that has your code and AI agents. It opens a local page where you choose <strong>My self-hosted server</strong> and enter this server's address: <code>{location.origin}</code>. It then shows a pairing code.</p>
-            <div><Link className="btn btn-primary" to="/pair">Enter pairing code</Link></div>
+            <p style={{ margin: 0 }}>Run the install command below on the machine that has your code and AI agents. It opens a page where you click <strong>Approve</strong>. Already installed it by hand? <Link to="/pair">Enter a pairing code</Link>.</p>
           </div>
         )}
       </Card>
+
+      {online.length === 0 && <InstallWorkerCard />}
 
       <Card title="2. Agents and providers">
         {online.length === 0 ? (

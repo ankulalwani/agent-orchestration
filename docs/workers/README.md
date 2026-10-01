@@ -8,13 +8,15 @@ A worker is a native Node.js process on a machine with your code and AI agents. 
 
 ## Install
 
-Build the package once from a repository checkout (Node 20+ required):
+**One click (from the dashboard).** Open **Workers** (or **Getting started**), copy the install command for your OS and run it on the machine that has your code and agents. It downloads the signed worker release from your control plane, verifies it, installs it for your user, starts it at login, and opens the approval page in your browser; click **Approve** and the worker connects. Requires Node.js 20+, and an administrator who has published a release and set `WORKER_RELEASE_TRUSTED_KEYS` ([setup](../self-hosting/README.md#one-click-worker-install)). Re-running the command on an installed worker updates it and keeps its pairing.
+
+**From a repository checkout.** Build the package once from a repository checkout (Node 20+ required):
 
 ```bash
 node scripts/package-worker.mjs      # creates .deploy/worker
 ```
 
-Then run the installer for your OS. Each one validates dependencies, copies the worker, registers autostart, starts it, opens the local UI and runs diagnostics.
+Then run the installer for your OS (add `--pair-server <url>`, or `-PairServer <url>` on Windows, to also connect to your control plane and open the approval page). Each one validates dependencies, copies the worker, registers autostart, starts it, opens the local UI and runs diagnostics.
 
 | OS | Command | Autostart | Verified |
 |---|---|---|---|
