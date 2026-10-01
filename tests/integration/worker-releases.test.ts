@@ -95,6 +95,25 @@ describe('worker releases hosted by the control plane', () => {
     await expect(updater.check()).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'Update manifest signature is invalid' });
   });
 
+  it('server-held keys: generate in admin, sign and publish in one call, workers verify with the public key', async () => {
+    const api = (token: string, method: string, p: string, body?: unknown) =>
+      fetch(`${base}${API_PREFIX}${p}`, { method, headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    expect((await api(member, 'POST', '/admin/worker-release-keys', {})).status).toBe(403);
+    expect((await api(admin, 'POST', '/admin/worker-releases/stable/99.0.0/sign', {})).status).toBe(400); // no key yet
+    const gen = (await (await api(admin, 'POST', '/admin/worker-release-keys', { keyId: 'server-key' })).json()) as Array<{ keyId: string; publicKey: string; active: boolean }>;
+    expect(gen).toEqual([expect.objectContaining({ keyId: 'server-key', active: true })]);
+    expect(JSON.stringify(gen)).not.toContain('PRIVATE');
+    expect((await api(admin, 'DELETE', '/admin/worker-release-keys/server-key')).status).toBe(409); // active
+
+    expect((await uploadPackage(admin, pkg, 'stable', '99.0.0')).status).toBe(200);
+    const done = await api(admin, 'POST', '/admin/worker-releases/stable/99.0.0/sign', { notes: 'Signed here' });
+    expect(done.status, await done.clone().text()).toBe(200);
+    const updater = new Updater({ currentVersion: '0.1.0', manifestUrl: `${base}/api/v1/worker-releases/stable/manifest.json`, trustedKeys: { 'server-key': gen[0]!.publicKey }, stagingDir: os.tmpdir() });
+    expect(await updater.check()).toMatchObject({ updateAvailable: true, latest: { version: '99.0.0', notes: 'Signed here' } });
+    const settings = (await (await fetch(`${base}${API_PREFIX}/install/config`)).json()) as { trustedKeys: Record<string, string> };
+    expect(settings.trustedKeys['server-key']).toBe(gen[0]!.publicKey);
+  });
+
   it('a paired worker uses its control plane as the release source by default; trust stays local', async () => {
     const rt = new WorkerRuntime(fs.mkdtempSync(path.join(os.tmpdir(), 'ao-rel-worker-')));
     rt.config.update({ connectionMode: 'self-hosted', controlPlaneUrl: base, updates: { ...rt.config.get().updates, channel: 'beta' } });

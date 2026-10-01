@@ -120,7 +120,7 @@ export async function createServices(config: ServerConfig, overrides: { queue?: 
   const artifacts = createArtifactStore(config);
   const apiTokens = new ApiTokenService();
   const integrations = new IntegrationService(config, box, tasks);
-  const workerReleases = new WorkerReleaseService(config, artifacts);
+  const workerReleases = new WorkerReleaseService(config, artifacts, box);
   const workerInstall = new WorkerInstallService(config, workerReleases);
   const deviceLogins = new DeviceLoginService(config, auth);
   const github = new GitHubService(config, box, projects);

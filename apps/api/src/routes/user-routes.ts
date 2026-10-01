@@ -203,6 +203,27 @@ export function userRoutes(route: Route, s: Services) {
     requirePlatformAdmin(req.platformAdmin);
     return s.workerReleases.publish(platformActor(req), params.channel!, body);
   });
+  route({ method: 'GET', path: '/admin/worker-release-keys', summary: 'Release signing keys held by this server (public halves only)', tag: 'admin', auth: 'user' }, async ({ req }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.workerReleases.listKeys();
+  });
+  route({ method: 'POST', path: '/admin/worker-release-keys', summary: 'Generate a release signing key and make it the active one', tag: 'admin', auth: 'user', body: z.object({ keyId: z.string().max(100).optional() }) }, async ({ req, body }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    await s.workerReleases.generateKey(platformActor(req), body.keyId);
+    return s.workerReleases.listKeys();
+  });
+  route({ method: 'POST', path: '/admin/worker-release-keys/:keyId/activate', summary: 'Sign new releases with this key', tag: 'admin', auth: 'user' }, async ({ req, params }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.workerReleases.activateKey(platformActor(req), params.keyId!);
+  });
+  route({ method: 'DELETE', path: '/admin/worker-release-keys/:keyId', summary: 'Delete a release signing key (not the active one)', tag: 'admin', auth: 'user' }, async ({ req, params }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.workerReleases.deleteKey(platformActor(req), params.keyId!);
+  });
+  route({ method: 'POST', path: '/admin/worker-releases/:channel/:version/sign', summary: 'Sign an uploaded package with the active server key and publish it', tag: 'admin', auth: 'user', body: z.object({ notes: z.string().max(10_000).optional() }) }, async ({ req, params, body }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.workerReleases.signAndPublish(platformActor(req), params.channel!, params.version!, body.notes);
+  });
   route({ method: 'GET', path: '/admin/users', summary: 'People on this server (search by email or name)', tag: 'admin', auth: 'user', query: z.object({ q: z.string().max(100).optional() }) }, async ({ req, query }) => {
     requirePlatformAdmin(req.platformAdmin);
     return s.auth.searchUsers(query.q);

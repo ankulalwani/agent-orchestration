@@ -310,7 +310,7 @@ export class WorkerInstallService {
 
   async settings(): Promise<InstallConfigResponse> {
     const stable = (await this.releases.list()).find((c) => c.channel === 'stable');
-    return { server: serverUrl(this.config), channel: 'stable', latest: stable?.latest ?? null, trustedKeys: this.config.WORKER_RELEASE_TRUSTED_KEYS };
+    return { server: serverUrl(this.config), channel: 'stable', latest: stable?.latest ?? null, trustedKeys: await this.releases.trustedKeys() };
   }
 
   /** The commands the dashboard shows. */

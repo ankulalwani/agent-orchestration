@@ -12,7 +12,7 @@ const arg = (flag, fallback) => {
 };
 
 const name = arg('--name', 'agent-orchestration');
-const image = arg('--image', 'ghcr.io/ankulalwani/agent-orchestration:0.2.1');
+const image = arg('--image', 'ghcr.io/ankulalwani/agent-orchestration:latest');
 // Easypanel passwords: letters and digits only, so they need no escaping in connection URLs.
 const password = () => randomBytes(15).toString('base64url').replace(/[-_]/g, '').slice(0, 20).padEnd(20, '0');
 const hex = (bytes) => randomBytes(bytes).toString('hex');

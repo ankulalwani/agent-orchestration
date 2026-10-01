@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from '@ao/core';
 import { API_PREFIX } from '@ao/contracts';
 import type { ServerConfig } from './config.js';
+import type { SecretBox } from './crypto.js';
 import type { ArtifactStore } from './artifacts.js';
 import { audit } from './audit.js';
 import type { PlatformActor } from './context.js';
@@ -52,11 +53,104 @@ const compareVersions = (a: string, b: string) => {
   return 0;
 };
 
+/**
+ * Optional server-side signing: an administrator generates Ed25519 keys here, the private half is encrypted
+ * at rest (SecretBox) and never leaves the server, and the server signs uploaded packages itself.
+ * Trade-off: whoever controls this server (or its ENCRYPTION_KEY and database) can then sign releases that
+ * workers trusting these keys accept. Offline signing with WORKER_RELEASE_TRUSTED_KEYS stays available.
+ */
+interface SigningKeys {
+  keys: Record<string, { publicKey: string; encryptedPrivateKey: string; createdAt: string; createdBy: string }>;
+  activeKeyId: string | null;
+}
+const EMPTY_KEYS: SigningKeys = { keys: {}, activeKeyId: null };
+const KEYS_KEY = 'worker.signing-keys';
+const KEY_ID = /^[A-Za-z0-9._-]{1,100}$/;
+const canonical = (m: Record<string, unknown>) => Buffer.from(JSON.stringify(Object.fromEntries(Object.keys(m).sort().map((k) => [k, m[k]]))), 'utf8');
+
 export class WorkerReleaseService {
   constructor(
     private readonly config: ServerConfig,
     private readonly store: ArtifactStore,
+    private readonly box: SecretBox,
   ) {}
+
+  // ── Server-held signing keys ───────────────────────────────────────────────
+  async listKeys() {
+    const { keys, activeKeyId } = (await readVersioned<SigningKeys>(KEYS_KEY, EMPTY_KEYS)).data;
+    return Object.entries(keys).map(([keyId, k]) => ({ keyId, publicKey: k.publicKey, createdAt: k.createdAt, active: keyId === activeKeyId }));
+  }
+
+  /** Public keys the install script and workers should trust: the operator's (environment) plus generated ones. */
+  async trustedKeys(): Promise<Record<string, string>> {
+    const generated = Object.fromEntries((await this.listKeys()).map((k) => [k.keyId, k.publicKey]));
+    return { ...generated, ...this.config.WORKER_RELEASE_TRUSTED_KEYS };
+  }
+
+  /** Generates a key pair and makes it the signing key. Earlier keys stay trusted so older releases still verify. */
+  async generateKey(actor: PlatformActor, requestedId?: string) {
+    const keyId = requestedId?.trim() || `release-${new Date().toISOString().slice(0, 10)}-${randomBytes(3).toString('hex')}`;
+    if (!KEY_ID.test(keyId)) throw new AppError('VALIDATION_FAILED', 'Key id may use letters, digits, ".", "_" and "-" (up to 100 characters)');
+    if (this.config.WORKER_RELEASE_TRUSTED_KEYS[keyId]) throw new AppError('CONFLICT', 'That key id is already configured in the environment');
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const entry = {
+      publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      encryptedPrivateKey: this.box.encrypt(privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()),
+      createdAt: new Date().toISOString(),
+      createdBy: actor.userId,
+    };
+    await updateVersioned<SigningKeys>(KEYS_KEY, EMPTY_KEYS, (cur) => {
+      if (cur.keys[keyId]) throw new AppError('CONFLICT', `Key ${keyId} already exists`);
+      cur.keys[keyId] = entry;
+      cur.activeKeyId = keyId;
+      return cur;
+    });
+    await audit(actor, 'worker_release.key.generate', { type: 'worker_release_key', id: keyId }, {});
+    return { keyId, publicKey: entry.publicKey };
+  }
+
+  async activateKey(actor: PlatformActor, keyId: string) {
+    await updateVersioned<SigningKeys>(KEYS_KEY, EMPTY_KEYS, (cur) => {
+      if (!cur.keys[keyId]) throw new AppError('NOT_FOUND', 'Unknown signing key');
+      cur.activeKeyId = keyId;
+      return cur;
+    });
+    await audit(actor, 'worker_release.key.activate', { type: 'worker_release_key', id: keyId }, {});
+    return this.listKeys();
+  }
+
+  /** Deletes a key. The active key can't be deleted; workers that trusted it will refuse releases signed with it. */
+  async deleteKey(actor: PlatformActor, keyId: string) {
+    await updateVersioned<SigningKeys>(KEYS_KEY, EMPTY_KEYS, (cur) => {
+      if (!cur.keys[keyId]) throw new AppError('NOT_FOUND', 'Unknown signing key');
+      if (cur.activeKeyId === keyId) throw new AppError('CONFLICT', 'Make another key active before deleting this one');
+      delete cur.keys[keyId];
+      return cur;
+    });
+    await audit(actor, 'worker_release.key.delete', { type: 'worker_release_key', id: keyId }, {});
+    return this.listKeys();
+  }
+
+  /** Signs the uploaded package's manifest with the active server key and publishes it. */
+  async signAndPublish(actor: PlatformActor, channel: string, version: string, notes?: string) {
+    this.check(channel, version);
+    const keys = (await readVersioned<SigningKeys>(KEYS_KEY, EMPTY_KEYS)).data;
+    const keyId = keys.activeKeyId;
+    if (!keyId || !keys.keys[keyId]) throw new AppError('VALIDATION_FAILED', 'Generate a signing key first');
+    const uploaded = (await readVersioned<ReleaseIndex>(INDEX_KEY, EMPTY)).data.releases[channel]?.[version];
+    if (!uploaded) throw new AppError('VALIDATION_FAILED', `Upload the package for ${version} first`);
+    const manifest = {
+      version,
+      channel,
+      publishedAt: new Date().toISOString(),
+      packageUrl: this.packageUrl(channel, version),
+      sha256: uploaded.sha256,
+      minNodeVersion: '20.0.0',
+      notes: notes ?? '',
+    };
+    const signature = sign(null, canonical(manifest), createPrivateKey(this.box.decrypt(keys.keys[keyId]!.encryptedPrivateKey))).toString('base64');
+    return this.publish(actor, channel, { manifest, signature, keyId });
+  }
 
   private check(channel: string, version: string): asserts channel is ReleaseChannel {
     if (!(WORKER_RELEASE_CHANNELS as readonly string[]).includes(channel)) throw new AppError('VALIDATION_FAILED', 'Channel must be stable or beta');
