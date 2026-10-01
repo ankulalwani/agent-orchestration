@@ -1,0 +1,58 @@
+name: Auto tag
+
+# Every commit on main that passes CI gets the next patch version tag (v0.2.1 -> v0.2.2), then the image
+# is published for that tag, so ghcr.io/<owner>/agent-orchestration:latest always matches main.
+# Tags pushed with GITHUB_TOKEN do not start other workflows, so the publish is started explicitly.
+# For a minor or major release, push the tag by hand (for example v0.3.0); the next commit continues from it.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Create the next patch tag
+        id: tag
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch --tags --force
+          if [ -n "$(git tag --points-at "$SHA" --list 'v*')" ]; then
+            echo "Commit already tagged: $(git tag --points-at "$SHA" --list 'v*' | head -1)"
+            exit 0
+          fi
+          # Only the newest main commit is tagged; a run for an older commit would move the version backwards.
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "$SHA" ]; then
+            echo "main has moved on; the newer commit gets the tag"
+            exit 0
+          fi
+          last=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          last=${last:-v0.0.0}
+          IFS=. read -r major minor patch <<< "${last#v}"
+          next="v${major}.${minor}.$((patch + 1))"
+          git tag "$next" "$SHA"
+          git push origin "$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+      - name: Publish the image for the new tag
+        if: steps.tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docker-publish.yml --ref "${{ steps.tag.outputs.tag }}"

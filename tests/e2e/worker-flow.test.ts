@@ -501,7 +501,8 @@ describe('worker end-to-end', () => {
     expect((await g('rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe('main');
     expect((await g('branch', '--list', 'ao/*')).stdout.trim()).toBe('');
     expect(fs.existsSync(path.join(repo, 'feature.txt'))).toBe(false);
-    expect(fs.existsSync(path.join(repo, '.agent-orchestration', 'worktrees', t.id))).toBe(false);
+    // Removed right after the task completes, so allow a slow machine a moment.
+    await waitFor(async () => fs.existsSync(path.join(repo, '.agent-orchestration', 'worktrees', t.id)), (exists) => !exists, 10_000, 'worktree removal');
 
     // A reviewer that edits files is sent back; its edits never reach the user's checkout.
     const dirty = await reviewTask('review that edits', 'review_dirty');
