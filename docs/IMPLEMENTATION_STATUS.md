@@ -177,7 +177,7 @@ Last full refresh: 2026-09-28.
 ## Next exact actions
 1. Deploy with Docker Compose on a Linux server with a public domain (Let's Encrypt through Caddy); Docker itself is verified on Windows.
 2. With your accounts: one small real task each for Codex, Gemini CLI, OpenCode and Aider (Claude Code is done); verify Gemini/OpenCode resume.
-3. Generate your release key and publish the first worker release (**Server → Worker releases**); give workers the public key.
+3. Maintainers: add the private key of `ao-release-1` as the repository secret `WORKER_RELEASE_SIGNING_KEY`, tag a release, and press **Update workers** (**Server → Worker releases**) on a real server to fetch it.
 4. Register real OAuth apps (Google/GitHub/company SSO) and sign in once with each.
 5. Point an integration at a real GitHub or GitLab repository (issues, `/agent` comments, pull request reviews), and open a pull request through a worker with a Git hosting token.
 6. Turn on the OS sandbox (`sandbox.mode: preferred`) on a Linux or macOS worker and run a task with each agent you use; add any state folders they need to `sandbox.writable`.

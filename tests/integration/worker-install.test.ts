@@ -125,7 +125,7 @@ describe('one-click worker install', () => {
   it('config lists the trusted keys and the latest release', async () => {
     const cfg = (await (await fetch(`${base}${API_PREFIX}/install/config`)).json()) as { latest: string | null; trustedKeys: Record<string, string> };
     expect(cfg.latest).toBeNull();
-    expect(Object.keys(cfg.trustedKeys)).toEqual(['release-2026']);
+    expect(Object.keys(cfg.trustedKeys).sort()).toEqual(['ao-release-1', 'release-2026']); // the project key is always listed
   });
 
   it('says what is missing when nothing is published', async () => {
@@ -162,7 +162,7 @@ describe('one-click worker install', () => {
     expect(r.stdout).toContain('Installing');
     const config = JSON.parse(fs.readFileSync(path.join(home, 'data', 'config.json'), 'utf8'));
     expect(config.name).toBe('mine');
-    expect(Object.keys(config.updates.trustedKeys).sort()).toEqual(['other', 'release-2026']);
+    expect(Object.keys(config.updates.trustedKeys).sort()).toEqual(['ao-release-1', 'other', 'release-2026']);
   });
 
   it('a release signed with another key is refused and nothing is installed', async () => {
@@ -181,13 +181,13 @@ describe('one-click worker install', () => {
     expect(r.output).toMatch(/no installer inside/);
   });
 
-  it('refuses to install when the server has no trusted key', async () => {
+  it('refuses a release signed with a key the server does not list (only the project key remains)', async () => {
     const keys = s.config.WORKER_RELEASE_TRUSTED_KEYS;
     (s.config as { WORKER_RELEASE_TRUSTED_KEYS: Record<string, string> }).WORKER_RELEASE_TRUSTED_KEYS = {};
     try {
       const r = await runBootstrap([]);
       expect(r.code).toBe(1);
-      expect(r.output).toMatch(/no release signing key configured/);
+      expect(r.output).toMatch(/does not list as trusted/);
     } finally {
       (s.config as { WORKER_RELEASE_TRUSTED_KEYS: Record<string, string> }).WORKER_RELEASE_TRUSTED_KEYS = keys;
     }

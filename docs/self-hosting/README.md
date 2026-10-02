@@ -120,23 +120,42 @@ SEED_ADMIN_EMAIL=admin@example.com SEED_ADMIN_PASSWORD='a-long-password' node di
 This creates the administrator account, a *Demo organization*, an *Example project* with project knowledge,
 and an example skill. It refuses to run on a database that already has users.
 
-## Publishing worker releases
+## Updating workers
 
-The control plane hosts worker updates for the workers connected to it. Releases are signed offline, so
-a compromised server can't push code to workers:
+Your control plane serves worker updates to the workers connected to it. You do not build, sign or configure
+anything:
+
+1. In the dashboard, open **Server → Worker releases** and press **Update workers**. The server fetches the
+   project's newest official release from GitHub (`UPDATE_CHECK_REPO`), checks its signature against the
+   project release key built into this version, checks the package against the signed SHA-256, and stores it.
+   The page also shows whether GitHub has a newer release than the one you serve.
+2. Workers with automatic updates install it within 6 hours; others show it under **Updates**. New installs
+   (the one-line command below) use it at once. Fetches are recorded in the audit log.
+
+Nothing is built on your server, and the signature stays the project's: a compromised or misconfigured server
+can withhold an update but cannot make a worker accept code the project did not sign. Workers trust the
+project key by default and verify every update themselves.
+
+Choose the **stable** or **beta** channel on the page. Servers without internet access, forks and private
+builds publish their own releases instead (below).
+
+### Custom releases (forks, private builds, air-gapped servers)
+
+Releases are signed with a key you control, so a compromised server can't push code to workers:
 
 1. Once, create a release key on a machine you trust, and keep the private key offline:
    `node scripts/sign-release.mjs keygen release-2026`. Give `release-2026.public.pem` to your workers
-   (worker UI → **Updates → Trusted release keys**).
+   (worker UI → **Updates → Trusted release keys**) or set `WORKER_RELEASE_TRUSTED_KEYS`.
 2. Build the package: `node scripts/package-worker.mjs --tarball`.
-3. In the dashboard, **Server → Worker releases**: choose the channel and version, and upload the package.
-   The page shows the exact signing command, with the package URL on this server.
+3. In the dashboard, **Server → Worker releases → Custom upload**: choose the channel and version, and
+   upload the package. The page shows the exact signing command, with the package URL on this server.
 4. Sign on the machine with the key (`node scripts/sign-release.mjs sign … > manifest.json`) and upload
    `manifest.json`. The server checks that it describes the uploaded package at its own URL, then
    serves it at `/api/v1/worker-releases/<channel>/manifest.json`.
 
-Workers with automatic updates install it within 6 hours; others show it under **Updates**. Uploads and
-publications are recorded in the audit log.
+Alternatively generate a signing key on the server (**Signing keys held by this server**) and set
+`RELEASE_PUBLISH_TOKEN` so your own CI can upload and have the server sign in one call. Anyone who controls
+the server can then sign releases for workers that trust that key.
 
 ### One-click worker install
 
@@ -146,9 +165,10 @@ command for each OS, for example `curl -fsSL https://<server>/api/v1/install/wor
 
 - **A release built with installers inside.** `node scripts/package-worker.mjs --tarball` puts them in the
   package. A package from an older build is refused with a message that says so.
-- **`WORKER_RELEASE_TRUSTED_KEYS`**: the release public key(s) as JSON, `{"release-2026":"<PEM>"}`. The
-  install command checks the release signature against them, and without a key it refuses to install. The
-  new worker also trusts these keys for its own later updates.
+- **A release on this server**: press **Update workers** (above). The install command checks the release
+  signature against the project key, plus any key you added with `WORKER_RELEASE_TRUSTED_KEYS`
+  (`{"release-2026":"<PEM>"}`) or generated on the server. The new worker trusts the same keys for its own
+  later updates.
 
 Trust: the one-liner runs a script served by this server, so the server is trusted at install time, as with
 any `curl | sh`. The signature check protects against a swapped or tampered package, not against a server

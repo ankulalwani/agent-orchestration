@@ -222,7 +222,7 @@ function trustKeys(keys) {
 async function main() {
   const info = await getJson(server + '/api/v1/install/config', 'install settings');
   const trusted = info.trustedKeys || {};
-  if (!Object.keys(trusted).length) fail('This server has no release signing key configured (WORKER_RELEASE_TRUSTED_KEYS), so the download cannot be verified. Ask its administrator to set it, or install from source (docs/workers/README.md).');
+  if (!Object.keys(trusted).length) fail('This server lists no release signing key, so the download cannot be verified. Install from source (docs/workers/README.md).');
 
   say('Finding the latest worker release (' + channel + ')');
   const signed = await getJson(server + '/api/v1/worker-releases/' + channel + '/manifest.json', 'manifest');
@@ -230,14 +230,14 @@ async function main() {
   const pem = trusted[signed.keyId];
   if (!manifest || !pem) fail('The release is signed with a key this server does not list as trusted (' + signed.keyId + ').');
   if (!verify(null, canonical(manifest), createPublicKey(pem), Buffer.from(signed.signature, 'base64'))) fail('The release signature is invalid. Nothing was installed.');
-  if (new URL(manifest.packageUrl).origin !== new URL(server).origin) fail('The release points to another server (' + manifest.packageUrl + '). Nothing was installed.');
   if (compareVersions(process.versions.node, manifest.minNodeVersion || '20.0.0') < 0) fail('This release needs Node.js ' + manifest.minNodeVersion + '+ (found ' + process.version + ').');
   console.log('    worker ' + manifest.version + ', signed by ' + signed.keyId);
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-worker-'));
   try {
     say('Downloading the worker');
-    const res = await fetch(manifest.packageUrl, { signal: AbortSignal.timeout(10 * 60000) });
+    // From this server's copy; where the manifest says it lives does not matter, the signed checksum decides.
+    const res = await fetch(server + '/api/v1/worker-releases/' + channel + '/' + manifest.version + '/package.tgz', { signal: AbortSignal.timeout(10 * 60000) });
     if (!res.ok) fail('Download failed (HTTP ' + res.status + ').');
     const data = Buffer.from(await res.arrayBuffer());
     if (createHash('sha256').update(data).digest('hex') !== manifest.sha256) fail('The download does not match the signed checksum. Nothing was installed.');

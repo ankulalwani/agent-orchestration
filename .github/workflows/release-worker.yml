@@ -1,0 +1,94 @@
+name: Release worker
+
+# Builds the worker package for a version tag, signs its manifest with the project release key, and attaches
+# both to the GitHub Release of that tag (worker-X.Y.Z.tgz and manifest.json). Self-hosted servers fetch these
+# with "Update workers" (Server → Worker releases), verify the signature against the project public key shipped
+# in packages/core/src/release-keys.ts, and serve them to their workers. Operators configure nothing.
+#
+# Maintainers, one time: add the private key as the repository secret WORKER_RELEASE_SIGNING_KEY (PEM of the key
+# whose public half is in release-keys.ts; id ao-release-1, or set the repository variable WORKER_RELEASE_KEY_ID).
+# Forks without that secret skip this workflow with a notice; they can publish with their own key through the
+# server's custom upload (docs/workers/README.md).
+#
+# A tag with a suffix (v0.3.0-beta.1) is published as a pre-release on the beta channel; other tags are stable.
+# Tags pushed with GITHUB_TOKEN do not start other workflows, so auto-tag.yml starts this one explicitly.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-worker
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      SIGNING_KEY: ${{ secrets.WORKER_RELEASE_SIGNING_KEY }}
+      KEY_ID: ${{ vars.WORKER_RELEASE_KEY_ID || 'ao-release-1' }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::notice::WORKER_RELEASE_SIGNING_KEY is not set; skipping the worker release (expected in forks)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.ready == 'true'
+        with:
+          node-version: 22
+      - name: Version from the tag
+        if: steps.cfg.outputs.ready == 'true'
+        id: version
+        run: |
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$GITHUB_REF_NAME is not a version tag (vX.Y.Z). Run this workflow on a tag."; exit 1 ;;
+          esac
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "channel=beta" >> "$GITHUB_OUTPUT" ;; *) echo "channel=stable" >> "$GITHUB_OUTPUT" ;; esac
+          # The package carries this version; the installer refuses a package whose version differs from the signed manifest.
+          node -e "const f='apps/worker/package.json';const p=JSON.parse(require('fs').readFileSync(f,'utf8'));p.version='$version';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+      - name: Build the worker package
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          corepack enable
+          node scripts/package-worker.mjs --tarball
+      - name: Sign the manifest
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/release-key.pem"
+          node scripts/sign-release.mjs sign "$RUNNER_TEMP/release-key.pem" "$KEY_ID" ".deploy/worker-$VERSION.tgz" "$VERSION" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/worker-$VERSION.tgz" "$CHANNEL" > .deploy/manifest.json
+          rm -f "$RUNNER_TEMP/release-key.pem"
+          node -e "const r=require('./.deploy/manifest.json');console.log('Signed '+r.manifest.version+' on '+r.manifest.channel+' with '+r.keyId+' (sha256 '+r.manifest.sha256+')')"
+      - name: Attach to the GitHub Release
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          files=(".deploy/worker-$VERSION.tgz" ".deploy/manifest.json")
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            flags=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            [ "$CHANNEL" = beta ] && flags+=(--prerelease)
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" "${flags[@]}"
+          fi

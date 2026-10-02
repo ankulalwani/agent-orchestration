@@ -101,6 +101,8 @@ export class Updater {
       manifestUrl: string | null;
       trustedKeys: Record<string, string>;
       stagingDir: string;
+      /** Extra places to fetch the package from, tried before `packageUrl` (the control plane's copy). Not trusted: the signed SHA-256 decides. */
+      mirrorUrls?: (manifest: ReleaseManifest) => string[];
       fetchImpl?: typeof fetch;
     },
   ) {}
@@ -120,11 +122,22 @@ export class Updater {
   /** Download and verify the package; returns the staged file path. Never executes anything. */
   async stage(manifest: ReleaseManifest): Promise<string> {
     if (compareVersions(process.versions.node, manifest.minNodeVersion) < 0) throw new AppError('VALIDATION_FAILED', `Update requires Node.js ${manifest.minNodeVersion}+`);
-    const res = await this.fetch(manifest.packageUrl, { signal: AbortSignal.timeout(10 * 60_000) });
-    if (!res.ok) throw new AppError('PROVIDER_ERROR', `Download failed: HTTP ${res.status}`, { retryable: true });
-    const data = Buffer.from(await res.arrayBuffer());
-    const digest = createHash('sha256').update(data).digest('hex');
-    if (digest !== manifest.sha256) throw new AppError('FORBIDDEN', 'Downloaded package does not match the signed checksum');
+    // The URL carries no trust: whichever source answers, the package must match the signed checksum.
+    let data: Buffer | null = null;
+    let failure: AppError | null = null;
+    for (const url of [...(this.opts.mirrorUrls?.(manifest) ?? []), manifest.packageUrl]) {
+      try {
+        const res = await this.fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
+        if (!res.ok) throw new AppError('PROVIDER_ERROR', `Download failed: HTTP ${res.status}`, { retryable: true });
+        const candidate = Buffer.from(await res.arrayBuffer());
+        if (createHash('sha256').update(candidate).digest('hex') !== manifest.sha256) throw new AppError('FORBIDDEN', 'Downloaded package does not match the signed checksum');
+        data = candidate;
+        break;
+      } catch (e) {
+        failure = e instanceof AppError ? e : new AppError('PROVIDER_ERROR', `Download failed: ${(e as Error).message}`, { retryable: true });
+      }
+    }
+    if (!data) throw failure!;
     fs.mkdirSync(this.opts.stagingDir, { recursive: true });
     const file = path.join(this.opts.stagingDir, `worker-${manifest.version}.tgz`);
     fs.writeFileSync(file, data);

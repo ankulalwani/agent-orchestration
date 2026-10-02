@@ -169,7 +169,7 @@ export function userRoutes(route: Route, s: Services) {
   });
   // ── Server administration (platform administrators) ─────────────────────────
   const overview = () =>
-    serverOverview({ config: s.config, env: s.settings.env, runtime: s.settings, queue: s.queue, artifacts: s.artifacts, mailerConfigured: Boolean((s.mailer as { configured?: boolean }).configured), version: process.env.AO_VERSION ?? '0.1.0' });
+    serverOverview({ config: s.config, env: s.settings.env, runtime: s.settings, queue: s.queue, artifacts: s.artifacts, mailerConfigured: Boolean((s.mailer as { configured?: boolean }).configured), version: s.updates.status().current });
   const platformActor = (req: FastifyRequest) => ({ userId: req.userId!, correlationId: req.correlationId, ip: req.ip });
   route({ method: 'GET', path: '/admin/server', summary: 'Effective server configuration and status (secrets never included)', tag: 'admin', auth: 'user' }, async ({ req }) => {
     requirePlatformAdmin(req.platformAdmin);
@@ -199,9 +199,29 @@ export function userRoutes(route: Route, s: Services) {
     requirePlatformAdmin(req.platformAdmin);
     return s.workerReleases.list();
   });
+  route({ method: 'GET', path: '/admin/worker-releases/:channel/upstream', summary: 'Newest official worker release on GitHub versus what this server serves (contacts GitHub)', tag: 'admin', auth: 'user' }, async ({ req, params }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.workerReleases.checkUpstream(params.channel!);
+  });
+  route({ method: 'POST', path: '/admin/worker-releases/:channel/sync', summary: 'Fetch the newest official worker release from GitHub, verify its project signature and serve it to workers', tag: 'admin', auth: 'user' }, async ({ req, params }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.workerReleases.syncFromUpstream(platformActor(req), params.channel!);
+  });
   route({ method: 'PUT', path: '/admin/worker-releases/:channel/manifest', summary: 'Publish a signed manifest for an uploaded worker package', tag: 'admin', auth: 'user', body: z.record(z.unknown()) }, async ({ req, params, body }) => {
     requirePlatformAdmin(req.platformAdmin);
     return s.workerReleases.publish(platformActor(req), params.channel!, body);
+  });
+  route({ method: 'GET', path: '/admin/updates', summary: 'Installed version and the result of the last update check', tag: 'admin', auth: 'user' }, async ({ req }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.updates.status();
+  });
+  route({ method: 'POST', path: '/admin/updates/check', summary: 'Look for a newer version (contacts GitHub)', tag: 'admin', auth: 'user' }, async ({ req }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.updates.check();
+  });
+  route({ method: 'POST', path: '/admin/updates/apply', summary: 'Ask the deployment platform to redeploy with the newest image', tag: 'admin', auth: 'user' }, async ({ req }) => {
+    requirePlatformAdmin(req.platformAdmin);
+    return s.updates.apply(platformActor(req));
   });
   route({ method: 'GET', path: '/admin/worker-release-keys', summary: 'Release signing keys held by this server (public halves only)', tag: 'admin', auth: 'user' }, async ({ req }) => {
     requirePlatformAdmin(req.platformAdmin);

@@ -64,9 +64,9 @@ Actual, current limitations. Updated as the implementation changes. Last updated
   The mobile flow is bundled but has not run on a phone. Provider sign-in for *model access* exists for OpenRouter (the only one offering OAuth for API keys);
   it was tested against a fake, not openrouter.ai. Two-factor authentication uses
   authenticator-app codes (TOTP) only: no SMS or security keys (WebAuthn).
-- **Worker releases** are hosted by your control plane, but no release has been published and no release key
-  exists yet: each operator generates their own. Until a worker trusts a key, update it by re-running the
-  installer.
+- **Worker releases** are hosted by your control plane. Press **Update workers** to fetch the project's signed
+  release from GitHub; this needs the server to reach github.com and a release published by the upstream
+  release workflow. Air-gapped servers and forks use the custom upload with their own key.
 - **Server settings in the dashboard** cover registration, sessions, CORS, rate limits, email, sign-in
   providers and error tracking. Database, Redis, encryption keys, storage, ports, `PUBLIC_URL` and
   intervals are environment-only and need a restart.

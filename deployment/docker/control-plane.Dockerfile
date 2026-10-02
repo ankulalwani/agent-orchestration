@@ -21,6 +21,9 @@ COPY . .
 RUN pnpm install --frozen-lockfile --prod --filter "@ao/api..."
 
 FROM node:22-bookworm-slim
+# The version shown on Server → Updates (set by the publish workflow from the tag).
+ARG AO_VERSION=dev
+ENV AO_VERSION=$AO_VERSION
 ENV NODE_ENV=production \
     PORT=4000 \
     HOST=0.0.0.0 \

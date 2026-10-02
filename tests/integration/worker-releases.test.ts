@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { generateKeyPairSync, sign } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDatabase, stopTestDatabase } from '@ao/database/testing';
 import { API_PREFIX } from '@ao/contracts';
@@ -114,17 +114,110 @@ describe('worker releases hosted by the control plane', () => {
     expect(settings.trustedKeys['server-key']).toBe(gen[0]!.publicKey);
   });
 
+  it('CI: the publish token uploads, signs and publishes in one call; wrong or unset tokens are refused', async () => {
+    const token = 'ci-token-'.padEnd(40, 'x');
+    const put = (bearer: string, version: string) =>
+      fetch(`${base}${API_PREFIX}/admin/worker-releases/stable/${version}/package?sign=true`, { method: 'PUT', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/gzip' }, body: pkg });
+    expect((await put(token, '100.0.0')).status).toBe(401); // token not configured yet
+    (s.config as { RELEASE_PUBLISH_TOKEN?: string }).RELEASE_PUBLISH_TOKEN = token;
+    expect((await put('wrong-'.padEnd(40, 'x'), '100.0.0')).status).toBe(401);
+    const ok = await put(token, '100.0.0');
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    const manifest = (await (await fetch(`${base}/api/v1/worker-releases/stable/manifest.json`)).json()) as { manifest: { version: string } };
+    expect(manifest.manifest.version).toBe('100.0.0');
+    (s.config as { RELEASE_PUBLISH_TOKEN?: string }).RELEASE_PUBLISH_TOKEN = undefined;
+  });
+
   it('a paired worker uses its control plane as the release source by default; trust stays local', async () => {
     const rt = new WorkerRuntime(fs.mkdtempSync(path.join(os.tmpdir(), 'ao-rel-worker-')));
     rt.config.update({ connectionMode: 'self-hosted', controlPlaneUrl: base, updates: { ...rt.config.get().updates, channel: 'beta' } });
     await rt.init();
     try {
       expect(rt.updates.manifestUrl()).toBe(`${base}/api/v1/worker-releases/beta/manifest.json`);
-      expect(rt.updates.unsupportedReason()).toMatch(/No release signing key is trusted/);
+      expect(Object.keys(rt.updates.trustedKeys())).toContain('ao-release-1'); // the project key is trusted by default
+      expect(rt.updates.unsupportedReason()).toMatch(/not started by the installed launcher/);
       rt.config.update((c) => ({ ...c, updates: { ...c.updates, manifestUrl: 'https://releases.example/m.json' } }));
       expect(rt.updates.manifestUrl()).toBe('https://releases.example/m.json');
     } finally {
       await rt.stop();
     }
+  });
+});
+
+describe('official releases fetched from GitHub ("Update workers")', () => {
+  const realFetch = globalThis.fetch;
+  const gh = 'https://github.com/ankulalwani/agent-orchestration/releases/download';
+  const files = new Map<string, Buffer>();
+  let releases: unknown[] = [];
+  let githubPackagesGone = false;
+  const api = (token: string, method: string, p: string) => fetch(`${base}${API_PREFIX}${p}`, { method, headers: { authorization: `Bearer ${token}` } });
+  const addRelease = (version: string, opts: { signer?: typeof publisher; pkgBytes?: Buffer; signedBytes?: Buffer; prerelease?: boolean } = {}) => {
+    const bytes = opts.pkgBytes ?? gzipSync(Buffer.from(`worker ${version}`));
+    const manifest: ReleaseManifest = { version, channel: opts.prerelease ? 'beta' : 'stable', publishedAt: new Date().toISOString(), packageUrl: `${gh}/v${version}/worker-${version}.tgz`, sha256: createHash('sha256').update(opts.signedBytes ?? bytes).digest('hex'), minNodeVersion: '20.0.0', notes: `notes ${version}` };
+    files.set(`${gh}/v${version}/manifest.json`, Buffer.from(JSON.stringify(signWith(opts.signer ?? publisher, manifest))));
+    files.set(`${gh}/v${version}/worker-${version}.tgz`, bytes);
+    releases.unshift({ tag_name: `v${version}`, draft: false, prerelease: Boolean(opts.prerelease), html_url: `https://github.com/ankulalwani/agent-orchestration/releases/tag/v${version}`, assets: [`manifest.json`, `worker-${version}.tgz`].map((name) => ({ name, browser_download_url: `${gh}/v${version}/${name}` })) });
+    return bytes;
+  };
+
+  beforeAll(() => {
+    (s.config as { WORKER_RELEASE_TRUSTED_KEYS: Record<string, string> }).WORKER_RELEASE_TRUSTED_KEYS = trusted;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('https://api.github.com/')) return Promise.resolve(new Response(JSON.stringify(releases)));
+      if (url.startsWith('https://github.com/')) {
+        const f = files.get(url);
+        return Promise.resolve(f && !(githubPackagesGone && url.includes('/v200.0.0/worker-')) ? new Response(f) : new Response('gone', { status: 404 }));
+      }
+      return realFetch(input, init);
+    });
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it('imports the project release, serves the upstream signature unchanged, and workers can fetch it from this server', async () => {
+    const bytes = addRelease('200.0.0');
+    expect((await api(member, 'GET', '/admin/worker-releases/stable/upstream')).status).toBe(403);
+    expect((await api(member, 'POST', '/admin/worker-releases/stable/sync')).status).toBe(403);
+    const check = (await (await api(admin, 'GET', '/admin/worker-releases/stable/upstream')).json()) as { latest: string; available: boolean };
+    expect(check).toMatchObject({ latest: '200.0.0', available: true });
+
+    const done = await api(admin, 'POST', '/admin/worker-releases/stable/sync');
+    expect(done.status, await done.clone().text()).toBe(200);
+    expect(await done.json()).toMatchObject({ status: 'imported', version: '200.0.0' });
+    expect(((await (await api(admin, 'GET', '/admin/worker-releases/stable/upstream')).json()) as { available: boolean }).available).toBe(false);
+    expect(await (await api(admin, 'POST', '/admin/worker-releases/stable/sync')).json()).toMatchObject({ status: 'up-to-date' });
+
+    githubPackagesGone = true;
+    // The manifest is the one the project signed (its packageUrl still points at GitHub); the worker's own check passes.
+    const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-stage-up-'));
+    const updater = new Updater({
+      currentVersion: '0.1.0', manifestUrl: `${base}/api/v1/worker-releases/stable/manifest.json`, trustedKeys: trusted, stagingDir,
+      mirrorUrls: (m) => [`${base}/api/v1/worker-releases/${m.channel}/${m.version}/package.tgz`],
+    });
+    const found = await updater.check();
+    expect(found.latest).toMatchObject({ version: '200.0.0', packageUrl: `${gh}/v200.0.0/worker-200.0.0.tgz` });
+    // GitHub's copy of 200.0.0 is unreachable in this test; the control plane's mirror serves it, and the signed checksum still gates it.
+    expect(fs.readFileSync(await updater.stage(found.latest!))).toEqual(bytes);
+  });
+
+  it('refuses a release signed with an untrusted key, or whose package does not match the signed checksum', async () => {
+    addRelease('200.0.1', { signer: attacker });
+    const forged = await api(admin, 'POST', '/admin/worker-releases/stable/sync');
+    expect(forged.status).toBe(403);
+    releases.shift();
+    addRelease('200.0.2', { signedBytes: gzipSync(Buffer.from('what was signed')) });
+    const swapped = await api(admin, 'POST', '/admin/worker-releases/stable/sync');
+    expect(swapped.status).toBe(403);
+    expect(await swapped.text()).toMatch(/signed checksum/);
+    const served = (await (await fetch(`${base}/api/v1/worker-releases/stable/manifest.json`)).json()) as { manifest: { version: string } };
+    expect(['200.0.0']).toContain(served.manifest.version); // nothing from the refused releases is served
+  });
+
+  it('the beta channel includes pre-releases; stable ignores them', async () => {
+    releases = [];
+    addRelease('4.0.0-beta.1', { prerelease: true });
+    expect(((await (await api(admin, 'GET', '/admin/worker-releases/stable/upstream')).json()) as { latest: string | null }).latest).toBeNull();
+    expect(((await (await api(admin, 'GET', '/admin/worker-releases/beta/upstream')).json()) as { latest: string }).latest).toBe('4.0.0-beta.1');
+    expect(await (await api(admin, 'POST', '/admin/worker-releases/beta/sync')).json()).toMatchObject({ status: 'imported', version: '4.0.0-beta.1' });
   });
 });

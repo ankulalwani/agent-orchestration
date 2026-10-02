@@ -95,6 +95,15 @@ export const serverConfigSchema = z.object({
    * {"release-2026":"-----BEGIN PUBLIC KEY-----\n…"}. The install script checks the signed release against them
    * and gives them to the new worker for its later updates. Without a key, the install script refuses to install.
    */
+  /**
+   * Lets CI publish worker releases without an administrator's session: `Authorization: Bearer <token>` is accepted
+   * only to upload a package and sign it with the server's signing key. 32+ random characters; unset: off.
+   */
+  RELEASE_PUBLISH_TOKEN: z.string().min(32).optional(),
+  /** GitHub repository (owner/name) whose version tags the Updates page compares against. Checked only when an administrator asks. */
+  UPDATE_CHECK_REPO: z.string().regex(/^[\w.-]+\/[\w.-]+$/).default('ankulalwani/agent-orchestration'),
+  /** Redeploy hook (Easypanel, Coolify, Portainer, a CI trigger) that pulls the newest image and restarts the server. Unset: the Updates page shows manual steps. */
+  UPDATE_WEBHOOK_URL: z.string().url().optional(),
   WORKER_RELEASE_TRUSTED_KEYS: z
     .string()
     .default('')

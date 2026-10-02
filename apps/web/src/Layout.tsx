@@ -70,6 +70,7 @@ export function Layout() {
               {link('/admin/server', 'Server settings')}
               {link('/admin/users', 'Users')}
               {link('/admin/features', 'Feature flags')}
+              {link('/admin/updates', 'Updates')}
               {link('/admin/releases', 'Worker releases')}
               {link('/admin/marketplace', 'Marketplace')}
               {extNav('server')}

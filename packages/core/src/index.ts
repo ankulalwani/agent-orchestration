@@ -5,3 +5,4 @@ export * from './exec.js';
 export * from './logger.js';
 export * from './error-reporting.js';
 export * from './totp.js';
+export * from './release-keys.js';

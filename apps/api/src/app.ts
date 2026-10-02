@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
@@ -10,7 +11,7 @@ import fastifyStatic from '@fastify/static';
 import { z } from 'zod';
 import { API_PREFIX, liveMessage } from '@ao/contracts';
 import { databaseHealthy } from '@ao/database';
-import { MAX_WORKER_PACKAGE_BYTES, type Services } from '@ao/server';
+import { MAX_WORKER_PACKAGE_BYTES, type ReleaseActor, type Services } from '@ao/server';
 import { AppError } from '@ao/core';
 import { createRouter, installErrorHandling } from './http.js';
 import { userRoutes } from './routes/user-routes.js';
@@ -119,10 +120,22 @@ export async function buildApp(services: Services, opts: BuildAppOptions = {}): 
     scope.put(API_PREFIX + '/admin/worker-releases/:channel/:version/package', { bodyLimit: MAX_WORKER_PACKAGE_BYTES }, async (req) => {
       const h = req.headers.authorization;
       if (!h?.startsWith('Bearer ') || h.startsWith('Bearer aow_') || h.startsWith('Bearer aot_')) throw new AppError('UNAUTHENTICATED', 'Sign in as a server administrator');
-      const claims = await services.auth.verifyAccess(h.slice(7));
-      if (!claims.pa) throw new AppError('FORBIDDEN', 'Only server administrators can publish worker releases');
       const { channel, version } = req.params as { channel: string; version: string };
-      return services.workerReleases.uploadPackage({ userId: claims.sub, correlationId: req.correlationId, ip: req.ip }, channel, version, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+      const ci = services.config.RELEASE_PUBLISH_TOKEN;
+      const bearer = h.slice(7);
+      // CI: the shared publish token (constant-time compare) stands in for an administrator.
+      const isCi = Boolean(ci) && bearer.length === ci!.length && timingSafeEqual(Buffer.from(bearer), Buffer.from(ci!));
+      let actor: ReleaseActor;
+      if (isCi) actor = { system: true };
+      else {
+        const claims = await services.auth.verifyAccess(bearer);
+        if (!claims.pa) throw new AppError('FORBIDDEN', 'Only server administrators can publish worker releases');
+        actor = { userId: claims.sub, correlationId: req.correlationId, ip: req.ip };
+      }
+      const uploaded = await services.workerReleases.uploadPackage(actor, channel, version, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+      // ?sign=true: sign with the server's active key and publish in the same call (CI or the admin page).
+      if ((req.query as { sign?: string }).sign === 'true') return { ...uploaded, published: await services.workerReleases.signAndPublish(actor, channel, version, (req.query as { notes?: string }).notes) };
+      return uploaded;
     });
   });
   app.get(API_PREFIX + '/worker-releases/:channel/manifest.json', async (req) => services.workerReleases.manifest((req.params as { channel: string }).channel));

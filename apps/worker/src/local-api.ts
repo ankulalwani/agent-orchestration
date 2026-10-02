@@ -4,14 +4,13 @@ import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { z, ZodError } from 'zod';
-import { isAppError, maskSecret, policyLayerSchema, safeEqual } from '@ao/core';
+import { PROJECT_RELEASE_KEYS, isAppError, maskSecret, policyLayerSchema, safeEqual } from '@ao/core';
 import { providerConfigSchema } from '@ao/providers';
 import { HOSTED_CONTROL_PLANE_URL } from './config.js';
 import type { WorkerRuntime } from './runtime.js';
 import { WORKER_VERSION } from './runtime.js';
 import { runDiagnostics } from './diagnostics.js';
 import { systemMetrics } from './system.js';
-import { Updater } from './updater.js';
 import { ProviderOAuth, supportsProviderOAuth } from './provider-oauth.js';
 
 /**
@@ -302,8 +301,7 @@ export async function buildLocalApi(rt: WorkerRuntime, opts: { uiDir?: string; p
   });
 
   app.get('/api/diagnostics', async () => runDiagnostics(rt));
-  const updater = () =>
-    new Updater({ currentVersion: WORKER_VERSION, manifestUrl: rt.updates.manifestUrl(), trustedKeys: rt.config.get().updates.trustedKeys, stagingDir: path.join(rt.dataDir, 'updates') });
+  const updater = () => rt.updates.updater();
   app.get('/api/updates', async () => {
     const u = rt.config.get().updates;
     const installed = rt.updates.installState();
@@ -312,11 +310,12 @@ export async function buildLocalApi(rt: WorkerRuntime, opts: { uiDir?: string; p
       policy: { policy: u.policy, channel: u.channel },
       manifestUrl: rt.updates.manifestUrl(),
       manifestUrlFromControlPlane: !u.manifestUrl,
-      trustedKeyIds: Object.keys(u.trustedKeys),
+      trustedKeyIds: Object.keys(rt.updates.trustedKeys()),
+      projectKeyIds: Object.keys(PROJECT_RELEASE_KEYS),
       canInstall: !rt.updates.unsupportedReason(),
       installed: installed && { current: installed.current, previous: installed.previous, pending: installed.pending?.version ?? null, rolledBack: installed.bad },
     };
-    if (!rt.updates.manifestUrl() || !Object.keys(u.trustedKeys).length) {
+    if (!rt.updates.manifestUrl()) {
       return { ...base, supported: false, reason: rt.updates.unsupportedReason() };
     }
     try {

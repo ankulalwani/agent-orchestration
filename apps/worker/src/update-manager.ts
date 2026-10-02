@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { AppError, captureError, createLogger } from '@ao/core';
+import { AppError, PROJECT_RELEASE_KEYS, captureError, createLogger } from '@ao/core';
 import { RESTART_FOR_UPDATE_EXIT_CODE, launcherInstallDir, readInstallState, type InstallState } from './install-state.js';
-import { Updater, confirmInstalledVersion, installStagedUpdate } from './updater.js';
+import { Updater, confirmInstalledVersion, installStagedUpdate, type ReleaseManifest } from './updater.js';
 import type { WorkerRuntime } from './runtime.js';
 
 const log = createLogger('worker-updates');
@@ -25,9 +25,20 @@ export class UpdateManager {
     private installDir: string | null = launcherInstallDir(),
   ) {}
 
-  private updater() {
+  /** The project's release keys (shipped with this worker) plus the ones an administrator added. */
+  trustedKeys(): Record<string, string> {
+    return { ...PROJECT_RELEASE_KEYS, ...this.rt.config.get().updates.trustedKeys };
+  }
+
+  /** The control plane's copy of a release: a faster, always reachable source. The signed checksum still decides. */
+  private mirrorUrls(manifest: ReleaseManifest): string[] {
     const u = this.rt.config.get().updates;
-    return new Updater({ currentVersion: this.currentVersion, manifestUrl: this.manifestUrl(), trustedKeys: u.trustedKeys, stagingDir: path.join(this.rt.dataDir, 'updates') });
+    const cp = this.rt.controlPlaneUrl();
+    return cp && !u.manifestUrl ? [`${cp.replace(/\/+$/, '')}/api/v1/worker-releases/${manifest.channel}/${manifest.version}/package.tgz`] : [];
+  }
+
+  updater() {
+    return new Updater({ currentVersion: this.currentVersion, manifestUrl: this.manifestUrl(), trustedKeys: this.trustedKeys(), stagingDir: path.join(this.rt.dataDir, 'updates'), mirrorUrls: (m) => this.mirrorUrls(m) });
   }
 
   installState(): InstallState | null {
@@ -51,8 +62,6 @@ export class UpdateManager {
   }
 
   unsupportedReason(): string | null {
-    const u = this.rt.config.get().updates;
-    if (!Object.keys(u.trustedKeys).length) return "No release signing key is trusted on this worker. Add the publisher's public key (Updates → Trusted keys), or update by re-running the installer.";
     if (!this.manifestUrl()) return 'No update source: connect the worker to a control plane or set updates.manifestUrl. Until then, update by re-running the installer.';
     if (!this.installDir) return 'This worker was not started by the installed launcher, so it cannot replace itself. Update by re-running the installer.';
     return null;

@@ -68,11 +68,12 @@ environment, or `errorTracking.dsn` / `errorTracking.webhookUrl` in its `config.
 The installers set the worker up for self-updates: the autostart entry runs a small **launcher**, and each
 version lives in its own folder (`app/<version>/`, with `state.json` saying which one is current).
 
-- **Update source:** by default, the control plane the worker is connected to (it hosts signed releases:
-  see [Publishing worker releases](../self-hosting/README.md#publishing-worker-releases)). Set
+- **Update source:** by default, the control plane the worker is connected to (it serves the project's signed
+  releases: see [Updating workers](../self-hosting/README.md#updating-workers)). Set
   `updates.manifestUrl` to use another source.
-- **Trust:** the worker installs only releases signed with a key in `updates.trustedKeys`. Add the
-  publisher's public key in the worker UI (**Updates → Trusted release keys**). The control plane can
+- **Trust:** the worker installs only releases signed with a key it trusts: the project's release key (built
+  into the worker) or one in `updates.trustedKeys`. For your own builds, add your public key in the worker UI
+  (**Updates → Trusted release keys**). The control plane can
   deliver releases but can't add keys, so it can't make a worker run code that wasn't signed by the
   publisher. Nothing is installed unless the manifest signature and the package checksum both verify.
 - **Manual:** the local UI's update section (or `POST /api/updates/apply` on the local API) downloads,

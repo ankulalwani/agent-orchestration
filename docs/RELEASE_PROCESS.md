@@ -11,10 +11,10 @@
 4. Commit `release: vX.Y.Z`, tag `vX.Y.Z` (annotated), push the tag. CI runs again on the tag.
 5. Artifacts from the tag:
    - control-plane image: `docker build -f deployment/docker/control-plane.Dockerfile -t <registry>/agent-orchestration:X.Y.Z .`
-   - worker package: `node scripts/package-worker.mjs`, signed with your release key:
-     `node scripts/sign-release.mjs sign <key>.private.pem <keyId> <worker.tgz> X.Y.Z <packageUrl>`
-     (keep the private key offline; workers trust the public key), then published in
-     **Server → Worker releases**.
+   - worker package: built, signed with the project release key and attached to the GitHub Release by
+     `.github/workflows/release-worker.yml` (secret `WORKER_RELEASE_SIGNING_KEY`; its public half is in
+     `packages/core/src/release-keys.ts`). Self-hosted servers fetch it with **Server → Worker releases →
+     Update workers**; nothing is uploaded by hand.
    - VS Code extension: `pnpm --filter agent-orchestration-vscode package`.
 
 ## Downstream: distributions built on the core

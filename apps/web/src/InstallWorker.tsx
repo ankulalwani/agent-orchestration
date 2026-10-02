@@ -52,7 +52,9 @@ export function InstallWorkerCard() {
         )}
         {notReady && (
           <Alert tone="warn">
-            This server can't install workers yet. An administrator must publish a signed worker release (Server → Worker releases) and set <code>WORKER_RELEASE_TRUSTED_KEYS</code>. See the workers guide.
+            This server can't install workers yet.{' '}
+            {!settings.data?.latest && 'No worker release is available yet: an administrator opens Server → Worker releases and presses "Update workers".'}{' '}
+            {Object.keys(settings.data?.trustedKeys ?? {}).length === 0 && 'This server lists no release signing key, so a download cannot be verified.'}
           </Alert>
         )}
       </div>
