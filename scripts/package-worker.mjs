@@ -46,6 +46,13 @@ if (process.argv.includes('--tarball')) {
   const tgz = path.join(root, '.deploy', `worker-${version}.tgz`);
   // node-tar rather than the OS tar (Windows' bsdtar crashes on this tree).
   const tar = await import('tar');
-  tar.c({ gzip: true, file: tgz, cwd: path.join(root, '.deploy'), portable: true, sync: true }, ['worker']);
+  // pnpm hard-links files from its store and adds node_modules/.bin symlinks. Archived as-is, extraction on Windows
+  // (no symlink privilege) aborts midway and leaves a partial node_modules. Pack a copy of regular files only.
+  const stage = path.join(root, '.deploy', 'pack');
+  fs.rmSync(stage, { recursive: true, force: true });
+  fs.cpSync(out, path.join(stage, 'worker'), { recursive: true, dereference: true });
+  fs.rmSync(path.join(stage, 'worker', 'node_modules', '.bin'), { recursive: true, force: true });
+  tar.c({ gzip: true, file: tgz, cwd: stage, portable: true, sync: true }, ['worker']);
+  fs.rmSync(stage, { recursive: true, force: true });
   console.log(`Release package: ${tgz}`);
 }
