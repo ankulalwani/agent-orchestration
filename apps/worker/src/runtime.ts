@@ -263,15 +263,9 @@ export class WorkerRuntime {
     hb();
     this.flushTimer = setInterval(() => void this.flush(), 1000);
     this.flushTimer.unref?.();
-    // Polling fallback for offers when the socket is down (spec §54).
-    this.offerPollTimer = setInterval(async () => {
-      if (!this.client || this.client.state === 'connected' || this.executor.capacity() <= 0) return;
-      try {
-        for (const id of (await this.client.offers()).taskIds) await this.executor.handleOffer(id);
-      } catch {
-        /* offline */
-      }
-    }, 30_000);
+    // Polling for offers: the only path when the socket is down (spec §54), and a safety net when a
+    // pushed offer was dropped because the worker was at capacity.
+    this.offerPollTimer = setInterval(() => void this.executor.pullOffers(), 30_000);
     this.offerPollTimer.unref?.();
   }
 

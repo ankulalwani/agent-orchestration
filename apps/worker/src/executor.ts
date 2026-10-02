@@ -137,7 +137,22 @@ export class TaskExecutor {
         log.error({ taskId: run.taskId, err: String(e) }, 'task run crashed');
         captureError(e, { tags: { component: 'worker.task', taskId: run.taskId } });
       })
-      .finally(() => this.running.delete(run.taskId));
+      .finally(() => {
+        this.running.delete(run.taskId);
+        // An offer that arrived while this run held the last slot was dropped; pick it up now.
+        void this.pullOffers();
+      });
+  }
+
+  /** Claim offers the control plane holds for this worker (also the recovery for offers dropped at capacity). */
+  async pullOffers() {
+    const client = this.deps.client();
+    if (!client || this.capacity() <= 0) return;
+    try {
+      for (const id of (await client.offers()).taskIds) await this.handleOffer(id);
+    } catch {
+      /* offline; the next poll retries */
+    }
   }
 
   control(taskId: string, c: Control) {
