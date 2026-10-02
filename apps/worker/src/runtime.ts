@@ -20,8 +20,10 @@ import { defaultRoots, describeRepository, scanForRepositories, type ScanResult 
 import { tokenAuthEnv } from '@ao/git';
 import { ModelGateway } from './gateway/server.js';
 
+import { WORKER_VERSION } from './version.js';
+
 const log = createLogger('worker');
-export const WORKER_VERSION = process.env.AO_WORKER_VERSION ?? '0.2.0';
+export { WORKER_VERSION };
 
 export interface PairingState {
   status: 'idle' | 'waiting' | 'approved' | 'denied' | 'expired' | 'error';

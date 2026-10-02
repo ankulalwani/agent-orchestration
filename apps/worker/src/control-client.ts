@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
+import { WORKER_VERSION } from './version.js';
 import { AppError, backoffDelay, createLogger } from '@ao/core';
 import {
   API_PREFIX,
@@ -139,7 +140,7 @@ export class ControlPlaneClient {
       this.lastConnectedAt = new Date().toISOString();
       this.lastError = null;
       this.setState('connected');
-      ws.send(JSON.stringify({ type: 'hello', protocol: WORKER_PROTOCOL_VERSION, version: process.env.AO_WORKER_VERSION ?? '0.2.0' }));
+      ws.send(JSON.stringify({ type: 'hello', protocol: WORKER_PROTOCOL_VERSION, version: WORKER_VERSION }));
     });
     ws.on('message', (raw) => {
       try {

@@ -12,7 +12,7 @@ settings → Change visibility), or Easypanel cannot pull it.
 
 | Service | Image | Notes |
 |---|---|---|
-| `agent-orchestration` | `ghcr.io/ankulalwani/agent-orchestration:0.2.1` | Port 4000 behind the Easypanel domain. Volume `data` at `/app/data` holds task artifacts. |
+| `agent-orchestration` | `ghcr.io/ankulalwani/agent-orchestration:latest` | Port 4000 behind the Easypanel domain. Volume `data` at `/app/data` holds task artifacts. |
 | `agent-orchestration-mongo` | `mongo:7` | Source of truth. |
 | `agent-orchestration-redis` | `redis:7-alpine` | BullMQ dispatch queue. |
 

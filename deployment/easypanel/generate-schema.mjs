@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prints an Easypanel template schema (JSON) with fresh secrets, for installations that don't use the
 // official template: Easypanel → project → Templates → Create from Schema → paste the output.
-//   node deployment/easypanel/generate-schema.mjs [--name agent-orchestration] [--image ghcr.io/...:0.2.1]
+//   node deployment/easypanel/generate-schema.mjs [--name agent-orchestration] [--image ghcr.io/...:<version>]
 // Mirrors deployment/easypanel/agent-orchestration/index.ts; keep the two in sync.
 import { randomBytes } from 'node:crypto';
 

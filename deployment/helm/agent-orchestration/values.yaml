@@ -2,8 +2,8 @@
 # autoscaling, backups and monitoring on. Not yet on a managed cloud cluster.
 image:
   repository: agent-orchestration   # build with deployment/docker/control-plane.Dockerfile and push to your registry
-  tag: "0.2.0"
-  pullPolicy: IfNotPresent
+  tag: "latest"                     # follows main; pin to a version (for example "0.2.5") to freeze
+  pullPolicy: Always
 
 # Scheduling is safe with several replicas only when REDIS_URL is set (BullMQ + live-update bridge).
 replicaCount: 1

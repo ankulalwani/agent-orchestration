@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsup';
+
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
 /** Bundle workspace (@ao/*) TypeScript; keep third-party packages external (resolved from node_modules at runtime). */
 export default defineConfig({
@@ -11,6 +14,8 @@ export default defineConfig({
   clean: true,
   splitting: false,
   sourcemap: true,
+  // Stamped from package.json (release-worker.yml sets it from the tag before building); no hardcoded version.
+  define: { __WORKER_VERSION__: JSON.stringify(version) },
   noExternal: [/^@ao\//],
   external: [/^(?!@ao\/)[^./]/],
 });

@@ -135,7 +135,7 @@ export function AdminReleasesPage() {
                 </Select>
               )}
             </Field>
-            <Field label="Version">{(id) => <Input id={id} value={version} placeholder="0.2.0" onChange={(e) => setVersion(e.target.value)} />}</Field>
+            <Field label="Version">{(id) => <Input id={id} value={version} placeholder="X.Y.Z" onChange={(e) => setVersion(e.target.value)} />}</Field>
           </div>
           <Field label="Package (.tgz)">{(id) => <input id={id} type="file" accept=".tgz,.tar.gz,application/gzip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />}</Field>
           <div><Button variant="primary" disabled={!file || !/^\d+\.\d+\.\d+/.test(version)} loading={upload.isPending} onClick={() => upload.mutate()}>Upload</Button></div>
