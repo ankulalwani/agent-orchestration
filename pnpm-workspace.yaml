@@ -5,3 +5,7 @@ allowBuilds:
   esbuild: true
   mongodb-memory-server: true
   msgpackr-extract: true
+# node-forge: no patched release. Only reachable via expo CLI (dev-time code signing), never in server runtime.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-86w9-cpqp-85rv
