@@ -14,6 +14,8 @@ export interface WebNavContext {
 export interface WebNavItem {
   to: string;
   label: string;
+  /** Shown before the label in the sidebar (an icon component taking className). */
+  icon?: ComponentType<{ className?: string }>;
   /** `organization`: with the organization's pages; `server`: with the platform administrators' pages. */
   section: 'organization' | 'server';
   /** Hide the item unless this returns true (UI hint only; the API enforces access). */

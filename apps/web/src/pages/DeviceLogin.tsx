@@ -23,7 +23,7 @@ export function DeviceLoginPage() {
   });
   const decide = useMutation({ mutationFn: (approve: boolean) => post(`/auth/device/${encodeURIComponent(code.trim())}/decision`, { approve }).then(() => approve) });
   return (
-    <div className="stack" style={{ maxWidth: 560 }}>
+    <div className="flex max-w-[620px] flex-col gap-4">
       <PageHeader title="Sign in a device" description="Approve signing in agentctl or the mobile app with your account." />
       <Card>
         <div className="stack">
@@ -32,7 +32,7 @@ export function DeviceLoginPage() {
           ) : (
             <>
               <Field label="Code" hint="Shown by the CLI or the app, e.g. ABCD-1234">
-                {(id) => <Input id={id} className="code-block" value={code} maxLength={9} onChange={(e) => setCode(e.target.value.toUpperCase())} />}
+                {(id) => <Input id={id} className="code-block" value={code} maxLength={9} autoComplete="off" spellCheck={false} onChange={(e) => setCode(e.target.value.toUpperCase())} />}
               </Field>
               {valid && pending.isLoading && <Spinner label="Looking up the code…" />}
               {valid && pending.error && <Alert tone="danger">{(pending.error as ApiError).message}</Alert>}

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AddMemberResponse, InvitationDto, MemberDto } from '@ao/contracts';
 import { ROLES, canAssignRole, type Role } from '@ao/core/shared';
-import { Alert, Button, Card, Field, Input, Select, Spinner, Tabs, Textarea } from '@ao/ui';
+import { KeyRound } from 'lucide-react';
+import { Alert, Badge, Button, Card, Check, CopyButton, EmptyState, Field, Input, Select, Spinner, Tabs, Textarea } from '@ao/ui';
 import QRCode from 'qrcode';
 import { useSearchParams } from 'react-router-dom';
 import { OAUTH_ERRORS, useOAuthProviders } from './Auth';
@@ -30,8 +31,8 @@ export function SettingsPage() {
   const [tab, setTab] = useState<Tab>(() => (['account', 'github'].includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'general'));
   const { can } = useSession();
   return (
-    <div className="stack">
-      <PageHeader title="Settings" />
+    <div className="stack max-w-[1080px]">
+      <PageHeader title="Settings" description="Your organization, its people and policy, and your own account." />
       <Tabs
         label="Settings sections"
         value={tab}
@@ -100,7 +101,7 @@ function ConnectedAccounts() {
       <div className="card-body stack">
         {notice && <Alert tone={notice.tone === 'danger' ? 'danger' : undefined}>{notice.text}</Alert>}
         {err && <Alert tone="danger">{(err as ApiError).message}</Alert>}
-        <p className="small muted" style={{ margin: 0 }}>
+        <p className="small muted">
           Sign in with these instead of your password.{user.hasPassword === false && ' You have no password yet; to set one, use "Forgot password" on the sign-in page.'}
         </p>
       </div>
@@ -111,7 +112,7 @@ function ConnectedAccounts() {
             return (
               <tr key={id}>
                 <td>
-                  {nameOf(id)}
+                  <span className="font-medium">{nameOf(id)}</span> {link ? <Badge tone="ok">connected</Badge> : <Badge>not connected</Badge>}
                   {link?.email && <div className="small muted">{link.email}</div>}
                 </td>
                 <td style={{ textAlign: 'right' }}>
@@ -181,13 +182,13 @@ function TwoFactor() {
             <div className="stack">
               <strong>Save these recovery codes now. They are shown only once.</strong>
               <span>Each one signs you in once if you lose your authenticator.</span>
-              <pre aria-label="Recovery codes" style={{ margin: 0 }}>{recoveryCodes.join('\n')}</pre>
+              <pre aria-label="Recovery codes" className="log w-fit columns-2 gap-8 !text-[13px] !text-fg">{recoveryCodes.join('\n')}</pre>
             </div>
           </Alert>
         )}
         {enabled ? (
           <>
-            <p style={{ margin: 0 }}>On. Signing in asks for a code from your authenticator app.</p>
+            <p className="flex items-center gap-2"><Badge tone="ok">on</Badge> <span>On. Signing in asks for a code from your authenticator app.</span></p>
             <form
               className="stack"
               onSubmit={(e) => {
@@ -212,8 +213,8 @@ function TwoFactor() {
               enable.mutate();
             }}
           >
-            <p style={{ margin: 0 }}>Scan this code with an authenticator app (for example 1Password, Google Authenticator or Microsoft Authenticator), then enter the 6-digit code it shows.</p>
-            <img src={setup.qr} alt="QR code for your authenticator app" width={200} height={200} />
+            <p>Scan this code with an authenticator app (for example 1Password, Google Authenticator or Microsoft Authenticator), then enter the 6-digit code it shows.</p>
+            <img src={setup.qr} alt="QR code for your authenticator app" width={200} height={200} className="rounded-md border border-line bg-white p-1" />
             <div className="small muted">
               Can't scan? Enter this key: <code aria-label="Setup key">{setup.secret.replace(/(.{4})/g, '$1 ').trim()}</code>
             </div>
@@ -225,7 +226,7 @@ function TwoFactor() {
           </form>
         ) : (
           <>
-            <p style={{ margin: 0 }}>Off. Add a second step to signing in: a code from an authenticator app on your phone.</p>
+            <p>Off. Add a second step to signing in: a code from an authenticator app on your phone.</p>
             <div>
               <Button variant="primary" loading={start.isPending} onClick={() => start.mutate()}>Set up two-factor authentication</Button>
             </div>
@@ -269,10 +270,9 @@ function General() {
         {save.error && <Alert tone="danger">{(save.error as ApiError).message}</Alert>}
         {save.isSuccess && <Alert>Saved.</Alert>}
         <Field label="Name">{(id) => <Input id={id} value={name} disabled={!editable} onChange={(e) => setName(e.target.value)} />}</Field>
-        <label className="row">
-          <input type="checkbox" checked={approval} disabled={!can('settings.manage')} onChange={(e) => setApproval(e.target.checked)} />
+        <Check checked={approval} disabled={!can('settings.manage')} onChange={(e) => setApproval(e.target.checked)}>
           Newly paired workers need admin approval before they receive tasks
-        </label>
+        </Check>
         <div className="grid grid-2">
           <Field label="Keep task events (days)">{(id) => <Input id={id} type="number" min={1} value={retention.events} disabled={!can('settings.manage')} onChange={(e) => setRetention({ ...retention, events: Number(e.target.value) })} />}</Field>
           <Field label="Keep agent output (days)">{(id) => <Input id={id} type="number" min={1} value={retention.agentOutput} disabled={!can('settings.manage')} onChange={(e) => setRetention({ ...retention, agentOutput: Number(e.target.value) })} />}</Field>
@@ -321,27 +321,27 @@ function Members() {
       {err && <Alert tone="danger">{(err as ApiError).message}</Alert>}
       {can('member.invite') && (
         <Card title="Add or invite a member">
-          <div className="row" style={{ alignItems: 'flex-end' }}>
-            <div style={{ flex: 1, minWidth: 220 }}>
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="min-w-[220px] flex-1">
               <Field label="Email" hint="People without an account receive an invitation link by email">{(id) => <Input id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>
             </div>
-            <Field label="Role">
+            <Field label="Role" className="w-40">
               {(id) => (
                 <Select id={id} value={role} onChange={(e) => setRole(e.target.value as Role)}>
                   {assignable.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
                 </Select>
               )}
             </Field>
-            <Button variant="primary" loading={add.isPending} disabled={!email} onClick={() => add.mutate()}>Add</Button>
+            <Button variant="primary" className="mt-[23px]" loading={add.isPending} disabled={!email} onClick={() => add.mutate()}>Add</Button>
           </div>
           {invited && (
-            <div className="stack" style={{ marginTop: 12 }}>
+            <div className="mt-3 flex flex-col gap-3">
               <Alert>
                 Invitation sent to {invited.email}. If this server doesn't send email, share this link with them. It works once and expires in 7 days.
               </Alert>
               <div className="row">
-                <Input aria-label="Invitation link" readOnly value={invited.url} onFocus={(e) => e.currentTarget.select()} style={{ flex: 1 }} />
-                <Button onClick={() => void navigator.clipboard?.writeText(invited.url)}>Copy</Button>
+                <Input aria-label="Invitation link" readOnly className="mono flex-1" value={invited.url} onFocus={(e) => e.currentTarget.select()} />
+                <CopyButton value={invited.url} label="Copy link" />
               </div>
             </div>
           )}
@@ -399,10 +399,18 @@ function Members() {
             <tbody>
               {members.data?.map((m) => (
                 <tr key={m.userId}>
-                  <td>{m.name}<div className="small muted">{m.email}</div></td>
+                  <td>
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid size-7 flex-none place-items-center rounded-sm bg-surface-3 text-xs font-semibold text-fg-2" aria-hidden="true">{(m.name || m.email).charAt(0).toUpperCase()}</span>
+                      <div className="min-w-0">
+                        <span className="font-medium">{m.name}</span>{m.userId === session!.user.id && <span className="muted"> (you)</span>}
+                        <div className="small muted">{m.email}</div>
+                      </div>
+                    </div>
+                  </td>
                   <td>
                     {can('member.update_role') && m.userId !== session!.user.id && canAssignRole(myRole, m.role) ? (
-                      <Select aria-label={`Role for ${m.name}`} value={m.role} onChange={(e) => change.mutate({ userId: m.userId, role: e.target.value as Role })}>
+                      <Select className="!w-40" aria-label={`Role for ${m.name}`} value={m.role} onChange={(e) => change.mutate({ userId: m.userId, role: e.target.value as Role })}>
                         {assignable.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
                       </Select>
                     ) : (
@@ -456,7 +464,7 @@ function Policy() {
       }
     >
       <div className="stack">
-        <p className="muted" style={{ margin: 0 }}>
+        <p className="muted max-w-[90ch]">
           Defaults for every project and task. Projects, workers and tasks can override these. Examples: <code>{'{"fallback":{"chain":[{"kind":"FALLBACK_AGENT","agentId":"codex"},{"kind":"WAIT"}]}}'}</code>,{' '}
           <code>{'{"concurrency":{"perProject":2}}'}</code>, <code>{'{"git":{"policy":"PULL_REQUEST"}}'}</code>.
         </p>
@@ -482,31 +490,36 @@ function Secrets() {
       <Alert>Secrets are encrypted at rest and only ever shown masked. Reference them from capability configuration as <code>secret:NAME</code>. AI provider keys belong on workers, not here.</Alert>
       {(save.error || remove.error) && <Alert tone="danger">{((save.error ?? remove.error) as ApiError).message}</Alert>}
       <Card title="Add or replace a secret">
-        <div className="row" style={{ alignItems: 'flex-end' }}>
-          <Field label="Name" hint="UPPER_SNAKE_CASE">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value.toUpperCase())} />}</Field>
-          <div style={{ flex: 1, minWidth: 220 }}>
+        <div className="flex flex-wrap items-start gap-2">
+          <Field label="Name" hint="UPPER_SNAKE_CASE" className="w-56">{(id) => <Input id={id} className="mono" value={name} onChange={(e) => setName(e.target.value.toUpperCase())} />}</Field>
+          <div className="min-w-[220px] flex-1">
             <Field label="Value">{(id) => <Input id={id} type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} />}</Field>
           </div>
-          <Button variant="primary" disabled={!name || !value} loading={save.isPending} onClick={() => save.mutate()}>Save</Button>
+          <Button variant="primary" className="mt-[23px]" disabled={!name || !value} loading={save.isPending} onClick={() => save.mutate()}>Save</Button>
         </div>
       </Card>
       <Card title="Secrets" padded={false}>
-        <table className="table">
-          <tbody>
-            {secrets.data?.length ? (
-              secrets.data.map((s) => (
-                <tr key={s.name}>
-                  <td><code>{s.name}</code></td>
-                  <td className="mono small">{s.masked}</td>
-                  <td className="small muted">{new Date(s.updatedAt).toLocaleString()}</td>
-                  <td style={{ textAlign: 'right' }}><Button size="sm" variant="danger" onClick={() => confirm(`Delete ${s.name}?`) && remove.mutate(s.name)}>Delete</Button></td>
-                </tr>
-              ))
-            ) : (
-              <tr><td className="muted">No secrets.</td></tr>
-            )}
-          </tbody>
-        </table>
+        {secrets.data?.length ? (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr><th>Name</th><th>Value</th><th>Updated</th><th /></tr>
+              </thead>
+              <tbody>
+                {secrets.data.map((s) => (
+                  <tr key={s.name}>
+                    <td><code>{s.name}</code></td>
+                    <td className="mono">{s.masked}</td>
+                    <td className="small muted">{new Date(s.updatedAt).toLocaleString()}</td>
+                    <td className="text-right"><Button size="sm" variant="danger" onClick={() => confirm(`Delete ${s.name}?`) && remove.mutate(s.name)}>Delete</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState icon={KeyRound} title="No secrets">Add one above, then reference it from a capability as <code>secret:NAME</code>.</EmptyState>
+        )}
       </Card>
     </div>
   );
@@ -546,13 +559,13 @@ function ApiTokens() {
   return (
     <Card title="API tokens">
       <div className="stack">
-        <p className="small muted">
+        <p className="small muted max-w-[90ch]">
           For scripts, CI and IDE extensions: <code>AO_SERVER</code>, <code>AO_TOKEN</code> and <code>AO_ORG</code> with <code>agentctl</code>, or <code>Authorization: Bearer …</code> with the API. A token works in one organization with the role you choose (never more than your own), and can't manage tokens, sign-in or the server.
         </p>
         {(create.error || revoke.error) && <Alert tone="danger">{((create.error ?? revoke.error) as ApiError).message}</Alert>}
         {created && (
           <Alert>
-            Copy this token now; it won't be shown again: <code style={{ wordBreak: 'break-all' }}>{created}</code>
+            Copy this token now; it won't be shown again: <code className="break-all">{created}</code> <CopyButton value={created} label="Copy token" className="!size-5 align-middle" />
           </Alert>
         )}
         <div className="grid grid-2">
@@ -575,7 +588,7 @@ function ApiTokens() {
         </div>
         <div><Button variant="primary" disabled={!form.name.trim() || !form.organizationId} loading={create.isPending} onClick={() => create.mutate()}>Create token</Button></div>
         {tokens.data && tokens.data.length > 0 && (
-          <table className="table" aria-label="API tokens">
+          <div className="table-wrap -mx-4 -mb-4 border-t border-line"><table className="table" aria-label="API tokens">
             <thead>
               <tr><th>Name</th><th>Organization</th><th>Role</th><th>Last used</th><th>Expires</th><th /></tr>
             </thead>
@@ -591,7 +604,7 @@ function ApiTokens() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
     </Card>

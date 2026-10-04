@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ListChecks, Plus, Search } from 'lucide-react';
 import type { ProjectDto, TaskDto } from '@ao/contracts';
 import { PRIORITIES, TASK_STATUSES, type TaskStatus } from '@ao/core/shared';
-import { Alert, Button, Card, Dialog, EmptyState, Field, Input, Select, Spinner, Textarea, timeAgo } from '@ao/ui';
+import { Alert, Button, Card, Check, Dialog, EmptyState, Field, Input, Select, Skeleton, Textarea, cn, timeAgo } from '@ao/ui';
 import { ApiError, get, post } from '../lib/api';
 import { useOrgId, useSession } from '../lib/session';
-import { TaskStatusBadge, humanize } from '../lib/format';
+import { RunsOn, TaskStatusBadge, humanize } from '../lib/format';
 import { PageHeader } from '../Layout';
 import { TaskCapabilitySuggestions } from '../components/CapabilitySuggestions';
 
@@ -45,24 +46,43 @@ export function TasksPage() {
 
   return (
     <div>
-      <PageHeader title="Tasks" description="Every task, its status, and where it runs." actions={can('task.create') && <Button variant="primary" onClick={() => setParams({ new: '1' })}>New task</Button>} />
+      <PageHeader
+        title="Tasks"
+        description="Every task, its status, and where it runs."
+        actions={
+          can('task.create') && (
+            <Button variant="primary" onClick={() => setParams({ new: '1' })}>
+              <Plus aria-hidden="true" />
+              New task
+            </Button>
+          )
+        }
+      />
       <div className="filters" role="toolbar" aria-label="Task filters">
-        {FILTERS.map((f, i) => (
-          <button key={f.label} className="chip" aria-pressed={filter === i} onClick={() => setFilter(i)}>
-            {f.label}
-          </button>
-        ))}
+        <div className="chips">
+          {FILTERS.map((f, i) => (
+            <button key={f.label} type="button" className="chip" aria-pressed={filter === i} onClick={() => setFilter(i)}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <span className="flex-1" />
         <label className="sr-only" htmlFor="project-filter">Project</label>
         <Select id="project-filter" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
           <option value="">All projects</option>
           {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
         <label className="sr-only" htmlFor="task-search">Search</label>
-        <Input id="task-search" placeholder="Search title or prompt" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="relative max-[560px]:w-full">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-3" aria-hidden="true" />
+          <Input id="task-search" className="!w-full pl-8 min-[561px]:!w-64" placeholder="Search title or prompt" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
       </div>
       <Card padded={false}>
         {tasks.isLoading ? (
-          <div className="card-body"><Spinner label="Loading tasks…" /></div>
+          <div className="flex flex-col gap-2 p-4" role="status" aria-label="Loading tasks…">
+            {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-8" />)}
+          </div>
         ) : items.length ? (
           <div className="table-wrap">
             <table className="table">
@@ -72,32 +92,34 @@ export function TasksPage() {
                   <th>Status</th>
                   <th className="hide-mobile">Project</th>
                   <th className="hide-mobile">Priority</th>
-                  <th className="hide-mobile">AI</th>
-                  <th>Updated</th>
+                  <th className="hide-mobile">Agent / model</th>
+                  <th className="text-right">Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((t) => (
                   <tr key={t.id} className="clickable" onClick={() => nav(`/tasks/${t.id}`)}>
-                    <td>
-                      <Link to={`/tasks/${t.id}`}>{t.title}</Link>
-                      {t.statusReason && !['COMPLETED'].includes(t.status) && <div className="muted small truncate">{t.statusReason}</div>}
+                    <td className="max-w-[460px]">
+                      <Link to={`/tasks/${t.id}`} className="block truncate">{t.title}</Link>
+                      {t.statusReason && !['COMPLETED'].includes(t.status) && <span className="block truncate text-xs text-fg-3">{t.statusReason}</span>}
                     </td>
                     <td><TaskStatusBadge status={t.status} /></td>
-                    <td className="hide-mobile">{projectName(t.projectId)}</td>
-                    <td className="hide-mobile small">{humanize(t.priority)}</td>
-                    <td className="hide-mobile small muted">{t.agentId ? `${t.agentId} · ${t.modelId}` : '—'}</td>
-                    <td className="small muted">{timeAgo(t.completedAt ?? t.startedAt ?? t.createdAt)}</td>
+                    <td className="hide-mobile whitespace-nowrap text-fg-2">{projectName(t.projectId)}</td>
+                    <td className={cn('hide-mobile whitespace-nowrap', t.priority === 'NORMAL' ? 'text-fg-3' : 'text-fg')}>{humanize(t.priority)}</td>
+                    <td className="hide-mobile"><RunsOn agent={t.agentId} model={t.agentId ? t.modelId : null} /></td>
+                    <td className="num text-right text-xs text-fg-3">{timeAgo(t.completedAt ?? t.startedAt ?? t.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <EmptyState title="No tasks match" action={can('task.create') && <Button onClick={() => setParams({ new: '1' })}>Create a task</Button>} />
+          <EmptyState icon={ListChecks} title="No tasks match" action={can('task.create') && <Button onClick={() => setParams({ new: '1' })}>Create a task</Button>}>
+            {q || projectId || filter ? 'Try a different filter or search.' : 'A task is a piece of work for a coding agent: a change, a review or a plan.'}
+          </EmptyState>
         )}
         {tasks.hasNextPage && (
-          <div className="card-body">
+          <div className="border-t border-line p-3 text-center">
             <Button onClick={() => void tasks.fetchNextPage()} loading={tasks.isFetchingNextPage}>Load more</Button>
           </div>
         )}
@@ -149,6 +171,7 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
       open={open}
       title="New task"
       onClose={onClose}
+      className="!w-[min(680px,calc(100vw-24px))]"
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -160,22 +183,24 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
     >
       <div className="stack">
         {create.error && <Alert tone="danger">{create.error instanceof ApiError ? create.error.message : 'Could not create the task'}</Alert>}
-        <Field label="Project">
-          {(id) => (
-            <Select id={id} value={form.projectId || projects[0]?.id} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </Select>
-          )}
-        </Field>
-        <Field label="Type">
-          {(id) => (
-            <Select id={id} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as 'code' | 'review' | 'plan' })}>
-              <option value="code">Change code</option>
-              <option value="review">Review changes (the agent changes nothing)</option>
-              <option value="plan">Plan: break a goal into tasks (you review the plan first)</option>
-            </Select>
-          )}
-        </Field>
+        <div className="grid grid-2">
+          <Field label="Project">
+            {(id) => (
+              <Select id={id} value={form.projectId || projects[0]?.id} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            )}
+          </Field>
+          <Field label="Type">
+            {(id) => (
+              <Select id={id} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as 'code' | 'review' | 'plan' })}>
+                <option value="code">Change code</option>
+                <option value="review">Review changes (the agent changes nothing)</option>
+                <option value="plan">Plan: break a goal into tasks (you review the plan first)</option>
+              </Select>
+            )}
+          </Field>
+        </div>
         {form.kind === 'review' && (
           <div className="grid grid-2">
             <Field label="Base branch" hint="What the changes are compared against">{(id) => <Input id={id} value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value })} />}</Field>
@@ -226,10 +251,9 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
             )}
           </Field>
         )}
-        <label className="row">
-          <input type="checkbox" checked={form.requirePlanApproval} onChange={(e) => setForm({ ...form, requirePlanApproval: e.target.checked })} />
+        <Check checked={form.requirePlanApproval} onChange={(e) => setForm({ ...form, requirePlanApproval: e.target.checked })}>
           Require approval before the agent starts
-        </label>
+        </Check>
       </div>
     </Dialog>
   );

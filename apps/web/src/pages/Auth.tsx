@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Alert, Button, Card, Field, Input, Spinner } from '@ao/ui';
+import { Alert, Button, Field, Input, Spinner } from '@ao/ui';
+import { BrandMark } from '../Layout';
 import type { InvitationPreviewDto, OAuthProviderDto } from '@ao/contracts';
 import { ApiError, api, completeOAuth, login, oauthStartUrl, refreshSession, register } from '../lib/api';
 import { useSession } from '../lib/session';
@@ -8,11 +9,14 @@ import { useSession } from '../lib/session';
 function AuthShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="center-screen">
-      <div className="auth-card stack">
-        <div className="brand" style={{ justifyContent: 'center' }}>
-          <span className="brand-mark" aria-hidden="true">▲</span> Agent Orchestration
+      <div className="auth-card flex flex-col gap-5">
+        <div className="flex items-center justify-center gap-2.5 text-[15px] font-semibold">
+          <BrandMark className="size-7" /> Agent Orchestration
         </div>
-        <Card title={title}>{children}</Card>
+        <section className="card p-5">
+          <h1 className="mb-4 text-base">{title}</h1>
+          {children}
+        </section>
       </div>
     </div>
   );
@@ -46,8 +50,8 @@ function ProviderButtons({ next, invitation, verb = 'Continue' }: { next?: strin
   const providers = useOAuthProviders();
   if (!providers.length) return null;
   return (
-    <div className="stack">
-      <div className="small muted" style={{ textAlign: 'center' }}>or</div>
+    <div className="mt-4 flex flex-col gap-2">
+      <div className="flex items-center gap-3 text-xs text-fg-3 before:h-px before:flex-1 before:bg-line after:h-px after:flex-1 after:bg-line">or</div>
       {providers.map((p) => (
         <a key={p.id} className="btn" href={oauthStartUrl(p.id, { next, invitation })}>
           {verb} with {p.name}
@@ -337,7 +341,7 @@ export function InvitePage() {
   return (
     <AuthShell title={`Join ${invite.organizationName}`}>
       <div className="stack">
-        <p style={{ margin: 0 }}>
+        <p>
           {invite.invitedByName || 'A member'} invited <strong>{invite.email}</strong> to join <strong>{invite.organizationName}</strong> as {invite.role.toLowerCase()}.
         </p>
         {error && <Alert tone="danger">{error}</Alert>}

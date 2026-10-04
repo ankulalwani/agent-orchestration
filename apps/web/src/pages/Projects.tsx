@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { FolderGit2, Plus } from 'lucide-react';
 import type { ProjectDto, WorkerDto } from '@ao/contracts';
-import { Alert, Badge, Button, Card, Dialog, EmptyState, Field, Input, KeyValue, Select, Spinner, Tabs, Textarea } from '@ao/ui';
+import { Alert, Badge, Button, Card, Check, CopyButton, Dialog, EmptyState, Field, Input, KeyValue, Select, Skeleton, Spinner, Tabs, Textarea, cn } from '@ao/ui';
 import { ApiError, del, get, patch, post } from '../lib/api';
 import { useOrgId, useSession } from '../lib/session';
 import { PageHeader } from '../Layout';
@@ -39,38 +40,56 @@ export function ProjectsPage() {
   });
 
   return (
-    <div>
-      <PageHeader title="Projects" description="Repositories that tasks run against. Each worker maps a project to a local checkout." actions={can('project.create') && <Button variant="primary" onClick={() => setOpen(true)}>New project</Button>} />
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Projects"
+        description="Repositories that tasks run against. Each worker maps a project to a local checkout."
+        actions={
+          can('project.create') && (
+            <Button variant="primary" onClick={() => setOpen(true)}>
+              <Plus aria-hidden="true" />
+              New project
+            </Button>
+          )
+        }
+      />
       <Card padded={false}>
         {projects.isLoading ? (
-          <div className="card-body"><Spinner /></div>
+          <div className="flex flex-col gap-2 p-4" role="status" aria-label="Loading projects…">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-9" />)}
+          </div>
         ) : projects.data?.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Project</th>
-                <th className="hide-mobile">Repository</th>
-                <th>Workers</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.data.map((p) => (
-                <tr key={p.id} className="clickable" onClick={() => nav(`/projects/${p.id}`)}>
-                  <td>
-                    <Link to={`/projects/${p.id}`}>{p.name}</Link>
-                    {p.description && <div className="muted small">{p.description}</div>}
-                  </td>
-                  <td className="hide-mobile small mono">
-                    {p.repositories.find((r) => r.primary)?.key ?? p.repositoryUrl ?? '—'}
-                    {p.repositories.length > 1 && <span className="muted"> +{p.repositories.length - 1} more</span>}
-                  </td>
-                  <td>{workerCount(p) ? `${workerCount(p)} worker${workerCount(p) > 1 ? 's' : ''}` : <span className="muted">Not on any worker</span>}</td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th className="hide-mobile">Repository</th>
+                  <th>Workers</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {projects.data.map((p) => (
+                  <tr key={p.id} className="clickable" onClick={() => nav(`/projects/${p.id}`)}>
+                    <td className="max-w-[420px]">
+                      <Link to={`/projects/${p.id}`}>{p.name}</Link>
+                      {p.description && <div className="truncate text-xs text-fg-3">{p.description}</div>}
+                    </td>
+                    <td className="hide-mobile mono text-fg-2">
+                      {p.repositories.find((r) => r.primary)?.key ?? p.repositoryUrl ?? '—'}
+                      {p.repositories.length > 1 && <span className="muted"> +{p.repositories.length - 1} more</span>}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      <span className={cn('mr-2 inline-block size-2 rounded-full align-middle', workerCount(p) ? 'bg-ok' : 'bg-line-strong')} aria-hidden="true" />
+                      {workerCount(p) ? `${workerCount(p)} worker${workerCount(p) > 1 ? 's' : ''}` : <span className="muted">Not on any worker</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
-          <EmptyState title="No projects yet" action={can('project.create') && <Button onClick={() => setOpen(true)}>Create a project</Button>}>
+          <EmptyState icon={FolderGit2} title="No projects yet" action={can('project.create') && <Button onClick={() => setOpen(true)}>Create a project</Button>}>
             Connect GitHub (Settings → GitHub) to get a project for each repository, or let your workers find the repositories on their disks.
           </EmptyState>
         )}
@@ -105,19 +124,15 @@ export function ProjectsPage() {
                   </Select>
                 )}
               </Field>
-              <label className="row" style={{ gap: 8 }}>
-                <input type="checkbox" checked={gh.private} onChange={(e) => setGh({ ...gh, private: e.target.checked })} />
-                <span>Private repository</span>
-              </label>
+              <Check checked={gh.private} onChange={(e) => setGh({ ...gh, private: e.target.checked })}>Private repository</Check>
               {cloneable.length > 0 && (
                 <Field label="Clone it to" hint="Into each worker's projects folder">
                   {() => (
-                    <div className="stack" style={{ gap: 4 }}>
+                    <div className="flex flex-col gap-1">
                       {cloneable.map((w) => (
-                        <label key={w.id} className="row" style={{ gap: 8 }}>
-                          <input type="checkbox" checked={gh.cloneTo.includes(w.id)} onChange={(e) => setGh({ ...gh, cloneTo: e.target.checked ? [...gh.cloneTo, w.id] : gh.cloneTo.filter((x) => x !== w.id) })} />
-                          <span>{w.name}</span>
-                        </label>
+                        <Check key={w.id} checked={gh.cloneTo.includes(w.id)} onChange={(e) => setGh({ ...gh, cloneTo: e.target.checked ? [...gh.cloneTo, w.id] : gh.cloneTo.filter((x) => x !== w.id) })}>
+                          {w.name}
+                        </Check>
                       ))}
                     </div>
                   )}
@@ -168,30 +183,35 @@ function ReadinessCard({ project }: { project: ProjectDto }) {
         {run.error && <Alert tone="danger">{(run.error as ApiError).message}</Alert>}
         {r?.status === 'FAILED' && <Alert tone="danger">Analysis failed on the worker: {r.error}</Alert>}
         {pending && <Spinner label="Inspecting the repository on the worker…" />}
-        {!report && !pending && <p className="muted" style={{ margin: 0 }}>Checks Git, agents, providers, tests, build, browser verification, tools, documentation and matching capabilities. Only project metadata is read; no source code leaves the worker.</p>}
+        {!report && !pending && <p className="muted max-w-[80ch]">Checks Git, agents, providers, tests, build, browser verification, tools, documentation and matching capabilities. Only project metadata is read; no source code leaves the worker.</p>}
         {report && (
           <>
-            <div className="row">
-              <strong style={{ fontSize: 22 }}>{report.score}%</strong>
-              <span>{report.summary}</span>
+            <div className="flex items-center gap-4">
+              <strong className={cn('font-mono text-2xl font-medium tabular-nums', report.score >= 80 ? 'text-ok' : report.score >= 50 ? 'text-warn' : 'text-danger')}>{report.score}%</strong>
+              <div className="min-w-0 flex-1">
+                <p className="mb-1.5">{report.summary}</p>
+                <div className="progress" aria-hidden="true"><span style={{ width: `${report.score}%` }} /></div>
+              </div>
             </div>
-            {READINESS_GROUPS.map((g) => {
-              const list = report.items.filter((i) => i.category === g.key);
-              if (!list.length) return null;
-              return (
-                <div key={g.key}>
-                  <h3 style={{ marginBottom: 6 }}>{g.label} <Badge tone={g.tone}>{list.length}</Badge></h3>
-                  <ul className="check-list">
-                    {list.map((i) => (
-                      <li key={i.id} style={{ flexDirection: 'column', gap: 0, alignItems: 'flex-start' }}>
-                        <strong>{i.title}</strong>
-                        <span className="small muted">{i.explanation} <span title="confidence">({i.confidence} confidence)</span></span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
+            <div className="grid gap-x-6 gap-y-4 md:grid-cols-2">
+              {READINESS_GROUPS.map((g) => {
+                const list = report.items.filter((i) => i.category === g.key);
+                if (!list.length) return null;
+                return (
+                  <div key={g.key}>
+                    <h3 className="mb-1.5 flex items-center gap-2">{g.label} <Badge tone={g.tone} plain>{list.length}</Badge></h3>
+                    <ul className="divide-y divide-line rounded-sm border border-line">
+                      {list.map((i) => (
+                        <li key={i.id} className="px-3 py-2">
+                          <strong className="block">{i.title}</strong>
+                          <span className="text-xs text-fg-3">{i.explanation} <span title="confidence">({i.confidence} confidence)</span></span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
             {r?.completedAt && <span className="small muted">Analyzed {new Date(r.completedAt).toLocaleString()}</span>}
           </>
         )}
@@ -224,19 +244,19 @@ export function ProjectDetailPage() {
   });
   const archive = useMutation({ mutationFn: () => del(`/orgs/${orgId}/projects/${projectId}`), onSuccess: () => nav('/projects') });
 
-  if (project.isLoading) return <Spinner />;
-  if (!project.data) return <EmptyState title="Project not found" />;
+  if (project.isLoading) return <Spinner label="Loading project…" />;
+  if (!project.data) return <EmptyState icon={FolderGit2} title="Project not found" action={<Link to="/projects">Back to projects</Link>} />;
   const p = project.data;
   const canEdit = can('project.update');
 
   return (
     <div className="stack">
-      <PageHeader title={p.name} description={p.description} actions={can('project.delete') && <Button variant="danger" onClick={() => confirm('Archive this project? Its tasks and history are kept.') && archive.mutate()}>Archive</Button>} />
+      <PageHeader crumb={<Link to="/projects">Projects</Link>} title={p.name} description={p.description} actions={can('project.delete') && <Button variant="danger" onClick={() => confirm('Archive this project? Its tasks and history are kept.') && archive.mutate()}>Archive</Button>} />
       {(save.error || archive.error) && <Alert tone="danger">{((save.error ?? archive.error) as ApiError).message}</Alert>}
       <RepositoriesCard project={p} />
       <div className="grid grid-2">
         <Card title="Details">
-          <KeyValue items={[['Primary repository', p.repositories.find((r) => r.primary)?.name ?? '—'], ['Default branch', p.defaultBranch], ['Project ID', <code key="id">{p.id}</code>]]} />
+          <KeyValue items={[['Primary repository', p.repositories.find((r) => r.primary)?.name ?? '—'], ['Default branch', p.defaultBranch], ['Project ID', <span key="id" className="inline-flex items-center gap-1"><code>{p.id}</code><CopyButton value={p.id} label="Copy project ID" className="!size-5" /></span>]]} />
         </Card>
         <WorkerCheckoutsCard project={p} />
       </div>

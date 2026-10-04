@@ -1,8 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import '@ao/ui/styles.css';
+import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import './app.css';
 import { SessionProvider, useSession } from './lib/session';
 import { ApiError } from './lib/api';
@@ -26,7 +25,7 @@ import { DeviceLoginPage } from './pages/DeviceLogin';
 import { AdminReleasesPage } from './pages/AdminReleases';
 import { AdminUpdatesPage } from './pages/AdminUpdates';
 import { AdminMarketplacePage } from './pages/AdminMarketplace';
-import { Spinner } from '@ao/ui';
+import { EmptyState, Spinner } from '@ao/ui';
 import { WebExtensionProvider, type WebExtension } from './extension';
 
 const queryClient = new QueryClient({
@@ -85,7 +84,7 @@ export function renderWebApp(extension: WebExtension = {}, root: HTMLElement = d
                   <Route path="/admin/updates" element={<AdminUpdatesPage />} />
                   <Route path="/admin/marketplace" element={<AdminMarketplacePage />} />
                   {extension.routes?.map((r) => <Route key={r.path} path={r.path} element={r.element} />)}
-                  <Route path="*" element={<div className="empty"><h3>Page not found</h3></div>} />
+                  <Route path="*" element={<EmptyState title="Page not found" action={<Link to="/">Go to the overview</Link>}>Nothing lives at this address.</EmptyState>} />
                 </Route>
               </Routes>
             </BrowserRouter>

@@ -88,7 +88,7 @@ export function TaskCapabilitySuggestions({ text, projectId, selected, onToggle 
   const items = q.data?.items ?? [];
   if (!items.length) return null;
   return (
-    <div className="stack" style={{ gap: 6 }}>
+    <div className="flex flex-col gap-2 rounded-sm border border-line bg-surface-2/50 p-3">
       <strong className="small">Suggested capabilities</strong>
       {install.error && <Alert tone="danger">{install.error instanceof ApiError ? install.error.message : 'Could not install'}</Alert>}
       {items.map((s) => (

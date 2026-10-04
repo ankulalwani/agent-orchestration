@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Puzzle } from 'lucide-react';
 import type { PackageDto, ProjectDto } from '@ao/contracts';
 import { Alert, Badge, Button, Card, Dialog, EmptyState, Field, Input, Select, Spinner, Tabs, Textarea, type Tone } from '@ao/ui';
 import { ApiError, del, get, patch, post } from '../lib/api';
@@ -84,7 +85,7 @@ export function CapabilitiesPage() {
           ) : installs.data?.length ? (
             <table className="table">
               <thead>
-                <tr><th>Capability</th><th>Scope</th><th>Status</th><th /></tr>
+                <tr><th>Capability</th><th>Scope</th><th>Status</th><th aria-label="Actions" /></tr>
               </thead>
               <tbody>
                 {installs.data.map((i) => (
@@ -95,8 +96,8 @@ export function CapabilitiesPage() {
                       <Badge tone={i.status === 'ACTIVE' ? (i.enabled ? 'ok' : 'neutral') : 'warn'}>{i.status === 'ACTIVE' ? (i.enabled ? 'Active' : 'Disabled') : 'Pending approval'}</Badge>
                       {i.approvalReasons.length > 0 && <div className="small muted">{i.approvalReasons.join(' · ')}</div>}
                     </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div className="row" style={{ justifyContent: 'flex-end' }}>
+                    <td>
+                      <div className="row justify-end !flex-nowrap !gap-1.5">
                         {i.status === 'PENDING_APPROVAL' && can('capability.manage') && <Button size="sm" variant="primary" onClick={() => approve.mutate(i.id)}>Approve</Button>}
                         {canChange(i) && <Button size="sm" onClick={() => upgrade.mutate(i.id)} loading={upgrade.isPending && upgrade.variables === i.id}>Upgrade</Button>}
                         {i.status === 'ACTIVE' && canChange(i) && <Button size="sm" onClick={() => toggle.mutate(i)}>{i.enabled ? 'Disable' : 'Enable'}</Button>}
@@ -108,7 +109,7 @@ export function CapabilitiesPage() {
               </tbody>
             </table>
           ) : (
-            <EmptyState title="Nothing installed" action={<Button onClick={() => setTab('marketplace')}>Browse the marketplace</Button>} />
+            <EmptyState icon={Puzzle} title="Nothing installed" action={<Button onClick={() => setTab('marketplace')}>Browse the marketplace</Button>} />
           )}
         </Card>
       )}
@@ -197,7 +198,7 @@ function Marketplace({ onInstall }: { onInstall: (p: PackageDto) => void }) {
 
   return (
     <div className="stack">
-      <div className="row" style={{ flexWrap: 'wrap' }}>
+      <div className="filters !mb-0">
         <Input aria-label="Search the marketplace" placeholder="Search skills, MCP servers, plugins…" value={q} onChange={(e) => reset(() => setQ(e.target.value))} style={{ maxWidth: 360 }} />
         <Select aria-label="Type" value={type} onChange={(e) => reset(() => setType(e.target.value))} style={{ maxWidth: 180 }}>
           <option value="">All types</option>
@@ -240,25 +241,37 @@ function Marketplace({ onInstall }: { onInstall: (p: PackageDto) => void }) {
 function PackageCard({ pkg: p, onInstall, children }: { pkg: PackageDto; onInstall?: (p: PackageDto) => void; children?: ReactNode }) {
   const { can } = useSession();
   return (
-    <Card title={p.displayName} actions={<div className="row">{p.curated && <Badge tone="accent">curated</Badge>}<Badge tone={TRUST_TONE[p.trust] ?? 'neutral'}>{p.trust.toLowerCase()}</Badge></div>}>
-      <div className="stack">
-        <div className="row small" style={{ flexWrap: 'wrap' }}>
-          <Badge tone="info">{TYPE_LABEL[p.type] ?? p.type}</Badge>
-          <code>{p.ref}</code>
-          <span className="muted">v{p.latestVersion} · {p.publisherName}{p.publisherVerified ? ' ✓' : ''} · {p.installs} installs</span>
+    <article className="card flex flex-col">
+      <div className="flex flex-1 flex-col gap-2.5 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm">{p.displayName}</h2>
+            <div className="truncate text-xs text-fg-3">
+              <span className="font-mono">{p.ref}</span> v{p.latestVersion}
+            </div>
+          </div>
+          <div className="flex flex-none items-center gap-1">
+            {p.curated && <Badge tone="accent" plain>curated</Badge>}
+            <Badge tone={TRUST_TONE[p.trust] ?? 'neutral'}>{p.trust.toLowerCase()}</Badge>
+          </div>
         </div>
         {p.deprecated && <Alert tone="warn">Deprecated: {p.deprecated}</Alert>}
-        {p.description && <p style={{ margin: 0 }}>{p.description}</p>}
-        <ClassificationChips pkg={p} />
-        <div className="small">
-          <strong>Permissions:</strong> {p.permissions.length ? p.permissions.map((x) => <code key={x} style={{ marginRight: 6 }}>{x}</code>) : 'none'}
+        {p.description && <p className="line-clamp-3 text-fg-2">{p.description}</p>}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-3">
+          <Badge tone="info" plain>{TYPE_LABEL[p.type] ?? p.type}</Badge>
+          <span>{p.publisherName}{p.publisherVerified ? ' ✓' : ''}</span>
+          <span className="tabular-nums">{p.installs} installs</span>
         </div>
-        <div className="row">
-          {onInstall && (can('capability.install') || can('capability.personal')) && <Button size="sm" onClick={() => onInstall(p)}>Install…</Button>}
-          {children}
+        <ClassificationChips pkg={p} />
+        <div className="text-xs text-fg-3">
+          Permissions: {p.permissions.length ? p.permissions.map((x) => <code key={x} className={`mr-1 ${HIGH_RISK.includes(x) ? '!border-warn/50 text-warn' : ''}`}>{x}</code>) : 'none'}
         </div>
       </div>
-    </Card>
+      <div className="flex min-h-[42px] flex-wrap items-center gap-2 border-t border-line px-4 py-2">
+        {onInstall && (can('capability.install') || can('capability.personal')) && <Button size="sm" onClick={() => onInstall(p)}>Install…</Button>}
+        {children}
+      </div>
+    </article>
   );
 }
 

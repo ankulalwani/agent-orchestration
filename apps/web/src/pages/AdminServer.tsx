@@ -103,12 +103,12 @@ export function AdminServerPage() {
   const groups = GROUP_ORDER.map((g) => [g, o.settings.filter((s) => s.group === g)] as const).filter(([, list]) => list.length);
   return (
     <div className="stack">
-      <PageHeader title="Server settings" />
+      <PageHeader title="Server settings" description={`Agent Orchestration ${o.version}, ${o.deploymentMode}.`} />
       <Alert>
         Settings with a <strong>Change</strong> button can be managed here and apply without a restart. An environment variable always takes precedence: to manage such a setting here, remove it from the server's environment. All other settings come from environment variables only and need a restart (see the self-hosting guide). Secrets are shown only as set or not set.
       </Alert>
-      <Card title="Status">
-        <table className="table" aria-label="Server status">
+      <Card title="Status" padded={false}>
+        <div className="table-wrap"><table className="table" aria-label="Server status">
           <tbody>
             {Object.entries(o.status).map(([k, s]) => (
               <tr key={k}>
@@ -123,26 +123,26 @@ export function AdminServerPage() {
               <td className="small">Agent Orchestration {o.version} · Node.js {o.node} · {o.deploymentMode}</td>
             </tr>
           </tbody>
-        </table>
+        </table></div>
       </Card>
       {groups.map(([group, list]) => (
         <Card key={group} title={group} padded={false}>
-          <table className="table">
+          <div className="table-wrap"><table className="table min-w-[640px] table-fixed">
             <thead>
               <tr>
-                <th>Variable</th>
+                <th className="w-[34%]">Variable</th>
                 <th>Value</th>
-                <th>Source</th>
-                <th aria-label="Actions" />
+                <th className="w-[120px]">Source</th>
+                <th className="w-[100px]" aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
               {list.map((s) => (
                 <tr key={s.key}>
                   <td><code>{s.key}</code></td>
-                  <td style={{ wordBreak: 'break-all' }}>{show(s)}</td>
+                  <td className="break-all">{show(s)}</td>
                   <td className="small muted">{SOURCE_LABELS[s.source]}</td>
-                  <td style={{ width: 100, textAlign: 'right' }}>
+                  <td className="text-right">
                     {s.editable && s.source !== 'environment' && (
                       <Button size="sm" onClick={() => setEditing(s)} aria-label={`Change ${s.key}`}>
                         Change
@@ -153,7 +153,7 @@ export function AdminServerPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </Card>
       ))}
       {editing && <EditSetting setting={editing} onClose={() => setEditing(null)} />}

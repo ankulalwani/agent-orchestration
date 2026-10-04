@@ -51,11 +51,11 @@ export function RepositoriesCard({ project }: { project: ProjectDto }) {
     <Card title={`Repositories (${project.repositories.length})`} actions={canEdit && <Button size="sm" onClick={() => setAdding(true)}>Add repository</Button>} padded={false}>
       {error && <div className="card-body"><Alert tone="danger">{error.message}</Alert></div>}
       {project.repositories.length > 1 && (
-        <p className="card-body muted small" style={{ margin: 0 }}>
+        <p className="muted small border-b border-line px-4 py-2.5">
           Agents work in all of these repositories at once. A worker runs this project's tasks only when it has every repository checked out.
         </p>
       )}
-      <table className="table">
+      <div className="table-wrap"><table className="table">
         <thead>
           <tr>
             <th>Name</th>
@@ -78,7 +78,7 @@ export function RepositoriesCard({ project }: { project: ProjectDto }) {
                 <td className="hide-mobile small mono">{r.defaultBranch}</td>
                 <td>{workersWith(r) || <span className="muted">none</span>}</td>
                 {canEdit && (
-                  <td className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                  <td className="whitespace-nowrap text-right">
                     {!r.primary && <Button size="sm" variant="ghost" loading={update.isPending && update.variables?.id === r.id && Boolean(update.variables.body.primary)} onClick={() => update.mutate({ id: r.id, body: { primary: true } })}>Make primary</Button>}
                     <Button size="sm" variant="ghost" onClick={() => (setRenaming(r), setNewName(r.name))}>Rename</Button>
                     {project.repositories.length > 1 && can('project.create') && (
@@ -90,7 +90,7 @@ export function RepositoriesCard({ project }: { project: ProjectDto }) {
             );
           })}
         </tbody>
-      </table>
+      </table></div>
       <AddRepositoryDialog open={adding} project={project} onClose={() => setAdding(false)} onAdded={setProject} />
       <Dialog
         open={Boolean(renaming)}
@@ -175,7 +175,7 @@ function AddRepositoryDialog({ open, project, onClose, onAdded }: { open: boolea
                 )}
               </Field>
             )}
-            <p className="muted small" style={{ margin: 0 }}>Workers keep their checkouts of the repository; nothing is moved on disk.</p>
+            <p className="muted small">Workers keep their checkouts of the repository; nothing is moved on disk.</p>
           </>
         )}
       </div>
@@ -205,12 +205,12 @@ export function WorkerCheckoutsCard({ project }: { project: ProjectDto }) {
   return (
     <Card title="Workers with this project">
       {byWorker.size ? (
-        <ul className="check-list">
+        <ul className="-my-1 flex flex-col divide-y divide-line">
           {[...byWorker].map(([workerId, paths]) => {
             const missing = project.repositories.filter((r) => !paths.some((p) => p.repositoryId === r.id));
             return (
-              <li key={workerId} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
-                <span className="row" style={{ gap: 8 }}>
+              <li key={workerId} className="flex flex-col items-start gap-1 py-2">
+                <span className="row">
                   <Link to={`/workers/${workerId}`}>{workers.data?.find((x) => x.id === workerId)?.name ?? workerId}</Link>
                   {missing.length ? <Badge tone="warn">missing {missing.map((r) => r.name).join(', ')}</Badge> : multi && <Badge tone="ok">all repositories</Badge>}
                 </span>
@@ -230,8 +230,8 @@ export function WorkerCheckoutsCard({ project }: { project: ProjectDto }) {
         </Alert>
       )}
       {can('project.update') && cloneable.some((w) => missingOn(w.id).length) && (
-        <div className="row" style={{ gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
-          <Select aria-label="Worker to clone to" value={cloneTo} onChange={(e) => setCloneTo(e.target.value)} style={{ maxWidth: 220 }}>
+        <div className="row mt-3">
+          <Select aria-label="Worker to clone to" className="!w-auto max-w-[260px]" value={cloneTo} onChange={(e) => setCloneTo(e.target.value)}>
             <option value="">Clone to a worker…</option>
             {cloneable
               .filter((w) => missingOn(w.id).length)
@@ -239,11 +239,11 @@ export function WorkerCheckoutsCard({ project }: { project: ProjectDto }) {
                 <option key={w.id} value={w.id}>{w.name} ({missingOn(w.id).map((r) => r.name).join(', ')})</option>
               ))}
           </Select>
-          <Button size="sm" disabled={!cloneTo} loading={clone.isPending} onClick={() => clone.mutate(cloneTo)}>Clone</Button>
+          <Button disabled={!cloneTo} loading={clone.isPending} onClick={() => clone.mutate(cloneTo)}>Clone</Button>
         </div>
       )}
       {clone.data && (
-        <p className="muted small" style={{ marginBottom: 0 }}>
+        <p className="muted small mt-2">
           {clone.data.some((r) => r.requested.length) ? 'Cloning into the worker’s projects folder; it appears here when done.' : clone.data.flatMap((r) => r.skipped.map((x) => x.reason)).join('; ')}
         </p>
       )}
@@ -272,11 +272,11 @@ export function DiscoveredCard() {
   const error = (accept.error ?? dismiss.error) as ApiError | null;
   return (
     <Card title={`Found on your workers (${list.length})`} padded={false}>
-      <p className="card-body muted small" style={{ margin: 0 }}>
+      <p className="muted small border-b border-line px-4 py-2.5">
         Git repositories your workers found that are in no project yet. Clones of repositories that are already in a project are mapped automatically.
       </p>
       {error && <div className="card-body"><Alert tone="danger">{error.message}</Alert></div>}
-      <table className="table">
+      <div className="table-wrap"><table className="table">
         <thead>
           <tr>
             <th>Repository</th>
@@ -304,8 +304,8 @@ export function DiscoveredCard() {
                 </td>
                 {can('project.create') && (
                   <td>
-                    <div className="row" style={{ gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                      <Select aria-label="Project" value={into} onChange={(e) => setTarget({ ...target, [id]: e.target.value })} style={{ maxWidth: 180 }}>
+                    <div className="row justify-end !gap-1.5">
+                      <Select aria-label="Project" className="!w-auto max-w-[180px]" value={into} onChange={(e) => setTarget({ ...target, [id]: e.target.value })}>
                         <option value="">New project</option>
                         {(projects.data ?? []).map((p) => (
                           <option key={p.id} value={p.id}>Add to {p.name}</option>
@@ -322,7 +322,7 @@ export function DiscoveredCard() {
             );
           })}
         </tbody>
-      </table>
+      </table></div>
     </Card>
   );
 }

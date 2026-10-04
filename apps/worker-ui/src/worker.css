@@ -1,97 +1,38 @@
-.wshell {
-  display: grid;
-  grid-template-columns: 210px 1fr;
-  min-height: 100vh;
-}
-.wside {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  padding: 16px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 700;
-  padding: 0 8px;
-}
-.brand-mark {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: white;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-}
-.wnav {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.wnav button {
-  text-align: left;
-  background: none;
-  border: none;
-  font: inherit;
-  font-weight: 550;
-  color: var(--text-2);
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.wnav button:hover {
-  background: var(--surface-2);
-}
-.wnav button.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.wmain {
-  padding: 24px;
-  min-width: 0;
-  max-width: 1100px;
-}
-.center-screen {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-}
-.check-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.check-list li {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 3px 0;
-}
-.code-block {
-  font-family: var(--mono);
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-}
-@media (max-width: 760px) {
-  .wshell {
-    grid-template-columns: 1fr;
+/* The worker's local UI: the design system plus the few classes its sections share. */
+@import '@ao/ui/styles.css';
+
+@layer components {
+  .center-screen {
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: var(--space-4);
   }
-  .wside {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
+  .center-screen > .card {
+    max-width: 560px;
   }
-  .wnav {
-    flex-direction: row;
-    flex-wrap: wrap;
+  .check-list,
+  .list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
-  .wmain {
-    padding: 16px;
+  .check-list li {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 0;
+  }
+  .list li {
+    padding: 8px 0;
+  }
+  .list li + li {
+    border-top: 1px solid var(--border);
+  }
+  .code-block {
+    font-family: var(--mono);
+    font-size: 30px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
   }
 }

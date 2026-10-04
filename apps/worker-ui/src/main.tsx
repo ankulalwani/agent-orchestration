@@ -1,8 +1,8 @@
 import { StrictMode, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import '@ao/ui/styles.css';
 import './worker.css';
-import { Alert, Badge, Button, Card, EmptyState, Field, Input, KeyValue, Select, Spinner, Stat, Textarea, timeAgo, type Tone } from '@ao/ui';
+import { Activity, ArrowDown, ArrowUp, Bot, Cable, Cpu, FolderGit2, ListChecks, Moon, Plug, RefreshCw, ScrollText, Settings as SettingsIcon, Stethoscope, Sun, type LucideIcon } from 'lucide-react';
+import { Alert, Badge, Button, Card, Check, EmptyState, Field, Input, KeyValue, Select, SlotMeter, Spinner, Stat, StatStrip, Textarea, cn, timeAgo, useTheme, type Tone } from '@ao/ui';
 
 /**
  * Worker local UI (spec §12). Talks only to the worker's loopback API. The local token arrives in the
@@ -50,18 +50,18 @@ function useData<T>(path: string, intervalMs = 0) {
 }
 
 type Section = 'dashboard' | 'connection' | 'tasks' | 'projects' | 'agents' | 'providers' | 'mcp' | 'logs' | 'diagnostics' | 'settings' | 'updates';
-const SECTIONS: Array<[Section, string]> = [
-  ['dashboard', 'Dashboard'],
-  ['connection', 'Connection'],
-  ['tasks', 'Tasks'],
-  ['projects', 'Projects'],
-  ['agents', 'Agents'],
-  ['providers', 'AI models'],
-  ['mcp', 'MCP Servers'],
-  ['logs', 'Logs'],
-  ['diagnostics', 'Diagnostics'],
-  ['settings', 'Settings'],
-  ['updates', 'Updates'],
+const SECTIONS: Array<[Section, string, LucideIcon]> = [
+  ['dashboard', 'Dashboard', Activity],
+  ['connection', 'Connection', Cable],
+  ['tasks', 'Tasks', ListChecks],
+  ['projects', 'Projects', FolderGit2],
+  ['agents', 'Agents', Bot],
+  ['providers', 'AI models', Cpu],
+  ['mcp', 'MCP Servers', Plug],
+  ['logs', 'Logs', ScrollText],
+  ['diagnostics', 'Diagnostics', Stethoscope],
+  ['settings', 'Settings', SettingsIcon],
+  ['updates', 'Updates', RefreshCw],
 ];
 
 interface Status {
@@ -90,12 +90,13 @@ function App() {
     if (section) history.replaceState(null, '', `#${section}`);
   }, [section]);
   const status = useData<Status>('/api/status', 5000);
+  const [theme, setTheme] = useTheme();
 
   if (!token) {
     return (
       <div className="center-screen">
         <Card title="Open the worker UI from the worker">
-          <p style={{ margin: 0 }}>For security this page needs the local access link printed by the worker when it starts (or run <code>agentctl worker status</code>). The link looks like <code>http://127.0.0.1:47821/#token=…</code>.</p>
+          <p>For security this page needs the local access link printed by the worker when it starts (or run <code>agentctl worker status</code>). The link looks like <code>http://127.0.0.1:47821/#token=…</code>.</p>
         </Card>
       </div>
     );
@@ -106,24 +107,49 @@ function App() {
   const connTone: Tone = s.connection.state === 'connected' ? 'ok' : s.connection.state === 'unauthorized' ? 'danger' : 'warn';
 
   return (
-    <div className="wshell">
-      <aside className="wside" aria-label="Worker sections">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">▲</span> Worker</div>
-        <nav className="wnav">
-          {SECTIONS.map(([id, label]) => (
-            <button key={id} className={section === id ? 'active' : ''} aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}>
+    <div className="grid min-h-dvh grid-cols-1 md:grid-cols-[208px_minmax(0,1fr)]">
+      <aside className="flex flex-col border-line bg-surface max-md:border-b md:sticky md:top-0 md:h-dvh md:border-r" aria-label="Worker sections">
+        <div className="flex h-12 flex-none items-center gap-2.5 border-b border-line px-4 font-semibold">
+          <svg viewBox="0 0 32 32" className="size-6 flex-none" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="var(--accent)" />
+            <path d="M9 22l7-12 7 12" stroke="var(--on-accent)" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Worker
+        </div>
+        <nav className="flex gap-px p-2 max-md:flex-wrap md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto md:px-4 md:py-3">
+          {SECTIONS.map(([id, label, Icon]) => (
+            <button
+              key={id}
+              type="button"
+              className={cn(
+                'group relative flex h-[30px] items-center gap-2.5 rounded-sm px-2 text-left font-medium text-fg-2 hover:bg-surface-2 hover:text-fg',
+                section === id && 'bg-surface-2 text-fg md:before:absolute md:before:inset-y-1.5 md:before:-left-2 md:before:w-0.5 md:before:rounded-full md:before:bg-brand',
+              )}
+              aria-current={section === id ? 'page' : undefined}
+              onClick={() => setSection(id)}
+            >
+              <Icon className={cn('size-[15px] flex-none', section === id ? 'text-brand' : 'text-fg-3')} aria-hidden="true" />
               {label}
             </button>
           ))}
         </nav>
+        <div className="flex-none border-t border-line p-3 text-xs text-fg-3 max-md:hidden">
+          <div className="font-mono">v{s.version}</div>
+          <div>Local UI, this computer only</div>
+        </div>
       </aside>
-      <main className="wmain">
-        <header className="spread" style={{ marginBottom: 20 }}>
-          <div>
-            <h1>{s.name}</h1>
-            <div className="muted small">v{s.version} · {s.workerId ?? 'not paired'}</div>
+      <main className="w-full min-w-0 max-w-[1180px] p-4 md:p-6">
+        <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="truncate">{s.name}</h1>
+            <div className="font-mono text-xs text-fg-3">v{s.version} · {s.workerId ?? 'not paired'}</div>
           </div>
-          <Badge tone={connTone} live={s.connection.state === 'connected'}>{s.connection.state === 'not-configured' ? 'Not connected' : s.connection.state}</Badge>
+          <div className="flex items-center gap-2">
+            <Badge tone={connTone} live={s.connection.state === 'connected'}>{s.connection.state === 'not-configured' ? 'Not connected' : s.connection.state}</Badge>
+            <Button variant="ghost" size="icon" aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+              {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+            </Button>
+          </div>
         </header>
         {section === 'dashboard' && <Dashboard s={s} go={setSection} />}
         {section === 'connection' && <Connection s={s} reload={status.reload} />}
@@ -158,15 +184,19 @@ function Dashboard({ s, go }: { s: Status; go: (x: Section) => void }) {
     <div className="stack">
       {!s.workerId && (
         <Alert tone="warn">
-          This worker is not connected to a control plane yet. <button className="btn btn-sm" onClick={() => go('connection')}>Connect</button>
+          <span className="flex flex-wrap items-center justify-between gap-2">
+            This worker is not connected to a control plane yet. <button type="button" className="btn btn-sm" onClick={() => go('connection')}>Connect</button>
+          </span>
         </Alert>
       )}
-      <div className="grid grid-stats">
-        <Stat label="Active tasks" value={`${s.activeTasks.length}/${s.maxConcurrentTasks}`} />
-        <Stat label="CPU" value={s.metrics.cpuLoadPercent !== null ? `${s.metrics.cpuLoadPercent}%` : '—'} />
-        <Stat label="RAM free" value={`${Math.round(s.metrics.freeMemoryMb / 1024)} GB`} />
+      <StatStrip>
+        <Stat label="Active tasks" value={`${s.activeTasks.length}/${s.maxConcurrentTasks}`}>
+          <SlotMeter used={s.activeTasks.length} max={s.maxConcurrentTasks} offline={s.connection.state !== 'connected'} />
+        </Stat>
+        <Stat label="CPU" value={s.metrics.cpuLoadPercent !== null ? `${s.metrics.cpuLoadPercent}%` : '—'}>{s.metrics.cpuCount} cores</Stat>
+        <Stat label="RAM free" value={`${Math.round(s.metrics.freeMemoryMb / 1024)} GB`}>of {Math.round(s.metrics.totalMemoryMb / 1024)} GB</Stat>
         <Stat label="Disk free" value={s.metrics.freeDiskMb !== null ? `${Math.round(s.metrics.freeDiskMb / 1024)} GB` : '—'} />
-      </div>
+      </StatStrip>
       <div className="grid grid-2">
         <Card title="Control plane">
           <KeyValue
@@ -214,9 +244,9 @@ function Connection({ s, reload }: { s: Status; reload: () => void }) {
     <div className="stack" style={{ maxWidth: 640 }}>
       {s.pairing.status === 'waiting' && (
         <Card title="Approve this worker">
-          <div className="stack">
-            <p style={{ margin: 0 }}>Open the link below while signed in, check the details and approve. This page updates automatically.</p>
-            <div className="code-block" aria-label="Pairing code">{s.pairing.userCode}</div>
+          <div className="flex flex-col items-start gap-3">
+            <p>Open the link below while signed in, check the details and approve. This page updates automatically.</p>
+            <div className="code-block rounded-md border border-line bg-bg px-5 py-2" aria-label="Pairing code">{s.pairing.userCode}</div>
             <a className="btn btn-primary" href={s.pairing.verificationUrl} target="_blank" rel="noreferrer">Open approval page</a>
             <span className="muted small">Code expires {timeAgo(s.pairing.expiresAt)}.</span>
           </div>
@@ -235,10 +265,10 @@ function Connection({ s, reload }: { s: Status; reload: () => void }) {
         <Card title="Connect to">
           <div className="stack">
             {err && <Alert tone="danger">{err}</Alert>}
-            <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
+            <fieldset className="flex flex-col gap-2">
               <legend className="sr-only">Control plane</legend>
-              {s.hostedUrl && <label className="row"><input type="radio" name="mode" checked={mode === 'hosted'} onChange={() => setMode('hosted')} /> Hosted service ({new URL(s.hostedUrl).host})</label>}
-              <label className="row"><input type="radio" name="mode" checked={mode === 'self-hosted'} onChange={() => setMode('self-hosted')} /> My self-hosted server</label>
+              {s.hostedUrl && <Check type="radio" name="mode" checked={mode === 'hosted'} onChange={() => setMode('hosted')}>Hosted service ({new URL(s.hostedUrl).host})</Check>}
+              <Check type="radio" name="mode" checked={mode === 'self-hosted'} onChange={() => setMode('self-hosted')}>My self-hosted server</Check>
             </fieldset>
             {mode === 'self-hosted' && <Field label="Control plane URL">{(id) => <Input id={id} placeholder="https://orchestration.example.com" value={url} onChange={(e) => setUrl(e.target.value)} />}</Field>}
             <Field label="Worker name">{(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
@@ -309,10 +339,10 @@ function RepositoryDiscovery() {
     <Card
       title="Repositories on this computer"
       actions={
-        <div className="row" style={{ gap: 6 }}>
-          <Button loading={d.data.running} disabled={d.data.running} onClick={() => void scan()}>{d.data.running ? 'Scanning…' : 'Scan now'}</Button>
-          <Button variant="primary" onClick={() => void save()}>Save</Button>
-        </div>
+        <>
+          <Button size="sm" loading={d.data.running} disabled={d.data.running} onClick={() => void scan()}>{d.data.running ? 'Scanning…' : 'Scan now'}</Button>
+          <Button size="sm" variant="primary" onClick={() => void save()}>Save</Button>
+        </>
       }
     >
       <div className="stack">
@@ -326,17 +356,14 @@ function RepositoryDiscovery() {
             {c.status === 'cloning' ? `Cloning ${c.name}…` : c.status === 'done' ? `Cloned ${c.name} to ${c.localPath}` : `Could not clone ${c.name}: ${c.error}`}
           </Alert>
         ))}
-        <label className="row" style={{ gap: 8 }}>
-          <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-          <span>Scan for repositories every {form.intervalHours} hours</span>
-        </label>
+        <Check checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })}>Scan for repositories every {form.intervalHours} hours</Check>
         <Field label="Folders to scan" hint="One absolute path per line. Empty: every fixed drive (system, program and dependency folders are skipped).">
           {(id) => <Textarea id={id} rows={3} className="mono" value={form.roots} onChange={(e) => setForm({ ...form, roots: e.target.value })} />}
         </Field>
         <Field label="Never scan" hint="Folder names (e.g. archive) or absolute paths, one per line.">
           {(id) => <Textarea id={id} rows={2} className="mono" value={form.exclude} onChange={(e) => setForm({ ...form, exclude: e.target.value })} />}
         </Field>
-        <div className="row" style={{ gap: 12 }}>
+        <div className="grid max-w-md grid-cols-2 gap-3">
           <Field label="Hours between scans">{(id) => <Input id={id} type="number" min={1} max={168} value={form.intervalHours} onChange={(e) => setForm({ ...form, intervalHours: Number(e.target.value) })} />}</Field>
           <Field label="Folder depth">{(id) => <Input id={id} type="number" min={1} max={20} value={form.maxDepth} onChange={(e) => setForm({ ...form, maxDepth: Number(e.target.value) })} />}</Field>
         </div>
@@ -349,7 +376,7 @@ function RepositoryDiscovery() {
               Last scan {timeAgo(last.scannedAt)} of {last.roots.join(', ')}: {last.repos.length} repositories in {last.directories.toLocaleString()} folders ({Math.round(last.durationMs / 1000)} s){last.truncated ? ', stopped early' : ''}. {unmapped ? `${unmapped} not in a project yet.` : ''}
             </div>
             {last.repos.length > 0 && (
-              <table className="table">
+              <div className="table-wrap rounded-sm border border-line"><table className="table [&_td:first-child]:!pl-3 [&_td:last-child]:!pr-3 [&_th:first-child]:!pl-3 [&_th:last-child]:!pr-3">
                 <thead>
                   <tr>
                     <th>Repository</th>
@@ -369,7 +396,7 @@ function RepositoryDiscovery() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             )}
           </>
         ) : (
@@ -392,14 +419,14 @@ function Projects() {
       .then(() => (setMsg({ tone: 'info', text: 'Saved. The control plane is updated with the next heartbeat.' }), projects.reload()))
       .catch((e: Error) => setMsg({ tone: 'danger', text: e.message }));
   return (
-    <Card title="Project checkouts" actions={<Button variant="primary" onClick={() => void save()}>Save</Button>}>
+    <Card title="Project checkouts" className="mt-4" actions={<Button size="sm" variant="primary" onClick={() => void save()}>Save</Button>}>
       <div className="stack">
         <p className="muted" style={{ margin: 0 }}>Agents on this worker can only work inside these directories. Copy the project ID from the dashboard's project page. For a project with several repositories, add one row per repository with its repository ID; without one, the folder is the project's primary repository.</p>
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
         {rows.map((r, i) => {
           const info = projects.data?.find((p) => p.projectId === r.projectId && p.localPath === r.localPath);
           return (
-            <div key={i} className="row" style={{ alignItems: 'flex-end' }}>
+            <div key={i} className="flex flex-wrap items-start gap-2 rounded-sm border border-line p-3 [&>button]:mt-[23px]">
               <Field label="Project ID">{(id) => <Input id={id} className="mono" value={r.projectId} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, projectId: e.target.value.trim() } : x)))} />}</Field>
               <Field label="Repository ID (optional)">{(id) => <Input id={id} className="mono" value={r.repositoryId ?? ''} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, repositoryId: e.target.value.trim() } : x)))} />}</Field>
               <div style={{ flex: 1, minWidth: 260 }}>
@@ -421,7 +448,7 @@ function Agents() {
   return (
     <div className="grid grid-2">
       {agents.data.map((a) => (
-        <Card key={a.id} title={a.name} actions={a.installed && <label className="row small"><input type="checkbox" checked={a.enabled} onChange={(e) => void api('PUT', `/api/agents/${a.id}`, { enabled: e.target.checked }).then(agents.reload)} /> Enabled</label>}>
+        <Card key={a.id} title={a.name} actions={a.installed && <Check className="text-xs" checked={a.enabled} onChange={(e) => void api('PUT', `/api/agents/${a.id}`, { enabled: e.target.checked }).then(agents.reload)}>Enabled</Check>}>
           <KeyValue
             items={[
               ['Installed', a.installed ? <Badge key="i" tone="ok">{a.version ?? 'yes'}</Badge> : <Badge key="i">no</Badge>],
@@ -505,7 +532,7 @@ function Providers() {
     <div className="stack">
       <Card title="Harnesses on their own login">
         <div className="stack">
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="muted max-w-[80ch]">
             By default every task runs on the harness's own login and model choice (for example your Claude subscription). Nothing needs to be set up here for that.
           </p>
           {own.length ? (
@@ -526,7 +553,7 @@ function Providers() {
         {addons.data ? (
           <div className="stack">
             {(['ask', 'switch'] as const).map((v) => (
-              <label key={v} className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+              <label key={v} className="check">
                 <input
                   type="radio"
                   name="onHarnessLimit"
@@ -554,11 +581,11 @@ function Providers() {
       </Card>
 
       <Card title="Add-on models" actions={<Button size="sm" onClick={() => void api('POST', '/api/providers/x/check').then(providers.reload)}>Check now</Button>} padded={false}>
-        <p className="card-body muted small" style={{ margin: 0 }}>
+        <p className="muted small border-b border-line px-4 py-2.5">
           Used in this order. Any harness can use them: the worker's built-in gateway translates between the harness and the provider, and moves on to the next model when one is at its limit or unavailable.
         </p>
         {extra.length ? (
-          <table className="table">
+          <div className="table-wrap"><table className="table">
             <thead>
               <tr>
                 <th>Provider</th>
@@ -572,15 +599,15 @@ function Providers() {
               {extra.map((p, i) => (
                 <tr key={p.id}>
                   <td>
-                    {i + 1}. {p.name}
+                    <span className="mr-2 font-mono text-xs text-fg-3">{i + 1}</span><span className="font-medium">{p.name}</span>
                     <div className="small muted">{PRESETS.find((x) => x.kind === p.kind)?.label ?? p.kind}{p.baseUrl ? ` · ${p.baseUrl}` : ''}</div>
                   </td>
                   <td>{status(p)}{p.error && <div className="small muted">{p.error}</div>}</td>
                   <td className="mono small">{p.credentialMasked ?? '—'}</td>
                   <td className="small">{p.models.map((m) => m.id).slice(0, 8).join(', ') || '—'}{p.models.length > 8 ? ` +${p.models.length - 8}` : ''}</td>
-                  <td className="row" style={{ gap: 4 }}>
-                    <Button size="sm" variant="ghost" aria-label="Move up" disabled={i === 0} onClick={() => move(p.id, -1)}>↑</Button>
-                    <Button size="sm" variant="ghost" aria-label="Move down" disabled={i === extra.length - 1} onClick={() => move(p.id, 1)}>↓</Button>
+                  <td className="whitespace-nowrap text-right [&>*]:ml-1 [&>*]:align-middle">
+                    <Button size="icon-sm" variant="ghost" aria-label="Move up" disabled={i === 0} onClick={() => move(p.id, -1)}><ArrowUp aria-hidden="true" /></Button>
+                    <Button size="icon-sm" variant="ghost" aria-label="Move down" disabled={i === extra.length - 1} onClick={() => move(p.id, 1)}><ArrowDown aria-hidden="true" /></Button>
                     {p.kind === 'openrouter' && (
                       <Button size="sm" onClick={() => void api<{ url: string }>('POST', `/api/providers/${p.id}/oauth/start`).then((r) => window.open(r.url, '_blank', 'noopener'))}>Sign in with OpenRouter</Button>
                     )}
@@ -589,11 +616,9 @@ function Providers() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         ) : (
-          <div className="card-body">
-            <EmptyState title="No add-on models">Optional. Add one to keep tasks going when a harness reaches its usage limit.</EmptyState>
-          </div>
+          <EmptyState icon={Cpu} title="No add-on models">Optional. Add one to keep tasks going when a harness reaches its usage limit.</EmptyState>
         )}
       </Card>
 
@@ -683,7 +708,7 @@ function Mcp() {
         <Card title="Health">
           <ul className="list" aria-label="MCP server health">
             {mcp.data!.map((s) => (
-              <li key={s.id} className="row" style={{ justifyContent: 'space-between', gap: 12 }}>
+              <li key={s.id} className="flex items-center justify-between gap-3">
                 <span>
                   <Badge tone={!s.health ? 'neutral' : s.health.ok ? 'ok' : 'danger'}>{!s.health ? 'not checked' : s.health.ok ? 'healthy' : 'unhealthy'}</Badge> {s.name} <code className="small">mcp:{s.id}</code>
                   <div className="small muted">
@@ -698,7 +723,7 @@ function Mcp() {
       )}
       <Card title="MCP servers available on this worker" actions={<Button variant="primary" onClick={save}>Save</Button>}>
         <div className="stack">
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="muted max-w-[90ch]">
             Locally installed MCP servers. Each one is checked with a real MCP handshake when saved and every 10 minutes; only healthy servers are advertised as <code>mcp:&lt;id&gt;</code>, so tasks that need one are scheduled only where it works. Organization MCP capabilities are configured from the dashboard.
           </p>
           {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
@@ -714,7 +739,7 @@ function Logs() {
   return (
     <Card title="Recent events" padded={false}>
       {events.data?.length ? (
-        <pre className="log" style={{ margin: 16 }}>
+        <pre className="log !max-h-[70vh] !rounded-t-none !border-0">
           {[...events.data].reverse().map((e) => `${new Date(e.timestamp).toLocaleTimeString()}  ${e.type.padEnd(24)} ${e.taskId.slice(-8)}  ${e.type === 'AgentOutput' ? ((e.payload.lines as string[]) ?? []).join(' ⏎ ').slice(0, 300) : JSON.stringify(e.payload).slice(0, 200)}`).join('\n')}
         </pre>
       ) : (
@@ -736,7 +761,7 @@ function Diagnostics() {
           <tbody>
             {d.data.map((c) => (
               <tr key={c.id}>
-                <td><Badge tone={tone[c.status]}>{c.status}</Badge></td>
+                <td className="w-24 align-top"><Badge tone={tone[c.status]}>{c.status}</Badge></td>
                 <td><strong>{c.label}</strong><div className="small muted">{c.detail}</div>{c.fix && <div className="small">→ {c.fix}</div>}</td>
               </tr>
             ))}
@@ -784,8 +809,8 @@ function Settings() {
           <Field label="Git author email">{(id) => <Input id={id} value={form.authorEmail} onChange={(e) => setForm({ ...form, authorEmail: e.target.value })} />}</Field>
         </div>
         <Field label="Worker policy (JSON)" hint="Overrides organization/project policy on this worker, e.g. fallback chain or agent preferences.">{(id) => <Textarea id={id} rows={8} className="mono" value={form.policy} onChange={(e) => setForm({ ...form, policy: e.target.value })} />}</Field>
-        <label className="row"><input type="checkbox" checked={form.telemetry} onChange={(e) => setForm({ ...form, telemetry: e.target.checked })} /> Send anonymous health telemetry to my control plane (never code, prompts or secrets)</label>
-        <label className="row"><input type="checkbox" checked={form.plugins} onChange={(e) => setForm({ ...form, plugins: e.target.checked })} /> Run approved plugin code on this machine (in a restricted process, when your organization has plugins turned on)</label>
+        <Check checked={form.telemetry} onChange={(e) => setForm({ ...form, telemetry: e.target.checked })}>Send anonymous health telemetry to my control plane (never code, prompts or secrets)</Check>
+        <Check checked={form.plugins} onChange={(e) => setForm({ ...form, plugins: e.target.checked })}>Run approved plugin code on this machine (in a restricted process, when your organization has plugins turned on)</Check>
         <p className="small muted">Local UI: {settings.data.localHost}:{settings.data.localPort}. Change the bind address only if you understand the exposure.</p>
       </div>
     </Card>
@@ -836,7 +861,7 @@ function Updates() {
           />
           {!d.supported && <Alert tone="warn">{d.reason}</Alert>}
           {d.error && <Alert tone="danger">{d.error}</Alert>}
-          {d.latest?.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{d.latest.notes}</p>}
+          {d.latest?.notes && <p className="small whitespace-pre-wrap">{d.latest.notes}</p>}
           {d.updateAvailable && (
             <div>
               <Button variant="primary" disabled={!d.canInstall} onClick={() => void act(() => api('POST', '/api/updates/apply'), 'The update is installed. The worker restarts into it once running tasks have finished.')}>
