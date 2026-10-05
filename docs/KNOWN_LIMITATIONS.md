@@ -1,6 +1,6 @@
 # Known Limitations
 
-Actual, current limitations. Updated as the implementation changes. Last updated: 2026-09-28.
+Actual, current limitations. Updated as the implementation changes. Last updated: 2026-10-05.
 
 ## Own logins and add-on models (added 2026-09-28)
 - **Add-on providers were not called for real.** The gateway was tested with each real harness against a
@@ -49,7 +49,8 @@ Actual, current limitations. Updated as the implementation changes. Last updated
 - **Review and plan tasks** of multi-repository projects look at the primary repository only.
 - **Discovery on macOS and Linux** scans `/` minus system folders and was only tested on Windows (and on a
   temporary folder tree in the test suite). A first scan of large drives can take minutes.
-- **Clone requests** are delivered only to connected workers; an offline worker is skipped, not queued.
+- **Clone requests** for an offline worker are queued for 7 days and sent once when it connects; after that
+  they are dropped.
 
 ## Not verified in this environment
 - **Docker** was verified with Docker Desktop on Windows (WSL 2), not on a Linux Docker host. The production
@@ -84,7 +85,7 @@ Actual, current limitations. Updated as the implementation changes. Last updated
 - **Sign-in for the CLI and mobile app with Google, GitHub or SSO** goes through the web app (device code).
   The mobile flow is bundled but has not run on a phone. Provider sign-in for *model access* exists for OpenRouter (the only one offering OAuth for API keys);
   it was tested against a fake, not openrouter.ai. Two-factor authentication uses
-  authenticator-app codes (TOTP) only: no SMS or security keys (WebAuthn).
+  authenticator-app codes (TOTP) and security keys (WebAuthn); there is no SMS.
 - **Worker releases** are hosted by your control plane. Press **Update workers** to fetch the project's signed
   release from GitHub; this needs the server to reach github.com and a release published by the upstream
   release workflow. Air-gapped servers and forks use the custom upload with their own key.
