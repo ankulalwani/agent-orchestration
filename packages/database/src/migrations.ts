@@ -204,6 +204,25 @@ export const MIGRATIONS: Migration[] = [
       if (ops.length) await packages.bulkWrite(ops, { ordered: false });
     },
   },
+  {
+    id: '0007-usage-budgets',
+    description: 'Give usage records their project and tasks their spend totals (spend budgets)',
+    async up(db) {
+      const usage = db.collection('usagerecords');
+      const tasks = db.collection('tasks');
+      const totals = usage.aggregate<{ _id: mongoose.Types.ObjectId; costUsd: number; inputTokens: number; outputTokens: number }>([
+        { $match: { taskId: { $ne: null } } },
+        { $group: { _id: '$taskId', costUsd: { $sum: { $ifNull: ['$costUsd', 0] } }, inputTokens: { $sum: { $ifNull: ['$inputTokens', 0] } }, outputTokens: { $sum: { $ifNull: ['$outputTokens', 0] } } } },
+      ]);
+      for await (const t of totals) {
+        const task = await tasks.findOne({ _id: t._id }, { projection: { projectId: 1 } });
+        if (!task) continue;
+        await usage.updateMany({ taskId: t._id, projectId: null }, { $set: { projectId: task.projectId } });
+        // Set, not incremented: a retry after a crash gives the same totals.
+        await tasks.updateOne({ _id: t._id }, { $set: { usage: { costUsd: t.costUsd, inputTokens: t.inputTokens, outputTokens: t.outputTokens } } });
+      }
+    },
+  },
 ];
 
 const LOCK_ID = '__lock__';

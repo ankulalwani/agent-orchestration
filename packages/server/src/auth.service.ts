@@ -8,6 +8,10 @@ import { toUserDto } from './dto.js';
 import { audit } from './audit.js';
 import { claimInvitation, unclaimInvitation } from './invitation.service.js';
 import type { Mailer } from './notifications.js';
+import type { WebAuthnService } from './webauthn.service.js';
+
+/** What proves the second step of a sign-in: an authenticator or recovery code, or a security key's answer. */
+export type SecondFactor = string | { securityKey: unknown };
 
 const MAX_FAILED_LOGINS = 10;
 const LOCKOUT_MS = 15 * 60_000;
@@ -102,7 +106,10 @@ export class AuthService {
     }
   }
 
-  async login(email: string, password: string, meta: { ip?: string; userAgent?: string } = {}, mfaCode?: string): Promise<AuthResponse> {
+  /** Security keys as a second step (set by the composition root; without it only codes are accepted). */
+  webauthn: WebAuthnService | null = null;
+
+  async login(email: string, password: string, meta: { ip?: string; userAgent?: string } = {}, mfaCode?: SecondFactor): Promise<AuthResponse> {
     const user = await User.findOne({ email: email.toLowerCase() }).select('+passwordHash');
     const invalid = new AppError('UNAUTHENTICATED', 'Invalid email or password');
     if (!user) {
@@ -141,7 +148,7 @@ export class AuthService {
   private async completeSignIn(
     user: { _id: mongoose.Types.ObjectId; emailVerified?: boolean | null; failedLoginCount?: number | null; mfa?: { enabled?: boolean | null } | null },
     firstFactor: string,
-    mfaCode: string | undefined,
+    second: SecondFactor | undefined,
     meta: { ip?: string; userAgent?: string },
     beforeSession?: () => Promise<boolean>,
   ): Promise<AuthResponse> {
@@ -150,9 +157,15 @@ export class AuthService {
     }
     let method = firstFactor;
     if (user.mfa?.enabled) {
-      // Wrong codes count towards the same lockout as wrong passwords.
-      if (!mfaCode) throw new AppError('MFA_REQUIRED', 'Enter the code from your authenticator app');
-      const factor = await this.checkSecondFactor(user._id, mfaCode);
+      const code = typeof second === 'string' ? second : undefined;
+      const assertion = second && typeof second === 'object' ? second.securityKey : undefined;
+      if (!code && !assertion) {
+        // The first factor is proven: an account with security keys gets a challenge for them.
+        const securityKey = (await this.webauthn?.signInOptions(user._id)) ?? null;
+        throw new AppError('MFA_REQUIRED', securityKey ? 'Use your security key, or enter the code from your authenticator app' : 'Enter the code from your authenticator app', securityKey ? { context: { securityKey } } : {});
+      }
+      // Wrong codes and failed key checks count towards the same lockout as wrong passwords.
+      const factor = assertion ? ((await this.webauthn?.verifySignIn(user._id, assertion)) ? 'security_key' : null) : await this.checkSecondFactor(user._id, code!);
       if (!factor) {
         await this.recordFailedSignIn(user, 'mfa', meta);
         throw new AppError('UNAUTHENTICATED', 'Invalid authentication code');
@@ -166,7 +179,7 @@ export class AuthService {
   }
 
   /** Sign-in with an external identity already proven by the provider (see OAuthService). */
-  async signInWithIdentity(userId: mongoose.Types.ObjectId, provider: string, mfaCode: string | undefined, meta: { ip?: string; userAgent?: string }, consume: () => Promise<boolean>) {
+  async signInWithIdentity(userId: mongoose.Types.ObjectId, provider: string, mfaCode: SecondFactor | undefined, meta: { ip?: string; userAgent?: string }, consume: () => Promise<boolean>) {
     const user = await User.findById(userId).lean();
     if (!user || user.disabled) throw new AppError('UNAUTHENTICATED', 'This account cannot sign in');
     this.assertNotLocked(user);
@@ -277,7 +290,7 @@ export class AuthService {
   }
 
   async memberships(userId: string): Promise<MembershipDto[]> {
-    const ms = await Membership.find({ userId: oid(userId) }).lean();
+    const ms = await Membership.find({ userId: oid(userId), suspended: { $ne: true } }).lean();
     const orgs = await Organization.find({ _id: { $in: ms.map((m) => m.organizationId) } }).lean();
     const byId = new Map(orgs.map((o) => [String(o._id), o]));
     return ms
@@ -348,7 +361,7 @@ export class AuthService {
     if (!user?.mfa?.enabled) throw new AppError('CONFLICT', 'Two-factor authentication is not on');
     if (!(await verifyPassword(password, user.passwordHash))) throw new AppError('UNAUTHENTICATED', 'Wrong password');
     if (!(await this.checkSecondFactor(user._id, code))) throw new AppError('UNAUTHENTICATED', 'Invalid authentication code');
-    await User.updateOne({ _id: user._id }, { $set: { 'mfa.enabled': false }, $unset: { 'mfa.secretEnc': 1, 'mfa.pendingSecretEnc': 1, 'mfa.recoveryCodeHashes': 1, 'mfa.lastStep': 1 } });
+    await User.updateOne({ _id: user._id }, { $set: { 'mfa.enabled': false }, $unset: { 'mfa.secretEnc': 1, 'mfa.pendingSecretEnc': 1, 'mfa.recoveryCodeHashes': 1, 'mfa.lastStep': 1, 'mfa.securityKeys': 1, 'mfa.challenge': 1 } });
     await audit({ system: true }, 'auth.mfa_disabled', { type: 'user', id: userId });
   }
 
@@ -372,7 +385,7 @@ export class AuthService {
       if (roleRank(here.role as Role) > roleRank(actor.role)) throw new AppError('FORBIDDEN', `You can't reset two-factor authentication for a ${here.role.toLowerCase()}`);
     }
     if (!target.mfa?.enabled) throw new AppError('CONFLICT', 'Two-factor authentication is not on for this person');
-    await User.updateOne({ _id: target._id }, { $set: { 'mfa.enabled': false }, $unset: { 'mfa.secretEnc': 1, 'mfa.pendingSecretEnc': 1, 'mfa.recoveryCodeHashes': 1, 'mfa.lastStep': 1 } });
+    await User.updateOne({ _id: target._id }, { $set: { 'mfa.enabled': false }, $unset: { 'mfa.secretEnc': 1, 'mfa.pendingSecretEnc': 1, 'mfa.recoveryCodeHashes': 1, 'mfa.lastStep': 1, 'mfa.securityKeys': 1, 'mfa.challenge': 1 } });
     await RefreshToken.updateMany({ userId: target._id, revokedAt: null }, { revokedAt: new Date() }); // sign out everywhere
     await audit(
       actor.organizationId && actor.role ? { userId: actor.userId, organizationId: actor.organizationId, role: actor.role, correlationId: actor.correlationId, ip: actor.ip } : { userId: actor.userId, correlationId: actor.correlationId, ip: actor.ip },

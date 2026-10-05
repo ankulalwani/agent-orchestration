@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListChecks, Plus, Search } from 'lucide-react';
-import type { ProjectDto, TaskDto } from '@ao/contracts';
+import type { ProjectDto, TaskDto, WorkerDto } from '@ao/contracts';
 import { PRIORITIES, TASK_STATUSES, type TaskStatus } from '@ao/core/shared';
 import { Alert, Button, Card, Check, Dialog, EmptyState, Field, Input, Select, Skeleton, Textarea, cn, timeAgo } from '@ao/ui';
 import { ApiError, get, post } from '../lib/api';
@@ -10,6 +10,7 @@ import { useOrgId, useSession } from '../lib/session';
 import { RunsOn, TaskStatusBadge, humanize } from '../lib/format';
 import { PageHeader } from '../Layout';
 import { TaskCapabilitySuggestions } from '../components/CapabilitySuggestions';
+import { TemplatePicker } from './Templates';
 
 const FILTERS: Array<{ label: string; statuses: TaskStatus[] }> = [
   { label: 'All', statuses: [] },
@@ -124,21 +125,31 @@ export function TasksPage() {
           </div>
         )}
       </Card>
-      <NewTaskDialog open={params.get('new') === '1'} onClose={() => setParams({})} projects={projects.data ?? []} existing={items} />
+      <NewTaskDialog open={params.get('new') === '1'} onClose={() => setParams({})} projects={projects.data ?? []} existing={items} continuesTaskId={params.get('continues')} />
     </div>
   );
 }
 
-function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; onClose: () => void; projects: ProjectDto[]; existing: TaskDto[] }) {
+function NewTaskDialog({ open, onClose, projects, existing, continuesTaskId }: { open: boolean; onClose: () => void; projects: ProjectDto[]; existing: TaskDto[]; /** Follow up on this task: same project, its branch and pull request. */ continuesTaskId?: string | null }) {
   const orgId = useOrgId();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const [form, setForm] = useState({ kind: 'code' as 'code' | 'review' | 'plan', base: 'main', head: '', projectId: '', title: '', prompt: '', knowledge: '', priority: 'NORMAL', dependencies: [] as string[], requirePlanApproval: false, gitPolicy: '', capabilityIds: [] as string[] });
+  const continued = useQuery({ queryKey: ['task', orgId, continuesTaskId], queryFn: () => get<TaskDto>(`/orgs/${orgId}/tasks/${continuesTaskId}`), enabled: open && Boolean(continuesTaskId) });
+  const [form, setForm] = useState({ kind: 'code' as 'code' | 'review' | 'plan', base: 'main', head: '', projectId: '', title: '', prompt: '', knowledge: '', priority: 'NORMAL', dependencies: [] as string[], requirePlanApproval: false, gitPolicy: '', capabilityIds: [] as string[], attemptAgents: [] as string[] });
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const workers = useQuery({ queryKey: ['workers', orgId], queryFn: () => get<WorkerDto[]>(`/orgs/${orgId}/workers`), enabled: open });
+  // Agents that are installed and signed in on some worker.
+  const agents = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const w of workers.data ?? []) for (const a of w.agents as Array<{ id: string; name?: string; installed?: boolean; authenticated?: boolean }>) if (a.installed && a.authenticated !== false) byId.set(a.id, a.name ?? a.id);
+    return [...byId].map(([id, name]) => ({ id, name }));
+  }, [workers.data]);
+  const racing = form.kind === 'code' && form.attemptAgents.length >= 2;
   const create = useMutation({
     mutationFn: () =>
       post<TaskDto>(`/orgs/${orgId}/tasks`, {
-        projectId: form.projectId || projects[0]?.id,
+        ...(continued.data ? { continuesTaskId: continued.data.id } : {}),
+        projectId: continued.data?.projectId ?? (form.projectId || projects[0]?.id),
         title: form.title,
         prompt: form.prompt,
         ...(form.knowledge.trim() ? { knowledge: form.knowledge } : {}),
@@ -149,6 +160,7 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
         ...(form.capabilityIds.length ? { capabilityIds: form.capabilityIds } : {}),
         idempotencyKey,
         ...(form.gitPolicy ? { policy: { git: { policy: form.gitPolicy } } } : {}),
+        ...(racing ? { attempts: form.attemptAgents.map((agentId) => ({ agentId })) } : {}),
       }),
     onSuccess: (t) => {
       void qc.invalidateQueries({ queryKey: ['tasks', orgId] });
@@ -183,10 +195,17 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
     >
       <div className="stack">
         {create.error && <Alert tone="danger">{create.error instanceof ApiError ? create.error.message : 'Could not create the task'}</Alert>}
+        {continued.data && (
+          <Alert>
+            Follows up on <strong>{continued.data.title}</strong>: the agent works on branch <code>{continued.data.gitResult?.branch}</code>
+            {continued.data.gitResult?.pullRequestUrl ? ' and pushes to its pull request.' : '.'}
+          </Alert>
+        )}
+        <TemplatePicker projectId={continued.data?.projectId ?? (form.projectId || projects[0]?.id)} enabled={open} onApply={(t) => setForm((f) => ({ ...f, ...t }))} />
         <div className="grid grid-2">
           <Field label="Project">
             {(id) => (
-              <Select id={id} value={form.projectId || projects[0]?.id} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
+              <Select id={id} value={continued.data?.projectId ?? (form.projectId || projects[0]?.id)} disabled={Boolean(continued.data)} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </Select>
             )}
@@ -250,6 +269,28 @@ function NewTaskDialog({ open, onClose, projects, existing }: { open: boolean; o
               </Select>
             )}
           </Field>
+        )}
+        {form.kind === 'code' && agents.length >= 2 && (
+          <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend className="mb-1 text-xs font-medium text-fg-2">Try with several agents (optional)</legend>
+            <div className="row">
+              {agents.map((a) => (
+                <Check
+                  key={a.id}
+                  checked={form.attemptAgents.includes(a.id)}
+                  disabled={!form.attemptAgents.includes(a.id) && form.attemptAgents.length >= 4}
+                  onChange={(e) => setForm({ ...form, attemptAgents: e.target.checked ? [...form.attemptAgents, a.id] : form.attemptAgents.filter((x) => x !== a.id) })}
+                >
+                  {a.name}
+                </Check>
+              ))}
+            </div>
+            <span className="hint text-xs text-fg-3">
+              {racing
+                ? `${form.attemptAgents.length} attempts: the first that passes verification wins, the others are cancelled. Each attempt needs a worker of its own to run at the same time, and each one spends.`
+                : 'Choose two or more to run one attempt per agent; the first that passes verification wins.'}
+            </span>
+          </fieldset>
         )}
         <Check checked={form.requirePlanApproval} onChange={(e) => setForm({ ...form, requirePlanApproval: e.target.checked })}>
           Require approval before the agent starts

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Bell, Bot, ChevronsUpDown, CircleDot, Compass, Cpu, Flag, FolderGit2, ListChecks, LogOut, Menu as MenuIcon, Moon, Package, Plus, Puzzle, RefreshCw, ScrollText, Server, Settings, SlidersHorizontal, Store, Sun, Users } from 'lucide-react';
+import { Activity, Bell, Bot, CalendarClock, ChartColumn, ChevronsUpDown, CircleDot, Compass, Cpu, Flag, FolderGit2, LayoutTemplate, ListChecks, LogOut, Menu as MenuIcon, Moon, Package, Plus, Puzzle, RefreshCw, ScrollText, Server, Settings, SlidersHorizontal, Store, Sun, Users } from 'lucide-react';
 import type { OverviewDto } from '@ao/contracts';
 import { Badge, Button, Menu, MenuItem, MenuLabel, MenuSeparator, Select, cn, useTheme } from '@ao/ui';
 import { useSession } from './lib/session';
@@ -91,8 +91,11 @@ export function Layout() {
         <nav className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-4 py-3">
           {link('/', 'Overview', Activity, attention)}
           {link('/tasks', 'Tasks', ListChecks)}
+          {link('/schedules', 'Schedules', CalendarClock)}
+          {link('/templates', 'Templates', LayoutTemplate)}
           {link('/projects', 'Projects', FolderGit2)}
           {link('/workers', 'Workers', Server)}
+          {link('/insights', 'Insights', ChartColumn)}
           {section('AI')}
           {link('/agents', 'Agents', Bot)}
           {link('/providers', 'AI models', Cpu)}

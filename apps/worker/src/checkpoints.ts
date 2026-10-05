@@ -77,6 +77,14 @@ export interface LocalTaskState {
   repoBaselines?: Record<string, unknown>;
   branch: string | null;
   recoveryEvents: string[];
+  /**
+   * What earlier commits of this task already did (a task commits again after a CI failure): the pull
+   * requests opened, by repository name ('' for the primary), the files committed, and the commit whose
+   * CI checks failed.
+   */
+  pullRequests?: Record<string, string>;
+  committedFiles?: Array<{ path: string; status: string }>;
+  ciFailedCommit?: string | null;
   consecutiveFailures: Array<string>;
   updatedAt: string;
 }

@@ -29,6 +29,7 @@ export class Scheduler {
   private timers: NodeJS.Timeout[] = [];
   private sweeping = false;
   private lastPurge = 0;
+  private sweepJobs: Array<() => Promise<unknown>> = [];
 
   constructor(
     private queue: DispatchQueue,
@@ -38,6 +39,11 @@ export class Scheduler {
     private metrics: Metrics,
     private intervals: { sweepMs: number },
   ) {}
+
+  /** Work done on every sweep besides dispatch (due schedules, …). A failing job does not stop the sweep. */
+  onSweep(job: () => Promise<unknown>) {
+    this.sweepJobs.push(job);
+  }
 
   start() {
     this.queue.process(async (job) => {
@@ -61,6 +67,7 @@ export class Scheduler {
       await this.workers.sweepOffline();
       await this.tasks.sweepExpiredLeases();
       await this.tasks.reconcile();
+      for (const job of this.sweepJobs) await job().catch((e) => captureError(e, { tags: { component: 'scheduler.sweep-job' } }));
       await this.updateGauges();
       if (Date.now() - this.lastPurge > 3_600_000) {
         this.lastPurge = Date.now();
@@ -97,13 +104,20 @@ export class Scheduler {
     const policy = await this.tasks.resolvedPolicy(task as never);
     const project = await Project.findById(task.projectId).lean();
     if (!project) return null;
+    const overBudget = await this.tasks.budgetBlock(task as never);
+    if (overBudget) {
+      await Task.updateOne({ _id: task._id, status: 'QUEUED' }, { statusReason: overBudget.message });
+      return null; // the sweep offers it again once the limit is raised or the month ends
+    }
     if ((project.activeTaskIds?.length ?? 0) >= policy.concurrency.perProject) {
       await Task.updateOne({ _id: task._id, status: 'QUEUED' }, { statusReason: 'Waiting for another task in this project to finish' });
       return null; // slot release re-enqueues
     }
 
     const workers = await Worker.find({ organizationId: task.organizationId, status: 'ONLINE', approved: true }).lean();
-    const connected = workers.filter((w) => this.live.isWorkerConnected(String(w._id)));
+    // A worker that runs another attempt of the same task is left out: attempts share its checkout.
+    const busyWithSibling = await this.tasks.workersWithSiblingAttempt(task as never);
+    const connected = workers.filter((w) => this.live.isWorkerConnected(String(w._id)) && !busyWithSibling.includes(String(w._id)));
     const active = await Task.aggregate<{ _id: unknown; n: number }>([
       { $match: { workerId: { $in: connected.map((w) => w._id) }, status: { $in: LEASED_TASK_STATUSES } } },
       { $group: { _id: '$workerId', n: { $sum: 1 } } },

@@ -77,6 +77,38 @@ describe('control-plane extension contract', () => {
     expect((await call(extended, 'POST', `/orgs/${u.orgId}/tasks`, u.token, task)).statusCode).toBe(201);
   });
 
+  it('a create guard refuses tasks however they are created: by a person, a schedule or a template', async () => {
+    const blocked = await signup(extended, 'ext-guard');
+    const free = await signup(extended, 'ext-guard-free');
+    const { AppError } = await import('@ao/core');
+    s.tasks.addCreateGuard(async (organizationId) => {
+      if (organizationId === blocked.orgId) throw new AppError('CONCURRENCY_LIMIT', 'This organization reached its task limit');
+    });
+    const task = (u: typeof blocked) => ({ projectId: u.projectId, title: 't', prompt: 'p' });
+    const refused = await call(extended, 'POST', `/orgs/${blocked.orgId}/tasks`, blocked.token, task(blocked));
+    expect(refused.statusCode).toBe(429);
+    expect(refused.json().error.message).toBe('This organization reached its task limit');
+
+    // A schedule that is due: no task, and the schedule says why.
+    const schedule = (await call(extended, 'POST', `/orgs/${blocked.orgId}/schedules`, blocked.token, { name: 'Nightly', projectId: blocked.projectId, cron: '0 2 * * *', task: { title: 't', prompt: 'p' } })).json();
+    const { Schedule, Task } = await import('@ao/database');
+    await Schedule.updateOne({ _id: schedule.id }, { nextRunAt: new Date(Date.now() - 1000) });
+    expect(await s.schedules.runDue()).toBe(0);
+    expect((await Schedule.findById(schedule.id).lean())!.lastResult).toBe('failed: This organization reached its task limit');
+    // A template.
+    const template = (await call(extended, 'POST', `/orgs/${blocked.orgId}/task-templates`, blocked.token, { name: 'T', task: { title: 't', prompt: 'p' } })).json();
+    expect((await call(extended, 'POST', `/orgs/${blocked.orgId}/task-templates/${template.id}/use`, blocked.token, { projectId: blocked.projectId })).statusCode).toBe(429);
+    expect(await Task.countDocuments({ organizationId: blocked.orgId })).toBe(0);
+
+    // Other organizations are not affected, and a repeated request for an existing task still finds it.
+    const made = await call(extended, 'POST', `/orgs/${free.orgId}/tasks`, free.token, { ...task(free), idempotencyKey: 'guard-key-1' });
+    expect(made.statusCode).toBe(201);
+    s.tasks.addCreateGuard(async (organizationId) => {
+      if (organizationId === free.orgId) throw new AppError('CONCURRENCY_LIMIT', 'limit');
+    });
+    expect((await call(extended, 'POST', `/orgs/${free.orgId}/tasks`, free.token, { ...task(free), idempotencyKey: 'guard-key-1' })).json().id).toBe(made.json().id);
+  });
+
   it('the self-hosted API has no usage limits (spec §2.1)', async () => {
     const u = await signup(core, 'no-limits');
     for (let i = 0; i < 25; i++) {

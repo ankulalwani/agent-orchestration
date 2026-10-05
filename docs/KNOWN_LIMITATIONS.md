@@ -17,6 +17,27 @@ Actual, current limitations. Updated as the implementation changes. Last updated
 - **Aider's venv launcher** in this repository's `.tools` folder points at the folder it was created in
   (`E:\new-project`); run it as `python -m aider` or recreate the venv.
 
+## Budgets, schedules, chat, CI and provisioning (added 2026-10-05)
+- **Nothing here was run against the real services.** Slack, Microsoft Teams, Jira, Linear, GitHub checks
+  and reviews, GitLab job statuses, an embeddings API, Okta and Microsoft Entra ID were each played by a
+  local fake that follows their documentation. Security keys were tested with Chromium's virtual
+  authenticator, not a physical key.
+- **Budgets act between agent sessions.** Spend is reported when a session ends, so a single session can
+  overshoot a limit. Agents that report no cost are covered by token limits only.
+- **Several agents on one task** need a worker per attempt to run at the same time (attempts share a
+  worker's checkout), and a project limit of at least the number of attempts.
+- **CI checks** are read for the primary repository only. Full logs are not fetched: the agent gets the
+  last 6,000 characters of a failed job's log (GitHub Actions, GitLab CI) or the check's annotations.
+- **Follow-ups on review feedback** exist for GitHub only.
+- **Microsoft Teams** channels receive notifications; approving from Teams is not built (it needs a bot
+  registered with Microsoft).
+- **SCIM** covers users, not groups. A suspended member's live dashboard connection ends at its next
+  reconnect; API access ends at once.
+- **Semantic suggestions** compare the 5,000 most used public packages in memory unless Atlas vector
+  search is used; the Atlas path has not been run.
+- **Scheduled tasks** start within one sweep interval of their time, and runs missed while the server was
+  down are made up once, not one by one.
+
 ## Projects, repositories and GitHub (added 2026-09-28)
 - **GitHub App against real GitHub.** The manifest flow, installations, sync, webhooks, member authorization,
   repository creation and scoped tokens are tested against a local fake of GitHub's web and REST API, not

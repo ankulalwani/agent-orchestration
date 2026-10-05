@@ -42,6 +42,7 @@ a distribution's business and are added through the extension points below. This
 | Point | Use it to |
 |---|---|
 | `ControlPlaneExtension` passed as `extend` to `buildApp` or `startControlPlane` (`@ao/api`, `@ao/api/server`) | add routes, add `preHandler` hooks that run before core routes (and may answer instead of them), start background work with the core `services` |
+| `services.tasks.addCreateGuard(fn)` (`@ao/server`) | refuse task creation by its own rules (a plan limit), whatever creates the task: a person, a schedule, an integration delivery, a template, a plan. A `preHandler` hook only sees requests; the guard also covers tasks no request creates. A guard refuses by throwing an `AppError`; the core registers none |
 | `createServices()` and the exported services (`@ao/server`) | authenticate callers (`auth.verifyAccess`), resolve roles (`orgs.resolveActor`), write audit entries (`audit`) |
 | Exported models (`@ao/database`) | read core data; keep extension data in the extension's own collections, keyed by `organizationId` |
 | RBAC permissions (`@ao/core`) | check generic permissions such as `billing.manage` (owners) |

@@ -190,14 +190,17 @@ export function WorkerCheckoutsCard({ project }: { project: ProjectDto }) {
   const workers = useQuery({ queryKey: ['workers', orgId], queryFn: () => get<WorkerDto[]>(`/orgs/${orgId}/workers`) });
   const [cloneTo, setCloneTo] = useState('');
   // Workers with a projects folder can clone what they are missing.
-  const cloneable = (workers.data ?? []).filter((w) => w.status === 'ONLINE' && w.tools.includes('clone'));
+  // An offline worker gets the clone when it next connects.
+  const cloneable = (workers.data ?? []).filter((w) => ['ONLINE', 'OFFLINE'].includes(w.status) && w.tools.includes('clone'));
+  const queued = useQuery({ queryKey: ['queued-clones', orgId, project.id], queryFn: () => get<Array<{ workerId: string; repositoryId: string }>>(`/orgs/${orgId}/projects/${project.id}/queued-clones`) });
   const missingOn = (workerId: string) => project.repositories.filter((r) => r.url && !project.workerPaths.some((p) => p.workerId === workerId && p.repositoryId === r.id));
   const clone = useMutation({
     mutationFn: async (workerId: string) => {
       const results = [];
-      for (const r of missingOn(workerId)) results.push(await post<{ requested: string[]; skipped: Array<{ reason: string }> }>(`/orgs/${orgId}/projects/${project.id}/repositories/${r.id}/clone`, { workerIds: [workerId] }));
+      for (const r of missingOn(workerId)) results.push(await post<{ requested: string[]; queued: string[]; skipped: Array<{ reason: string }> }>(`/orgs/${orgId}/projects/${project.id}/repositories/${r.id}/clone`, { workerIds: [workerId] }));
       return results;
     },
+    onSuccess: () => void queued.refetch(),
   });
   const byWorker = new Map<string, ProjectDto['workerPaths']>();
   for (const w of project.workerPaths) byWorker.set(w.workerId, [...(byWorker.get(w.workerId) ?? []), w]);
@@ -236,7 +239,7 @@ export function WorkerCheckoutsCard({ project }: { project: ProjectDto }) {
             {cloneable
               .filter((w) => missingOn(w.id).length)
               .map((w) => (
-                <option key={w.id} value={w.id}>{w.name} ({missingOn(w.id).map((r) => r.name).join(', ')})</option>
+                <option key={w.id} value={w.id}>{w.name}{w.status === 'OFFLINE' ? ', offline' : ''} ({missingOn(w.id).map((r) => r.name).join(', ')})</option>
               ))}
           </Select>
           <Button disabled={!cloneTo} loading={clone.isPending} onClick={() => clone.mutate(cloneTo)}>Clone</Button>
@@ -244,7 +247,16 @@ export function WorkerCheckoutsCard({ project }: { project: ProjectDto }) {
       )}
       {clone.data && (
         <p className="muted small mt-2">
-          {clone.data.some((r) => r.requested.length) ? 'Cloning into the worker’s projects folder; it appears here when done.' : clone.data.flatMap((r) => r.skipped.map((x) => x.reason)).join('; ')}
+          {clone.data.some((r) => r.requested.length)
+            ? 'Cloning into the worker’s projects folder; it appears here when done.'
+            : clone.data.some((r) => r.queued.length)
+              ? 'The worker is offline. It clones when it next connects (the request is kept for 7 days).'
+              : clone.data.flatMap((r) => r.skipped.map((x) => x.reason)).join('; ')}
+        </p>
+      )}
+      {(queued.data?.length ?? 0) > 0 && (
+        <p className="muted small mt-2">
+          Waiting for an offline worker: {queued.data!.map((q) => `${project.repositories.find((r) => r.id === q.repositoryId)?.name ?? 'repository'} on ${workers.data?.find((w) => w.id === q.workerId)?.name ?? 'a worker'}`).join(', ')}
         </p>
       )}
       {clone.error && <Alert tone="danger">{(clone.error as ApiError).message}</Alert>}

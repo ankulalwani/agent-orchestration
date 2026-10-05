@@ -116,6 +116,9 @@ export function toTaskDto(t: AnyDoc): TaskDto {
     pendingInteraction: t.pendingInteraction ?? null,
     correlationId: t.correlationId,
     activeMs: t.activeMs ?? 0,
+    continues: t.continues ? { taskId: String(t.continues.taskId), branch: t.continues.branch, pullRequestUrl: t.continues.pullRequestUrl ?? null } : null,
+    attempt: t.attempt ? { groupId: String(t.attempt.groupId), index: t.attempt.index, of: t.attempt.of, agentId: t.attempt.agentId, winnerTaskId: t.attempt.winnerTaskId ? String(t.attempt.winnerTaskId) : null } : null,
+    usage: { costUsd: t.usage?.costUsd ?? 0, inputTokens: t.usage?.inputTokens ?? 0, outputTokens: t.usage?.outputTokens ?? 0 },
   };
 }
 

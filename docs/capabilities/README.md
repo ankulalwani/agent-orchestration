@@ -129,3 +129,45 @@ stdio, Streamable HTTP or legacy SSE, with a 10-second limit:
 - **MCP capabilities installed from the registry** are checked before an agent receives them (results
   are cached for 5 minutes). A failing server is left out, the task continues without it, and the
   task timeline records which server was skipped and why.
+
+## Stacks
+
+A stack is a set of packages that belong together, such as a framework's skills and MCP servers,
+installed in one step from **Capabilities → Stacks**.
+
+- **Platform stacks** are made by server administrators (**Server → Marketplace → Stacks**) from public
+  packages only, and are offered to every organization. With the public catalog on, they are also at
+  `/api/v1/catalog/stacks` for a marketing site.
+- **An organization's own stacks** are made by its administrators (permission `capability.manage`) and
+  may hold anything the organization can see, including its private packages. One with the same address
+  as a platform stack is shown to its members instead.
+- **Install all** installs every package at one scope (organization, a project, or just you). Each
+  package goes through the usual installation, so trust, permission and approval rules apply to each:
+  the result lists what was installed, what waits for approval and what policy refused, with the reason.
+
+Paid listings are not part of the marketplace.
+
+## Semantic suggestions
+
+Suggestions use built-in rules by default: technologies, keywords and categories found in the text. No
+text leaves the server.
+
+With an embeddings API configured, packages close in *meaning* to the description are suggested too,
+even when they share no words with it:
+
+```bash
+EMBEDDINGS_URL=https://api.openai.com/v1      # any OpenAI-compatible API, for example Ollama: http://localhost:11434/v1
+EMBEDDINGS_API_KEY=…                          # when the API needs one
+EMBEDDINGS_MODEL=text-embedding-3-small
+EMBEDDINGS_MIN_SIMILARITY=0.4                 # depends on the model
+```
+
+- Package listings (name, description, tags, the start of the readme) are embedded in the background at
+  startup and when a listing changes; **Server → Marketplace** can start a full run
+  (`POST /admin/registry/embed`). A new model embeds everything again.
+- The text someone asks suggestions for (a prompt, a task, a project description) is sent to that API.
+  Turn this on only when that is acceptable for your data.
+- Closeness in meaning adds to the rules' score; curated packages still come first. When the API fails,
+  suggestions fall back to the rules.
+- Without Atlas, the 5,000 most used public packages are compared in memory. With
+  `REGISTRY_SEARCH=atlas`, create a vector index named `capability_embeddings` on `embedding.vector`.

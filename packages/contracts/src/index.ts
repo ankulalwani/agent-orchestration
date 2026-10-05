@@ -54,11 +54,16 @@ export const registerRequest = z.object({
   invitationToken: z.string().min(10).max(200).optional(),
 });
 /** `mfaCode`: a 6-digit authenticator code or a recovery code, sent after the server answered `MFA_REQUIRED`. */
-export const loginRequest = z.object({ email, password: z.string().min(1).max(128), mfaCode: z.string().trim().max(20).optional() });
+/** A security key's answer to the challenge that came with `MFA_REQUIRED` (`context.securityKey`), as the browser returns it. */
+const securityKeyAssertion = z.object({ id: z.string().max(2000) }).passthrough();
+export const loginRequest = z.object({ email, password: z.string().min(1).max(128), mfaCode: z.string().trim().max(20).optional(), securityKey: securityKeyAssertion.optional() });
+export const addSecurityKeyRequest = z.object({ name: z.string().trim().max(60).default(''), response: z.object({ id: z.string().max(2000) }).passthrough() });
+export const securityKeyDto = z.object({ id: z.string(), name: z.string(), createdAt: z.string(), lastUsedAt: z.string().nullable() });
+export type SecurityKeyDto = z.infer<typeof securityKeyDto>;
 export const oauthProviderDto = z.object({ id: z.string(), name: z.string() });
 export type OAuthProviderDto = z.infer<typeof oauthProviderDto>;
 /** Exchanges the one-time ticket from the OAuth callback for a session (`mfaCode` when 2FA is on). */
-export const oauthCompleteRequest = z.object({ ticket: z.string().min(10).max(200), mfaCode: z.string().trim().max(20).optional() });
+export const oauthCompleteRequest = z.object({ ticket: z.string().min(10).max(200), mfaCode: z.string().trim().max(20).optional(), securityKey: securityKeyAssertion.optional() });
 export const mfaSetupResponse = z.object({ secret: z.string(), otpauthUrl: z.string() });
 export const mfaEnableRequest = z.object({ code: z.string().trim().min(6).max(20) });
 export const mfaEnableResponse = z.object({ recoveryCodes: z.array(z.string()) });
@@ -124,7 +129,7 @@ export const updateOrganizationRequest = z.object({
     .optional(),
 });
 
-export const memberDto = z.object({ userId: id, email: z.string(), name: z.string(), role: z.enum(ROLES), joinedAt: z.string(), mfaEnabled: z.boolean().optional(), inOtherOrganizations: z.boolean().optional() });
+export const memberDto = z.object({ userId: id, email: z.string(), name: z.string(), role: z.enum(ROLES), joinedAt: z.string(), mfaEnabled: z.boolean().optional(), inOtherOrganizations: z.boolean().optional(), /** Deactivated by the identity provider (SCIM): a member without access. */ suspended: z.boolean().optional() });
 export type MemberDto = z.infer<typeof memberDto>;
 export const addMemberRequest = z.object({ email, role: z.enum(ROLES) });
 export const updateMemberRequest = z.object({ role: z.enum(ROLES) });
@@ -272,6 +277,8 @@ export const planResult = z
   });
 export type PlanResult = z.infer<typeof planResult>;
 
+/** One attempt of a task that several agents try: the agent, and optionally the provider and model it uses. */
+export const taskAttemptInput = z.object({ agentId: z.string().trim().min(1).max(64), providerId: z.string().trim().min(1).max(64).optional(), modelId: z.string().trim().min(1).max(200).optional() });
 export const createTaskRequest = z.object({
   projectId: id,
   /** `review`: the agent reviews the changes between `review.base` and `review.head` and changes nothing. */
@@ -288,6 +295,17 @@ export const createTaskRequest = z.object({
   environment: z.string().optional(),
   capabilityIds: z.array(z.string()).default([]),
   requirePlanApproval: z.boolean().optional(),
+  /**
+   * Run the task as several attempts, each pinned to one agent (and optionally a model). The first
+   * attempt that passes verification wins; the others are cancelled. Code tasks only. The response is
+   * the first attempt; `attempt.groupId` finds the others.
+   */
+  attempts: z.array(taskAttemptInput).min(2).max(4).optional(),
+  /**
+   * Follow up on a finished task of the same project: work on its branch, and add to its pull request
+   * instead of opening another one.
+   */
+  continuesTaskId: id.optional(),
   /** Client-supplied idempotency key (spec §105). Same key + same org → same task. */
   idempotencyKey: z.string().min(8).max(100).optional(),
 });
@@ -349,6 +367,9 @@ export const gitResultDto = z.object({
   filesChanged: z.array(z.object({ path: z.string(), status: z.string() })),
   diffStat: z.string().optional(),
   blocked: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).optional(),
+  /** CI checks of the pushed commit, when the policy waits for them (`verification.ci`). */
+  ci: z.object({ commit: z.string(), state: z.enum(['success', 'failure', 'pending', 'none', 'unknown']), checks: z.array(z.object({ name: z.string(), state: z.string(), url: z.string().nullable() })) }).optional(),
   /**
    * Projects with several repositories: the result in each of the other repositories (the fields above
    * are the primary repository's, except filesChanged and blocked, which cover all, prefixed "<name>/").
@@ -403,7 +424,8 @@ export const taskDto = z.object({
   parentTaskId: z.string().nullable().optional(),
   /** Plan tasks: the tasks created from the plan, once applied. */
   planApplied: z.object({ at: z.string(), by: z.string(), taskIds: z.array(z.string()) }).nullable().optional(),
-  source: z.object({ integrationId: z.string(), kind: z.string(), name: z.string(), url: z.string().nullable(), ref: z.string().nullable(), refType: z.enum(['issue', 'pr']).optional() }).nullable().optional(),
+  /** Where a task came from when not created by a person: an integration delivery, or a schedule (`kind: "schedule"`). */
+  source: z.object({ integrationId: z.string().optional(), scheduleId: z.string().optional(), /** The item's id in the other system, when replies need one (Linear). */ externalId: z.string().optional(), kind: z.string(), name: z.string(), url: z.string().nullable(), ref: z.string().nullable(), refType: z.enum(['issue', 'pr']).optional() }).nullable().optional(),
   normalizedPrompt: z.string().nullable(),
   generatedPlan: z.string().nullable(),
   priority: z.enum(PRIORITIES),
@@ -442,8 +464,186 @@ export const taskDto = z.object({
   pendingInteraction: pendingInteraction.nullable(),
   correlationId: z.string(),
   activeMs: z.number(),
+  /** A follow-up: the task whose branch (and pull request) this one continues. */
+  continues: z.object({ taskId: z.string(), branch: z.string(), pullRequestUrl: z.string().nullable() }).nullable().optional(),
+  /** Set on the attempts of a task that several agents try: its group, its place in it, and the attempt that won. */
+  attempt: z.object({ groupId: z.string(), index: z.number(), of: z.number(), agentId: z.string(), winnerTaskId: z.string().nullable() }).nullable().optional(),
+  /** Spend of the task's agent sessions so far, as agents and providers report it. */
+  usage: z.object({ costUsd: z.number(), inputTokens: z.number(), outputTokens: z.number() }).optional(),
 });
 export type TaskDto = z.infer<typeof taskDto>;
+
+// ── Scheduled tasks ───────────────────────────────────────────────────────────
+/** The task a schedule creates on each run. `{date}` in the title and prompt becomes the run's date (YYYY-MM-DD). */
+export const scheduledTaskInput = createTaskRequest.omit({ projectId: true, dependencies: true, idempotencyKey: true });
+export const SCHEDULE_OVERLAP = ['skip', 'allow'] as const;
+export const createScheduleRequest = z.object({
+  name: z.string().trim().min(1).max(100),
+  projectId: id,
+  /** Five fields: minute hour day-of-month month day-of-week; or @hourly, @daily, @weekly, @monthly. */
+  cron: z.string().trim().min(1).max(100),
+  /** IANA time zone the expression is read in. */
+  timeZone: z.string().trim().min(1).max(64).default('UTC'),
+  enabled: z.boolean().default(true),
+  /** `skip`: no new task while the task of the previous run is unfinished. */
+  overlap: z.enum(SCHEDULE_OVERLAP).default('skip'),
+  task: scheduledTaskInput,
+});
+export const updateScheduleRequest = createScheduleRequest.partial();
+export const scheduleDto = z.object({
+  id,
+  organizationId: id,
+  projectId: id,
+  name: z.string(),
+  cron: z.string(),
+  timeZone: z.string(),
+  enabled: z.boolean(),
+  overlap: z.enum(SCHEDULE_OVERLAP),
+  task: scheduledTaskInput,
+  createdBy: z.string(),
+  nextRunAt: z.string().nullable(),
+  lastRunAt: z.string().nullable(),
+  lastTaskId: z.string().nullable(),
+  /** `created`, `skipped: …` or `failed: …`. */
+  lastResult: z.string().nullable(),
+  runCount: z.number(),
+  createdAt: z.string(),
+});
+export type ScheduleDto = z.infer<typeof scheduleDto>;
+
+// ── Task templates ────────────────────────────────────────────────────────────
+/** A variable of a template: `{{name}}` in its title, prompt or background. */
+export const templateVariable = z.object({
+  name: z.string().regex(/^[A-Za-z][\w-]{0,39}$/, 'Use letters, digits, "_" and "-", starting with a letter'),
+  label: z.string().trim().max(100).default(''),
+  default: z.string().max(2000).default(''),
+  required: z.boolean().default(true),
+});
+export const createTaskTemplateRequest = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).default(''),
+  /** Offer the template for this project only; null: every project. */
+  projectId: id.nullable().default(null),
+  /** The task it creates; title, prompt and background may contain `{{variable}}`. */
+  task: scheduledTaskInput,
+  /** Labels, defaults and whether a value is needed. Variables used in the text but not listed are required. */
+  variables: z.array(templateVariable).max(30).default([]),
+});
+export const updateTaskTemplateRequest = createTaskTemplateRequest.partial();
+export const taskTemplateDto = z.object({
+  id,
+  organizationId: id,
+  name: z.string(),
+  description: z.string(),
+  projectId: z.string().nullable(),
+  task: scheduledTaskInput,
+  /** Every variable the text uses, with the stored label, default and required flag. */
+  variables: z.array(templateVariable),
+  createdBy: z.string(),
+  useCount: z.number(),
+  createdAt: z.string(),
+});
+export type TaskTemplateDto = z.infer<typeof taskTemplateDto>;
+export const useTaskTemplateRequest = z.object({
+  projectId: id,
+  values: z.record(z.string().max(40), z.string().max(20_000)).default({}),
+  dependencies: z.array(id).max(100).default([]),
+  idempotencyKey: z.string().min(8).max(100).optional(),
+});
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+/** Outcome figures of the tasks that finished (completed or failed) in a period. */
+const analyticsFigures = z.object({
+  finished: z.number(),
+  completed: z.number(),
+  failed: z.number(),
+  /** Completed / finished, 0–1; null when nothing finished. */
+  successRate: z.number().nullable(),
+  /** Completed tasks whose first verification passed (no remediation) / completed, 0–1. */
+  firstPassRate: z.number().nullable(),
+  avgRemediations: z.number(),
+  costUsd: z.number(),
+  costPerCompletedUsd: z.number().nullable(),
+  /** Average agent and verification time of completed tasks. */
+  avgActiveMs: z.number().nullable(),
+  /** Average time from creation to completion of completed tasks. */
+  avgLeadMs: z.number().nullable(),
+});
+export const analyticsQuery = z.object({ days: z.coerce.number().int().min(1).max(365).default(30), projectId: z.string().optional() });
+export const analyticsDto = z.object({
+  since: z.string(),
+  days: z.number(),
+  totals: analyticsFigures.extend({ created: z.number() }),
+  /** One entry per UTC day of the period, oldest first. */
+  daily: z.array(z.object({ date: z.string(), completed: z.number(), failed: z.number(), costUsd: z.number() })),
+  /** By the agent, provider and model a task finished on. */
+  byAgent: z.array(analyticsFigures.extend({ agentId: z.string() })),
+  byModel: z.array(analyticsFigures.extend({ providerId: z.string(), modelId: z.string() })),
+  byProject: z.array(analyticsFigures.extend({ projectId: z.string(), name: z.string() })),
+});
+export type AnalyticsDto = z.infer<typeof analyticsDto>;
+
+// ── Chat channels (Slack, Microsoft Teams) ────────────────────────────────────
+export const CHAT_KINDS = ['slack', 'teams'] as const;
+/** Notifications a chat channel can receive. */
+export const CHAT_EVENTS = [
+  'task.approval_required',
+  'task.input_required',
+  'task.recovery_required',
+  'task.failed',
+  'task.completed',
+  'task.provider_limit',
+  'worker.offline',
+  'budget.warning',
+  'budget.exceeded',
+] as const;
+export const DEFAULT_CHAT_EVENTS = ['task.approval_required', 'task.input_required', 'task.recovery_required', 'task.failed', 'budget.exceeded'] as const;
+export const createChatChannelRequest = z.object({
+  name: z.string().trim().min(1).max(100),
+  kind: z.enum(CHAT_KINDS),
+  /** Incoming webhook URL of the Slack app, or of the Teams channel (workflow or connector). */
+  webhookUrl: z.string().trim().url().max(2000),
+  /** Slack only: the app's signing secret. With it, Approve/Deny buttons and the slash command work. */
+  signingSecret: z.string().trim().max(200).optional(),
+  events: z.array(z.enum(CHAT_EVENTS)).max(CHAT_EVENTS.length).default([...DEFAULT_CHAT_EVENTS]),
+  /** Only tasks of these projects; empty: all projects. */
+  projectIds: z.array(id).max(100).default([]),
+  enabled: z.boolean().default(true),
+});
+export const updateChatChannelRequest = createChatChannelRequest.omit({ kind: true }).partial();
+export const chatChannelDto = z.object({
+  id,
+  name: z.string(),
+  kind: z.enum(CHAT_KINDS),
+  enabled: z.boolean(),
+  events: z.array(z.string()),
+  projectIds: z.array(z.string()),
+  /** Host of the webhook URL; the URL itself is a credential and is never returned. */
+  webhookHost: z.string(),
+  /** Slack with a signing secret: buttons and commands are accepted at `requestUrl`. */
+  interactive: z.boolean(),
+  requestUrl: z.string().nullable(),
+  lastDeliveryAt: z.string().nullable(),
+  lastDeliveryResult: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type ChatChannelDto = z.infer<typeof chatChannelDto>;
+/** A member's identity in the organization's chat workspace, so their actions there run with their role. */
+export const chatIdentityRequest = z.object({ slackUserId: z.string().trim().regex(/^[UW][A-Z0-9]{5,20}$/, 'A Slack member ID looks like U012AB3CD').nullable() });
+
+// ── Spend budgets ─────────────────────────────────────────────────────────────
+const budgetLine = z.object({ limitUsd: z.number().nullable(), spentUsd: z.number(), inputTokens: z.number(), outputTokens: z.number(), state: z.enum(['ok', 'warning', 'exceeded']) });
+/** Spend of the current calendar month (UTC) against the limits of the execution policy. */
+export const budgetStatusDto = z.object({
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  warnAt: z.number(),
+  organization: budgetLine,
+  projects: z.array(budgetLine.extend({ projectId: z.string(), name: z.string() })),
+  /** Limits for one task, from the organization's policy (projects and tasks may lower them). */
+  task: z.object({ limitUsd: z.number().nullable(), limitTokens: z.number().nullable() }),
+});
+export type BudgetStatusDto = z.infer<typeof budgetStatusDto>;
 
 export const taskListQuery = cursorQuery.extend({
   projectId: z.string().optional(),
@@ -453,6 +653,8 @@ export const taskListQuery = cursorQuery.extend({
     .transform((s) => (s ? s.split(',').filter(Boolean) : undefined))
     .pipe(z.array(z.enum(TASK_STATUSES)).optional()),
   workerId: z.string().optional(),
+  /** The attempts of one task that several agents try. */
+  attemptGroupId: z.string().optional(),
   q: z.string().max(200).optional(),
 });
 
@@ -649,6 +851,42 @@ export const catalogPageDto = z.object({
   /** Curated matches for the query; the dashboard falls back to all results when this is 0. */
   curatedCount: z.number(),
 });
+// Stacks: packages that belong together (a framework's skills and MCP servers), installed in one step.
+export const stackItemInput = z.object({
+  ref: z.string().regex(/^@[a-z0-9][a-z0-9-]{1,38}\/[a-z0-9][a-z0-9._-]{1,63}$/, 'Use a package reference like @namespace/name'),
+  versionRange: z.string().max(40).optional(),
+  /** Why the package is in the stack. */
+  note: z.string().trim().max(200).default(''),
+});
+export const createStackRequest = z.object({
+  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'Use lower-case letters, digits and dashes'),
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).default(''),
+  readme: z.string().max(20_000).optional(),
+  items: z.array(stackItemInput).min(1).max(30),
+});
+export const updateStackRequest = createStackRequest.omit({ slug: true }).partial();
+export const stackDto = z.object({
+  id,
+  slug: z.string(),
+  name: z.string(),
+  description: z.string(),
+  readme: z.string().nullable(),
+  /** `platform`: offered to everyone. `organization`: the organization's own. */
+  ownerKind: z.enum(['platform', 'organization']),
+  /** `package` is null when the viewer cannot see it (withdrawn, or private to someone else). */
+  items: z.array(z.object({ ref: z.string(), versionRange: z.string().nullable(), note: z.string(), package: packageDto.nullable() })),
+  /** From the stack's packages. */
+  categories: z.array(z.string()),
+  technologies: z.array(z.string()),
+  installs: z.number(),
+  createdAt: z.string(),
+});
+export type StackDto = z.infer<typeof stackDto>;
+export const installStackRequest = z.object({ scope: z.enum(['ORGANIZATION', 'PROJECT', 'USER']).default('ORGANIZATION'), projectId: z.string().optional() });
+export const installStackResponse = z.object({ results: z.array(z.object({ ref: z.string(), status: z.enum(['installed', 'pending_approval', 'failed']), version: z.string().nullable(), reason: z.string().nullable() })) });
+export type InstallStackResponse = z.infer<typeof installStackResponse>;
+
 export const facetsQuery = z.object({ type: z.enum(['skill', 'mcp', 'plugin', 'integration']).optional() });
 const facetDto = z.object({ slug: z.string(), label: z.string(), description: z.string().optional(), count: z.number() });
 export const facetsDto = z.object({ categories: z.array(facetDto), technologies: z.array(facetDto) });
@@ -789,7 +1027,9 @@ export const createApiTokenRequest = z.object({
 });
 
 // ── Integrations (spec §74) ───────────────────────────────────────────────────
-export const INTEGRATION_KINDS = ['github', 'gitlab', 'generic'] as const;
+export const INTEGRATION_KINDS = ['github', 'gitlab', 'jira', 'linear', 'generic'] as const;
+/** linear: the webhook's signing secret comes from Linear, so it is set here instead of generated. */
+export const setIntegrationSecretRequest = z.object({ secret: z.string().trim().min(8).max(500) });
 export const integrationSettings = z.object({
   /** github/gitlab: issues with this label become tasks (when opened with it, or when it is added). Empty: every new issue. */
   label: z.string().max(100).default(''),
@@ -808,6 +1048,12 @@ export const integrationSettings = z.object({
   callbackUrl: z.string().url().or(z.literal('')).default(''),
   /** github/gitlab: review pull/merge requests with an agent (FUT-003): when opened, or on every push. */
   reviews: z.enum(['off', 'opened', 'every_push']).default('off'),
+  /**
+   * github: feedback on a pull request that a task opened becomes a follow-up task on the same branch:
+   * for reviews that request changes, or for every review with a text. Comment commands on such a pull
+   * request follow up too. Off by default.
+   */
+  followUps: z.enum(['off', 'changes_requested', 'all_reviews']).default('off'),
 });
 export type IntegrationSettings = z.infer<typeof integrationSettings>;
 export const createIntegrationRequest = z.object({

@@ -40,6 +40,8 @@ beforeAll(async () => {
       received.push({ path: req.url!, headers: req.headers, body, raw });
       // Like GitHub: line comments outside the diff make the whole review fail with 422.
       if (req.url!.endsWith('/reviews') && (body?.comments ?? []).some((c: { line: number }) => c.line > 100)) return void res.writeHead(422).end('{"message":"Unprocessable"}');
+      // The line comments of review 55.
+      if (req.method === 'GET' && req.url!.includes('/reviews/55/comments')) return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify([{ path: 'src/cart.ts', line: 14, body: 'This loses the discount.' }, { path: 'README.md', line: null, original_line: 3, body: 'Typo.' }]));
       res.writeHead(201, { 'content-type': 'application/json' }).end('{"id":1}');
     });
   });
@@ -266,5 +268,189 @@ describe('callback URL guard for shared installations', () => {
     await expect(guarded.integrations.create(owner, generic('https://hooks.example.com/cb') as never)).resolves.toMatchObject({ kind: 'generic' });
     // Self-hosted default: a callback on the local network is allowed.
     await expect(s.integrations.create(owner, generic(`${fakeUrl}/callback`) as never)).resolves.toMatchObject({ kind: 'generic' });
+  });
+});
+
+describe('follow-ups on pull request feedback (GitHub)', () => {
+  let id: string;
+  let secret: string;
+  let openedBy: string;
+  const PR = 'https://github.com/acme/site/pull/77';
+  const gh = (event: string, body: unknown) => deliver(id, body, { 'x-github-event': event, 'x-github-delivery': randomUUID(), 'x-hub-signature-256': sign(secret, JSON.stringify(body)) });
+  const review = (reviewId: number, state: string, body: string, pr = { number: 77, title: 'Add discounts', html_url: PR }, sender = 'User') => ({
+    action: 'submitted',
+    review: { id: reviewId, state, body, html_url: `${pr.html_url}#pullrequestreview-${reviewId}`, user: { login: 'maria' } },
+    pull_request: pr,
+    sender: { type: sender },
+    repository: repo,
+  });
+
+  it('are off unless the integration turns them on', async () => {
+    const r = await api('POST', '/integrations', { name: 'GitHub follow-ups', kind: 'github', projectId, settings: { replyTokenSecret: 'GH_TOKEN', apiBaseUrl: fakeUrl } });
+    ({ id, secret } = r.json());
+    expect(r.json().settings.followUps).toBe('off');
+    expect((await gh('pull_request_review', review(50, 'changes_requested', 'Please fix'))).json()).toMatchObject({ status: 'ignored', reason: 'follow-ups on review feedback are off' });
+    await api('PATCH', `/integrations/${id}`, { settings: { followUps: 'changes_requested' } });
+
+    // The task that opened pull request 77 (its result is set as a worker would report it).
+    const task = await s.tasks.create(owner, { projectId, title: 'Add discounts', prompt: 'p', priority: 'NORMAL', dependencies: [], requirements: {}, capabilityIds: [] });
+    const { Task } = await import('@ao/database');
+    await Task.updateOne({ _id: task.id }, { $set: { status: 'COMPLETED', gitResult: { policy: 'PULL_REQUEST', branch: 'ao/add-discounts-abc123', commit: 'c0ffee', pushed: true, pullRequestUrl: PR, filesChanged: [], blocked: [] } } });
+    openedBy = task.id;
+  });
+
+  it('a review that requests changes becomes a task on the same branch, with the line comments', async () => {
+    received.length = 0;
+    const r = await gh('pull_request_review', review(55, 'changes_requested', 'The discount is applied twice.'));
+    expect(r.statusCode, r.body).toBe(201);
+    const task = await s.tasks.get(owner, r.json().taskId);
+    expect(task).toMatchObject({
+      title: 'Address review: Add discounts',
+      parentTaskId: openedBy,
+      continues: { taskId: openedBy, branch: 'ao/add-discounts-abc123', pullRequestUrl: PR },
+      policy: { git: { policy: 'PULL_REQUEST' } },
+      source: { ref: 'acme/site#77', refType: 'pr', url: `${PR}#pullrequestreview-55` },
+    });
+    expect(task.originalPrompt).toContain('A reviewer requested changes on pull request #77 "Add discounts"');
+    expect(task.originalPrompt).toContain('Review by maria:\nThe discount is applied twice.');
+    expect(task.originalPrompt).toContain('Comments on lines:\n- src/cart.ts:14: This loses the discount.\n- README.md:3: Typo.');
+    expect(received.find((x) => x.path.includes('/pulls/77/reviews/55/comments'))!.headers.authorization).toBe('Bearer ghp_reply_token_value');
+    // Redelivered: the same task.
+    expect((await gh('pull_request_review', review(55, 'changes_requested', 'The discount is applied twice.'))).json()).toEqual({ status: 'duplicate', taskId: task.id });
+  });
+
+  it('ignores approvals, plain comments, bots, edits and pull requests no task opened', async () => {
+    const reason = async (body: unknown) => (await gh('pull_request_review', body)).json().reason;
+    expect(await reason(review(60, 'approved', 'LGTM'))).toBe('the review approves the pull request');
+    expect(await reason(review(61, 'commented', 'A thought'))).toBe('the review does not request changes');
+    expect(await reason(review(62, 'changes_requested', 'x', undefined, 'Bot'))).toBe('review by a bot');
+    expect(await reason({ ...review(63, 'changes_requested', 'x'), action: 'edited' })).toBe('pull_request_review.edited is not handled');
+    expect(await reason(review(64, 'changes_requested', 'x', { number: 78, title: 'By a person', html_url: 'https://github.com/acme/site/pull/78' }))).toBe('The pull request was not opened by a task of this project');
+
+    // With "every review", a comment review with a text follows up too; one without a text does not.
+    await api('PATCH', `/integrations/${id}`, { settings: { followUps: 'all_reviews' } });
+    expect((await gh('pull_request_review', review(65, 'commented', ''))).json().status).toBe('ignored');
+    const r = await gh('pull_request_review', review(66, 'commented', 'Rename the helper.'));
+    expect((await s.tasks.get(owner, r.json().taskId)).originalPrompt).toContain('A reviewer commented on pull request #77');
+  });
+
+  it('a comment command on that pull request follows up; on any other one it creates an ordinary task', async () => {
+    const comment = (cid: number, n: number, url: string) => ({ action: 'created', comment: { id: cid, body: '/agent Also update the changelog', html_url: `${url}#c${cid}` }, issue: { ...issue(n, []), html_url: url, pull_request: { html_url: url } }, sender: { type: 'User' }, repository: repo });
+    const onTaskPr = await s.tasks.get(owner, (await gh('issue_comment', comment(901, 77, PR))).json().taskId);
+    expect(onTaskPr).toMatchObject({ title: 'Also update the changelog', continues: { taskId: openedBy, branch: 'ao/add-discounts-abc123' } });
+    const elsewhere = await s.tasks.get(owner, (await gh('issue_comment', comment(902, 78, 'https://github.com/acme/site/pull/78'))).json().taskId);
+    expect(elsewhere.continues).toBeNull();
+    expect(elsewhere.parentTaskId).toBeNull();
+  });
+
+  it('a follow-up can be asked for directly; it needs a task with a branch in the same project', async () => {
+    const input = { projectId, title: 'More', prompt: 'p', priority: 'NORMAL' as const, dependencies: [], requirements: {}, capabilityIds: [] };
+    expect((await s.tasks.create(owner, { ...input, continuesTaskId: openedBy })).continues).toMatchObject({ branch: 'ao/add-discounts-abc123', pullRequestUrl: PR });
+    const noBranch = await s.tasks.create(owner, input);
+    await expect(s.tasks.create(owner, { ...input, continuesTaskId: noBranch.id })).rejects.toThrow(/has no branch/);
+    await expect(s.tasks.create(owner, { ...input, kind: 'plan', continuesTaskId: openedBy })).rejects.toThrow(/change code/);
+    const other = await s.projects.create(owner, { name: 'other-site', description: '', defaultBranch: 'main', environments: [], knowledge: '' });
+    await expect(s.tasks.create(owner, { ...input, projectId: other.id, continuesTaskId: openedBy })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('Jira integration', () => {
+  let id: string;
+  let secret: string;
+  const jira = (body: unknown, sig = true) => deliver(id, body, { 'x-hub-signature': sig ? sign(secret, JSON.stringify(body)) : 'sha256=bad' });
+  const jiraIssue = (key: string, labels: string[], description: unknown = `Body of ${key}`) => ({ key, self: 'https://acme.atlassian.net/rest/api/2/issue/10001', fields: { summary: `Summary of ${key}`, description, labels } });
+
+  it('issues with the label become one task each; the description may be rich text', async () => {
+    const r = await api('POST', '/integrations', { name: 'Jira PAY', kind: 'jira', projectId, settings: { label: 'agent', replyTokenSecret: 'JIRA_TOKEN', apiBaseUrl: fakeUrl } });
+    ({ id, secret } = r.json());
+    await s.queries.putSecret(owner, 'JIRA_TOKEN', 'bot@acme.test:jira_api_token');
+    expect((await jira({ webhookEvent: 'jira:issue_created', issue: jiraIssue('PAY-1', ['agent']) }, false)).statusCode).toBe(401);
+    expect((await jira({ webhookEvent: 'jira:issue_created', issue: jiraIssue('PAY-1', []) })).json().reason).toBe('issue does not have the "agent" label');
+
+    received.length = 0;
+    const adf = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Refunds fail ' }, { type: 'text', text: 'over 100 EUR.' }] }, { type: 'paragraph', content: [{ type: 'text', text: 'See the logs.' }] }] };
+    const created = await jira({ webhookEvent: 'jira:issue_created', issue: jiraIssue('PAY-2', ['agent', 'bug'], adf) });
+    expect(created.statusCode, created.body).toBe(201);
+    const task = await s.tasks.get(owner, created.json().taskId);
+    expect(task).toMatchObject({ title: 'PAY-2: Summary of PAY-2', source: { kind: 'jira', ref: 'PAY-2', url: 'https://acme.atlassian.net/browse/PAY-2' } });
+    expect(task.originalPrompt).toBe('Refunds fail over 100 EUR.\nSee the logs.\n\nJira issue: https://acme.atlassian.net/browse/PAY-2');
+    expect((await jira({ webhookEvent: 'jira:issue_created', issue: jiraIssue('PAY-2', ['agent']) })).json()).toEqual({ status: 'duplicate', taskId: task.id });
+
+    // The task link is posted on the issue, with basic authentication for "email:token".
+    await until(() => received.some((x) => x.path === '/rest/api/2/issue/PAY-2/comment'), 'the Jira comment');
+    const reply = received.find((x) => x.path === '/rest/api/2/issue/PAY-2/comment')!;
+    expect(reply.headers.authorization).toBe(`Basic ${Buffer.from('bot@acme.test:jira_api_token').toString('base64')}`);
+    expect(reply.body.body).toContain(`https://orchestration.test/tasks/${task.id}`);
+  });
+
+  it('adding the label later, and comment commands, create tasks; other updates and apps are ignored', async () => {
+    const updated = (key: string, from: string, to: string, field = 'labels') => ({ webhookEvent: 'jira:issue_updated', issue: jiraIssue(key, to.split(' ').filter(Boolean)), changelog: { items: [{ field, fromString: from, toString: to }] } });
+    expect((await jira(updated('PAY-3', '', 'In Progress', 'status'))).json().reason).toBe('the configured label was not added');
+    expect((await jira(updated('PAY-3', 'agent bug', 'agent'))).json().reason).toBe('the configured label was not added');
+    expect((await jira({ webhookEvent: 'jira:issue_updated', issue: jiraIssue('PAY-3', ['agent']) })).json().reason).toBe('the configured label was not added');
+    expect((await jira(updated('PAY-3', 'bug', 'bug agent'))).statusCode).toBe(201);
+
+    const comment = (cid: string, body: unknown, accountType = 'atlassian') => ({ webhookEvent: 'comment_created', comment: { id: cid, body, author: { accountType } }, issue: jiraIssue('PAY-4', []) });
+    expect((await jira(comment('1', 'thanks'))).json().status).toBe('ignored');
+    expect((await jira(comment('2', '/agent do it', 'app'))).json().reason).toBe('comment by an app');
+    const r = await jira(comment('3', '/agent Retry the webhook\nIt timed out.'));
+    const task = await s.tasks.get(owner, r.json().taskId);
+    expect(task.title).toBe('Retry the webhook');
+    expect(task.originalPrompt).toMatch(/It timed out\.[\s\S]*Jira issue PAY-4 "Summary of PAY-4"/);
+    expect((await jira({ webhookEvent: 'jira:issue_deleted', issue: jiraIssue('PAY-5', ['agent']) })).json().reason).toBe('Jira event "jira:issue_deleted" is not handled');
+    expect((await jira({ webhookEvent: 'project_created' })).json().status).toBe('ignored');
+  });
+});
+
+describe('Linear integration', () => {
+  let id: string;
+  const LINEAR_SECRET = 'lin_wh_signing_secret_from_linear';
+  const linear = (body: unknown, secret = LINEAR_SECRET) => deliver(id, body, { 'linear-signature': createHmac('sha256', secret).update(JSON.stringify(body)).digest('hex') });
+  const label = { id: 'lbl-agent', name: 'agent' };
+  const linearIssue = (n: number, labels: object[]) => ({ id: `issue-uuid-${n}`, identifier: `ENG-${n}`, title: `Issue ${n}`, description: `Body of ${n}`, url: `https://linear.app/acme/issue/ENG-${n}`, labels });
+
+  it('uses the signing secret Linear shows, which is stored and never returned', async () => {
+    const r = await api('POST', '/integrations', { name: 'Linear ENG', kind: 'linear', projectId, settings: { label: 'agent', replyTokenSecret: 'LINEAR_KEY', apiBaseUrl: fakeUrl } });
+    id = r.json().id;
+    await s.queries.putSecret(owner, 'LINEAR_KEY', 'lin_api_key_value');
+    const body = { action: 'create', type: 'Issue', data: linearIssue(1, [label]) };
+    // Until Linear's secret is stored, its deliveries are refused.
+    expect((await linear(body)).statusCode).toBe(401);
+    expect((await api('PUT', `/integrations/${id}/secret`, { secret: 'short' })).statusCode).toBe(400);
+    expect((await api('PUT', `/integrations/${id}/secret`, { secret: LINEAR_SECRET })).statusCode).toBe(204);
+    expect((await api('GET', '/integrations')).body).not.toContain(LINEAR_SECRET);
+    expect((await linear(body, 'another-secret')).statusCode).toBe(401);
+
+    received.length = 0;
+    const created = await linear(body);
+    expect(created.statusCode, created.body).toBe(201);
+    const task = await s.tasks.get(owner, created.json().taskId);
+    expect(task).toMatchObject({ title: 'ENG-1: Issue 1', source: { kind: 'linear', ref: 'ENG-1', externalId: 'issue-uuid-1', url: 'https://linear.app/acme/issue/ENG-1' } });
+    expect(task.originalPrompt).toContain('Body of 1');
+    expect((await linear(body)).json()).toEqual({ status: 'duplicate', taskId: task.id });
+
+    // The reply is a comment through Linear's GraphQL API, on the issue's id.
+    await until(() => received.some((x) => x.path === '/graphql'), 'the Linear comment');
+    const reply = received.find((x) => x.path === '/graphql')!;
+    expect(reply.headers.authorization).toBe('lin_api_key_value');
+    expect(reply.body.query).toContain('commentCreate');
+    expect(reply.body.variables).toEqual({ issueId: 'issue-uuid-1', body: expect.stringContaining(`https://orchestration.test/tasks/${task.id}`) });
+  });
+
+  it('adding the label later, and comment commands, create tasks; other changes and integrations are ignored', async () => {
+    const reason = async (body: unknown) => (await linear(body)).json().reason;
+    expect(await reason({ action: 'create', type: 'Issue', data: linearIssue(2, []) })).toBe('issue does not have the "agent" label');
+    expect(await reason({ action: 'update', type: 'Issue', data: linearIssue(2, [label]), updatedFrom: { title: 'Old title' } })).toBe('the configured label was not added');
+    expect(await reason({ action: 'update', type: 'Issue', data: linearIssue(2, [label]), updatedFrom: { labelIds: ['lbl-agent', 'lbl-bug'] } })).toBe('the configured label was not added');
+    expect(await reason({ action: 'remove', type: 'Issue', data: linearIssue(2, [label]) })).toBe('issue action "remove" is not handled');
+    expect((await linear({ action: 'update', type: 'Issue', data: linearIssue(2, [label]), updatedFrom: { labelIds: [] } })).statusCode).toBe(201);
+
+    const comment = (cid: string, body: string, extra: object = { userId: 'user-1' }) => ({ action: 'create', type: 'Comment', url: 'https://linear.app/acme/issue/ENG-3#comment-1', data: { id: cid, body, issue: { id: 'issue-uuid-3', identifier: 'ENG-3', title: 'Issue 3' }, ...extra } });
+    expect(await reason(comment('c1', 'thanks'))).toBe('comment does not start with /agent');
+    expect(await reason(comment('c2', '/agent do it', { botActor: { name: 'A bot' } }))).toBe('comment by an integration');
+    const r = await linear(comment('c3', '/agent Add a retry\nWith backoff.'));
+    const task = await s.tasks.get(owner, r.json().taskId);
+    expect(task).toMatchObject({ title: 'Add a retry', source: { ref: 'ENG-3', externalId: 'issue-uuid-3' } });
+    expect(await reason({ action: 'create', type: 'Project', data: {} })).toBe('Linear event "Project" is not handled');
   });
 });

@@ -88,6 +88,17 @@ export const serverConfigSchema = z.object({
   FEATURE_FLAGS: z.string().default(''),
   /** Marketplace search: MongoDB text index (works everywhere) or an Atlas Search index named "capability_packages". */
   REGISTRY_SEARCH: z.enum(['text', 'atlas']).default('text'),
+  /**
+   * Semantic suggestions in the marketplace: an OpenAI-compatible embeddings API (`<url>/embeddings`), for
+   * example https://api.openai.com/v1 or a local Ollama (http://localhost:11434/v1). Unset: suggestions
+   * use the built-in rules only, and no text leaves the server. With it, package listings and the text
+   * someone asks suggestions for are sent to that API.
+   */
+  EMBEDDINGS_URL: z.string().url().optional(),
+  EMBEDDINGS_API_KEY: z.string().optional(),
+  EMBEDDINGS_MODEL: z.string().default('text-embedding-3-small'),
+  /** Cosine similarity from which a package counts as close in meaning (depends on the model). */
+  EMBEDDINGS_MIN_SIMILARITY: z.coerce.number().min(0).max(1).default(0.4),
   /** Serve public marketplace packages without sign-in (/catalog, for a marketing site). Unset: on when DEPLOYMENT_MODE=cloud. */
   PUBLIC_CATALOG: bool.optional(),
   /**

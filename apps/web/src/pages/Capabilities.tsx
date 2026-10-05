@@ -7,6 +7,7 @@ import { ApiError, del, get, patch, post } from '../lib/api';
 import { useOrgId, useSession } from '../lib/session';
 import { PageHeader } from '../Layout';
 import { CATEGORIES } from '@ao/core/shared';
+import { Stacks } from '../components/Stacks';
 import { ClassificationChips, SignalsLine, useSuggestions, type SuggestInput } from '../components/CapabilitySuggestions';
 
 interface Installation {
@@ -55,7 +56,7 @@ export function CapabilitiesPage() {
   const orgId = useOrgId();
   const { can } = useSession();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'installed' | 'suggested' | 'marketplace' | 'mine'>('installed');
+  const [tab, setTab] = useState<'installed' | 'suggested' | 'marketplace' | 'stacks' | 'mine'>('installed');
   const [installing, setInstalling] = useState<PackageDto | null>(null);
 
   const installs = useQuery({ queryKey: ['installations', orgId], queryFn: () => get<Installation[]>(`/orgs/${orgId}/capability-installations`) });
@@ -77,7 +78,7 @@ export function CapabilitiesPage() {
     <div className="stack">
       <PageHeader title="Capabilities" description="Install skills, MCP servers and plugins for your organization, a project, or just yourself. Curated packages are shown first." />
       {err && <Alert tone="danger">{errorText(err)}</Alert>}
-      <Tabs label="Capability views" value={tab} onChange={setTab} tabs={[{ id: 'installed', label: 'Installed' }, { id: 'suggested', label: 'Suggested' }, { id: 'marketplace', label: 'Marketplace' }, { id: 'mine', label: 'My packages' }]} />
+      <Tabs label="Capability views" value={tab} onChange={setTab} tabs={[{ id: 'installed', label: 'Installed' }, { id: 'suggested', label: 'Suggested' }, { id: 'marketplace', label: 'Marketplace' }, { id: 'stacks', label: 'Stacks' }, { id: 'mine', label: 'My packages' }]} />
       {tab === 'installed' && (
         <Card padded={false}>
           {installs.isLoading ? (
@@ -115,6 +116,7 @@ export function CapabilitiesPage() {
       )}
       {tab === 'suggested' && <Suggested projects={projects.data ?? []} onInstall={setInstalling} />}
       {tab === 'marketplace' && <Marketplace onInstall={setInstalling} />}
+      {tab === 'stacks' && <Stacks projects={projects.data ?? []} onInstalled={refresh} />}
       {tab === 'mine' && <MyPackages onInstall={setInstalling} />}
       {installing && <InstallDialog pkg={installing} projects={projects.data ?? []} onClose={() => setInstalling(null)} onDone={() => { setInstalling(null); setTab('installed'); refresh(); }} />}
     </div>

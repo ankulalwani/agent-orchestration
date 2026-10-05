@@ -10,6 +10,7 @@ import {
   LEASED_TASK_STATUSES,
   TERMINAL_TASK_STATUSES,
   assertTransition,
+  canTransition,
   createLogger,
   dependencyReadiness,
   newCorrelationId,
@@ -40,7 +41,8 @@ import {
   mongoose,
   oid,
 } from '@ao/database';
-import type { TaskActionRequest, TransitionRequest, WorkerEvent, createTaskRequest, taskListQuery } from '@ao/contracts';
+import { createHash } from 'node:crypto';
+import type { TaskActionRequest, TaskDto, TransitionRequest, WorkerEvent, createTaskRequest, taskListQuery } from '@ao/contracts';
 import { planResult, transitionRequest } from '@ao/contracts';
 import type { z } from 'zod';
 import type { DispatchQueue } from '@ao/queue';
@@ -54,6 +56,7 @@ import { reconcileSlots, releaseSlots, reserveSlot, reserveTargetSlots } from '.
 import type { LiveHub } from './live.js';
 import type { Metrics } from './metrics.js';
 import type { NotificationService, NotificationType } from './notifications.js';
+import type { BudgetBlock, BudgetService } from './budget.service.js';
 
 const log = createLogger('tasks');
 const MAX_APPLIED_IDS = 100;
@@ -68,6 +71,7 @@ export class TaskService {
     private notifications: NotificationService,
     private features?: FeatureFlags,
     private box?: SecretBox,
+    private budgets?: BudgetService,
   ) {}
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -109,6 +113,38 @@ export class TaskService {
     return resolvePolicy(l.platform, l.organization, l.project, l.task);
   }
 
+  /** Workers that run another attempt of the same task right now. */
+  async workersWithSiblingAttempt(task: TaskLean): Promise<string[]> {
+    if (!task.attempt?.groupId) return [];
+    const siblings = await Task.find({ 'attempt.groupId': task.attempt.groupId, _id: { $ne: task._id }, status: { $in: LEASED_TASK_STATUSES }, workerId: { $ne: null } }, { workerId: 1 }).lean();
+    return siblings.map((s) => String(s.workerId));
+  }
+
+  /** The spend limit that keeps this task from starting or continuing, if any. */
+  async budgetBlock(task: TaskLean): Promise<BudgetBlock | null> {
+    if (!this.budgets) return null;
+    return this.budgets.check(task as never, await this.policyLayersFor(task));
+  }
+
+  /**
+   * Stops a leased task that reached a spend limit: RECOVERY_REQUIRED, so that Retry continues from the
+   * checkpoint once the limit is raised. The worker loses the task (its next request gets LEASE_LOST).
+   */
+  private async stopForBudget(task: TaskLean, block: BudgetBlock) {
+    if (!canTransition(task.status, 'RECOVERY_REQUIRED')) return false;
+    const workerId = task.workerId ? String(task.workerId) : null;
+    let updated: TaskLean;
+    try {
+      updated = await this.applyServerTransition(task, 'RECOVERY_REQUIRED', block.message, { $set: { workerId: null, pendingInteraction: null } });
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'CONFLICT') return false; // the task moved on; the next check catches it
+      throw e;
+    }
+    await this.recordEvent(updated, 'BudgetExceeded', { scope: block.scope, unit: block.unit, limit: block.limit, spent: block.spent }, workerId);
+    if (workerId) this.live.sendToWorker(workerId, { type: 'task.control', taskId: String(task._id), action: 'cancel' });
+    return true;
+  }
+
   private async enqueue(task: TaskLean, delayMs?: number) {
     try {
       await this.queue.enqueue(
@@ -138,13 +174,25 @@ export class TaskService {
     return Task.exists({ organizationId: oid(organizationId), idempotencyKey: key });
   }
 
-  async create(actor: Actor, input: z.output<typeof createTaskRequest>, opts: { source?: Record<string, unknown>; parentTaskId?: string } = {}) {
+  /**
+   * Checks that run before a task is created, whatever creates it (a person, a schedule, an integration,
+   * a template, a plan). A guard refuses by throwing an AppError. The core registers none: this is for a
+   * distribution's own rules (see docs/PUBLIC_PRIVATE_BOUNDARY.md).
+   */
+  private createGuards: Array<(organizationId: string) => Promise<void>> = [];
+  addCreateGuard(guard: (organizationId: string) => Promise<void>) {
+    this.createGuards.push(guard);
+  }
+
+  async create(actor: Actor, input: z.output<typeof createTaskRequest>, opts: { source?: Record<string, unknown>; parentTaskId?: string; attempt?: Record<string, unknown> } = {}): Promise<TaskDto> {
     requirePermission(actor, 'task.create');
+    if (input.attempts?.length) return this.createAttempts(actor, input, opts);
     const orgId = oid(actor.organizationId);
     if (input.idempotencyKey) {
       const existing = await Task.findOne({ organizationId: orgId, idempotencyKey: input.idempotencyKey }).lean();
       if (existing) return toTaskDto(existing);
     }
+    for (const guard of this.createGuards) await guard(actor.organizationId);
     const project = await Project.findOne({ _id: oid(input.projectId, 'Project'), organizationId: orgId, archived: { $ne: true } }).lean();
     if (!project) throw new AppError('NOT_FOUND', 'Project not found');
 
@@ -162,6 +210,16 @@ export class TaskService {
       const env = (project.environments as Array<{ name: string; requiresApproval?: boolean }>).find((e) => e.name === input.environment);
       if (!env) throw new AppError('VALIDATION_FAILED', `Unknown environment "${input.environment}"`);
     }
+    // A follow-up works on the branch of an earlier task of this project, and adds to its pull request.
+    let continues: { taskId: mongoose.Types.ObjectId; branch: string; pullRequestUrl: string | null } | null = null;
+    if (input.continuesTaskId) {
+      if ((input.kind ?? 'code') !== 'code') throw new AppError('VALIDATION_FAILED', 'Only tasks that change code can follow up on another task');
+      const earlier = await Task.findOne({ _id: oid(input.continuesTaskId, 'Task'), organizationId: orgId, projectId: project._id }, { gitResult: 1, kind: 1 }).lean();
+      if (!earlier) throw new AppError('NOT_FOUND', 'The task to follow up on was not found in this project');
+      const branch = (earlier.gitResult as { branch?: string | null; pullRequestUrl?: string | null } | null)?.branch;
+      if (!branch) throw new AppError('VALIDATION_FAILED', 'The task to follow up on has no branch (it did not commit on a task branch)');
+      continues = { taskId: earlier._id, branch, pullRequestUrl: (earlier.gitResult as { pullRequestUrl?: string | null }).pullRequestUrl ?? null };
+    }
 
     let doc;
     try {
@@ -173,7 +231,9 @@ export class TaskService {
         originalPrompt: input.prompt,
         knowledge: input.knowledge ?? '',
         source: opts.source ?? null,
-        parentTaskId: opts.parentTaskId ? oid(opts.parentTaskId) : null,
+        parentTaskId: opts.parentTaskId ? oid(opts.parentTaskId) : (continues?.taskId ?? null),
+        continues,
+        attempt: opts.attempt ?? null,
         kind: input.kind ?? 'code',
         review: input.kind === 'review' ? input.review : null,
         priority: input.priority,
@@ -207,9 +267,65 @@ export class TaskService {
     return toTaskDto(task);
   }
 
+  /**
+   * A task that several agents try (`attempts`): one task per attempt, pinned to its agent (and model),
+   * in one group. The first attempt to pass verification wins and the others are cancelled
+   * (`settleAttempts`). Attempts work in the project's checkout, so each needs a worker of its own;
+   * with fewer workers, or a project limit of one task at a time, they run one after another.
+   */
+  private async createAttempts(actor: Actor, input: z.output<typeof createTaskRequest>, opts: { source?: Record<string, unknown>; parentTaskId?: string }) {
+    const attempts = input.attempts!;
+    if ((input.kind ?? 'code') !== 'code') throw new AppError('VALIDATION_FAILED', 'Only tasks that change code can be tried by several agents');
+    const key = (a: (typeof attempts)[number]) => `${a.agentId}|${a.providerId ?? ''}|${a.modelId ?? ''}`;
+    if (new Set(attempts.map(key)).size !== attempts.length) throw new AppError('VALIDATION_FAILED', 'Each attempt needs a different agent or model');
+    if (attempts.some((a) => Boolean(a.providerId) !== Boolean(a.modelId))) throw new AppError('VALIDATION_FAILED', 'Give an attempt both a provider and a model, or neither');
+    // Derived from the idempotency key when there is one, so a repeated request finds the same group.
+    const groupId = input.idempotencyKey ? new mongoose.Types.ObjectId(createHash('sha256').update(`${actor.organizationId}:${input.idempotencyKey}`).digest('hex').slice(0, 24)) : new mongoose.Types.ObjectId();
+    const created: TaskDto[] = [];
+    for (const [index, a] of attempts.entries()) {
+      const policy = {
+        ...(input.policy ?? {}),
+        agents: { ...(input.policy?.agents ?? {}), allowed: [a.agentId], preferred: [a.agentId] },
+        ...(a.providerId && a.modelId ? { models: { ...(input.policy?.models ?? {}), preferred: [{ providerId: a.providerId, modelId: a.modelId }] } } : {}),
+      };
+      created.push(
+        await this.create(
+          actor,
+          { ...input, attempts: undefined, policy, idempotencyKey: input.idempotencyKey ? `${input.idempotencyKey}:a${index}`.slice(-100) : undefined },
+          { ...opts, attempt: { groupId, index, of: attempts.length, agentId: a.agentId, providerId: a.providerId ?? null, modelId: a.modelId ?? null, winnerTaskId: null } },
+        ),
+      );
+    }
+    await audit(actor, 'task.attempts_created', { type: 'task', id: created[0]!.id }, { attempts: attempts.map((a) => a.agentId), taskIds: created.map((t) => t.id) });
+    return created[0]!;
+  }
+
+  /**
+   * An attempt passed verification: it wins, and the attempts still under way are cancelled. When two
+   * pass at the same moment, both stay completed and the first to get here is the winner.
+   */
+  private async settleAttempts(task: TaskLean) {
+    const groupId = task.attempt?.groupId;
+    if (!groupId) return;
+    await Task.updateMany({ 'attempt.groupId': groupId, 'attempt.winnerTaskId': null }, { $set: { 'attempt.winnerTaskId': task._id } });
+    const others = (await Task.find({ 'attempt.groupId': groupId, _id: { $ne: task._id }, status: { $nin: [...TERMINAL_TASK_STATUSES] } }).lean()) as TaskLean[];
+    for (const other of others) {
+      const workerId = other.workerId ? String(other.workerId) : null;
+      try {
+        const cancelled = await this.applyServerTransition(other, 'CANCELLED', `Another attempt passed verification first (${task.agentId ?? task.attempt.agentId})`);
+        await this.recordEvent(cancelled, 'TaskCancelled', { reason: 'attempt_lost', winnerTaskId: String(task._id) });
+        if (workerId) this.live.sendToWorker(workerId, { type: 'task.control', taskId: String(other._id), action: 'cancel' });
+      } catch (e) {
+        // It finished or moved on in the meantime; nothing to cancel.
+        if (!(e instanceof AppError)) throw e;
+      }
+    }
+  }
+
   async list(actor: Actor, q: z.output<typeof taskListQuery>) {
     requirePermission(actor, 'task.read');
     const filter: Record<string, unknown> = { organizationId: oid(actor.organizationId) };
+    if (q.attemptGroupId && /^[a-f0-9]{24}$/i.test(q.attemptGroupId)) filter['attempt.groupId'] = oid(q.attemptGroupId);
     if (q.projectId) filter.projectId = oid(q.projectId, 'Project');
     if (q.workerId) filter.workerId = oid(q.workerId, 'Worker');
     if (q.status?.length) filter.status = { $in: q.status };
@@ -400,6 +516,14 @@ export class TaskService {
     const layers = await this.policyLayersFor(task);
     const policy = resolvePolicy(layers.platform, layers.organization, layers.project, layers.task);
 
+    const overBudget = await this.budgets?.check(task as never, layers);
+    if (overBudget) {
+      await Task.updateOne({ _id: task._id, status: 'QUEUED' }, { statusReason: overBudget.message });
+      return { claimed: false, reason: overBudget.message };
+    }
+    // Attempts of one task share the project's checkout on a worker, so a worker runs one at a time.
+    if ((await this.workersWithSiblingAttempt(task)).includes(worker.workerId)) return { claimed: false, reason: 'Another attempt of this task runs on this worker' };
+
     // Atomic organization slot, then atomic project slot.
     if (policy.concurrency.perOrganization > 0 && !(await reserveSlot(task.organizationId, 'organization', '', task._id, policy.concurrency.perOrganization))) {
       return { claimed: false, reason: 'Organization concurrency limit reached' };
@@ -583,6 +707,12 @@ export class TaskService {
       if (!p.completionReport && !current.completionReport) throw new AppError('VALIDATION_FAILED', 'A completion report is required');
     }
 
+    // Spend limits: no new agent session (first run, remediation, resume) once a limit is reached.
+    if (!same && req.to === 'RUNNING') {
+      const overBudget = await this.budgetBlock(current);
+      if (overBudget && (await this.stopForBudget(current, overBudget))) throw new AppError('LEASE_LOST', overBudget.message, { context: { taskId, status: 'RECOVERY_REQUIRED' } });
+    }
+
     const policy = await this.resolvedPolicy(current);
     const releasing = !LEASED_TASK_STATUSES.includes(req.to);
     const set: Record<string, unknown> = { status: req.to };
@@ -651,7 +781,7 @@ export class TaskService {
   /** Ingest a batch of buffered worker events; duplicates (same eventId) are ignored (spec §107). */
   async ingestEvents(worker: WorkerActor, events: WorkerEvent[]) {
     const taskIds = [...new Set(events.map((e) => e.taskId).filter((t) => /^[a-f0-9]{24}$/i.test(t)))];
-    const tasks = await Task.find({ _id: { $in: taskIds.map((t) => oid(t)) }, organizationId: oid(worker.organizationId) }, { _id: 1, organizationId: 1, correlationId: 1 }).lean();
+    const tasks = await Task.find({ _id: { $in: taskIds.map((t) => oid(t)) }, organizationId: oid(worker.organizationId) }, { _id: 1, organizationId: 1, projectId: 1, correlationId: 1 }).lean();
     const known = new Map(tasks.map((t) => [String(t._id), t]));
     const docs = events
       .filter((e) => known.has(e.taskId) && e.workerId === worker.workerId)
@@ -682,20 +812,23 @@ export class TaskService {
       }
     }
     for (const d of inserted) this.live.publishToOrg(worker.organizationId, { type: 'task.event', event: toTaskEventDto(d) });
-    await this.recordUsage(worker, inserted);
+    await this.recordUsage(worker, inserted, new Map(tasks.map((t) => [String(t._id), t.projectId])));
     const highestSequence = Math.max(0, ...events.map((e) => e.sequence));
     await Worker.updateOne({ _id: oid(worker.workerId), lastSequence: { $lt: highestSequence } }, { lastSequence: highestSequence });
     return { accepted: inserted.length, duplicates, highestSequence };
   }
 
   /** Usage tracking from events that carry usage (spec §50). Idempotent on eventId. */
-  private async recordUsage(worker: WorkerActor, events: Array<Record<string, any>>) {
+  private async recordUsage(worker: WorkerActor, events: Array<Record<string, any>>, projectOf: Map<string, unknown>) {
     const usage = events.filter((e) => ['AgentExited', 'ProviderLimitDetected', 'FallbackStarted'].includes(e.type));
+    const spent = new Set<string>();
     for (const e of usage) {
       const p = e.payload ?? {};
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
       try {
         await UsageRecord.create({
           organizationId: oid(worker.organizationId),
+          projectId: projectOf.get(String(e.taskId)) ?? null,
           taskId: e.taskId,
           workerId: oid(worker.workerId),
           agentId: p.agentId,
@@ -708,6 +841,11 @@ export class TaskService {
           costUsd: typeof p.costUsd === 'number' ? p.costUsd : null,
           eventId: e.eventId,
         });
+        // Only after the record was created (unique on eventId), so a replayed event is not counted twice.
+        if (num(p.costUsd) || num(p.inputTokens) || num(p.outputTokens)) {
+          await Task.updateOne({ _id: e.taskId }, { $inc: { 'usage.costUsd': num(p.costUsd), 'usage.inputTokens': num(p.inputTokens), 'usage.outputTokens': num(p.outputTokens) } });
+          spent.add(String(e.taskId));
+        }
       } catch (err) {
         if (!isDuplicateKeyError(err)) throw err;
       }
@@ -715,6 +853,23 @@ export class TaskService {
       if (e.type === 'FallbackStarted') this.metrics.fallbackCount.inc({ from_provider: String(p.fromProviderId ?? ''), to_provider: String(p.providerId ?? '') });
       if (e.type === 'AgentExited') this.metrics.agentSessions.inc({ agent: String(p.agentId ?? 'unknown') });
     }
+    for (const taskId of spent) await this.enforceBudget(taskId).catch((e) => captureError(e, { tags: { component: 'tasks.budget' } }));
+  }
+
+  /**
+   * After new spend on a task: budget notices, and a stop when a limit is reached. A task that is being
+   * verified keeps going (verification costs nothing and may complete it); it is stopped if it asks for
+   * another agent session.
+   */
+  private async enforceBudget(taskId: string) {
+    if (!this.budgets) return;
+    const task = (await Task.findById(taskId).lean()) as TaskLean | null;
+    if (!task) return;
+    const layers = await this.policyLayersFor(task);
+    await this.budgets.notifyThresholds(task as never, layers);
+    if (!LEASED_TASK_STATUSES.includes(task.status) || task.status === 'VERIFYING') return;
+    const block = await this.budgets.check(task as never, layers);
+    if (block) await this.stopForBudget(task, block);
   }
 
   private async releaseTaskSlots(task: TaskLean) {
@@ -755,6 +910,7 @@ export class TaskService {
         this.metrics.taskExecutionSeconds.observe((task.activeMs ?? 0) / 1000);
         await this.recordEvent(task, 'TaskCompleted', {});
         await notify('task.completed', `Task completed: ${task.title}`);
+        await this.settleAttempts(task);
         await this.cascadeDependents(task);
         break;
       case 'FAILED':

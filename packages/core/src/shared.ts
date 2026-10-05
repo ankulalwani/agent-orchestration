@@ -19,3 +19,5 @@ export * from './taxonomy.js';
 export * from './readiness.js';
 export * from './features.js';
 export * from './repositories.js';
+export * from './cron.js';
+export * from './task-template.js';

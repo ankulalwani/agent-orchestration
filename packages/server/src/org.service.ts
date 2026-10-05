@@ -7,7 +7,7 @@ import { audit } from './audit.js';
 export class OrgService {
   /** Resolve the caller's role in an org. This is the tenant-isolation gate (spec §18, §57). */
   async resolveActor(userId: string, organizationId: string, correlationId: string, ip?: string | null, platformAdmin?: boolean): Promise<Actor> {
-    const m = await Membership.findOne({ userId: oid(userId, 'User'), organizationId: oid(organizationId, 'Organization') }).lean();
+    const m = await Membership.findOne({ userId: oid(userId, 'User'), organizationId: oid(organizationId, 'Organization'), suspended: { $ne: true } }).lean();
     // Non-members get NOT_FOUND, not FORBIDDEN, so org ids can't be probed.
     if (!m) throw new AppError('NOT_FOUND', 'Organization not found');
     return { userId, organizationId, role: m.role, correlationId, ip, platformAdmin };
@@ -67,7 +67,7 @@ export class OrgService {
       .filter((m) => byId.has(String(m.userId)))
       .map((m) => {
         const u = byId.get(String(m.userId))!;
-        return { userId: String(u._id), email: u.email, name: u.name, role: m.role, joinedAt: m.createdAt.toISOString(), mfaEnabled: Boolean(u.mfa?.enabled), inOtherOrganizations: elsewhere.has(String(u._id)) };
+        return { userId: String(u._id), email: u.email, name: u.name, role: m.role, joinedAt: m.createdAt.toISOString(), mfaEnabled: Boolean(u.mfa?.enabled), inOtherOrganizations: elsewhere.has(String(u._id)), suspended: Boolean(m.suspended) };
       });
   }
 

@@ -158,5 +158,7 @@ export function workerSocket(app: FastifyInstance, s: Services, prefix: string) 
     for (const raw of pending.splice(0)) await handle(raw);
     // Offer any tasks already waiting for this worker.
     for (const taskId of await s.tasks.offersFor(worker)) send({ type: 'task.offer', taskId });
+    // And the clones asked of it while it was offline.
+    await s.discovery.deliverQueuedClones({ ...worker, correlationId: req.correlationId }).catch((e) => log.warn({ err: String(e), workerId: worker.workerId }, 'queued clones were not sent'));
   });
 }

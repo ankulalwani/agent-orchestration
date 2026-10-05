@@ -68,3 +68,42 @@ POSTed there when the task completes, fails or needs attention:
   for a bad signature. An integration that is turned off acknowledges deliveries and ignores them.
 - The task shows where it came from (with a link), and the integration list shows the last delivery and
   its result. Creating a task is recorded in the audit log.
+
+## Jira
+
+In Jira: **Settings → System → WebHooks → Create a WebHook**, with the integration's URL and secret, and
+the events *Issue created*, *Issue updated* and *Comment created*. Deliveries must carry a valid
+`X-Hub-Signature` (Jira signs with the secret).
+
+- **Issues** become tasks when they are created with the configured label, or when the label is added
+  later. With an empty label, every new issue becomes a task. Descriptions in Atlassian Document Format
+  are read as text.
+- **Comments** starting with the command create a task. Comments by apps are ignored.
+- **Replies (optional):** set the Jira site URL and *Token secret for replies* to an organization secret
+  holding `email:API token` (Jira Cloud) or a personal access token (Data Center).
+
+## Linear
+
+In Linear: **Settings → API → Webhooks → New webhook**, with the integration's URL and the data change
+events *Issues* and *Comments*. Linear chooses the signing secret and shows it: paste it into the
+integration's setup card (**Signing secret from Linear**). Deliveries are refused until you do. They must
+carry a valid `Linear-Signature`.
+
+- **Issues** become tasks when they are created with the configured label, or when the label is added.
+- **Comments** starting with the command create a task. Comments by integrations are ignored.
+- **Replies (optional):** *Token secret for replies* names an organization secret with a Linear API key.
+
+## Follow-ups on review feedback
+
+GitHub only. Set **Follow up on review feedback** on the integration, and add the webhook event *Pull
+request reviews*.
+
+- A review that **requests changes** on a pull request that one of the project's tasks opened creates a
+  follow-up task on the same branch. With *On every review with a text*, comment reviews do too.
+  Approvals, reviews by bots and pull requests no task opened are ignored.
+- The task's prompt holds the review's text. With a reply token, the review's comments on lines are
+  added (`path:line: comment`).
+- A **comment command** on such a pull request also follows up on its branch, instead of starting a new
+  branch.
+- The follow-up pushes to the pull request it came from; see
+  [Follow-ups](../operations/README.md#follow-ups).

@@ -165,3 +165,102 @@
     }
   }
 }
+
+/* Column chart (Insights). Marks carry color; text stays in text tokens. */
+/* Series colors, checked per theme for lightness, contrast and color-vision separation. */
+:root {
+  --chart-done: #7b85f5;
+  --chart-failed: #e5595d;
+}
+:root[data-theme='light'] {
+  --chart-done: #474fd6;
+  --chart-failed: #c0282d;
+}
+.chart {
+  margin: 0;
+}
+.chart-legend {
+  display: flex;
+  gap: var(--space-4);
+  color: var(--text-2);
+  margin-bottom: var(--space-3);
+}
+.chart-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+.chart-plot {
+  position: relative;
+  height: 200px;
+  margin-left: 32px;
+}
+.chart-grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+.chart-tick {
+  position: absolute;
+  right: 100%;
+  top: -0.7em;
+  padding-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-columns {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+.chart-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+}
+.chart-columns .chart-slot:hover,
+.chart-columns .chart-slot:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.chart-stack {
+  width: min(24px, 70%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.chart-bar {
+  min-height: 2px;
+}
+.chart-bar:first-child {
+  border-radius: 4px 4px 0 0;
+}
+.chart-tooltip {
+  position: absolute;
+  /* Above the plot, so it never covers neighbouring columns. */
+  bottom: calc(100% + 4px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+}
+.chart-axis {
+  display: flex;
+  margin: 6px 0 0 32px;
+}
+.chart-axis .chart-slot {
+  overflow: visible;
+}

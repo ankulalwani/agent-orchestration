@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import {
   acceptInvitationRequest,
+  addSecurityKeyRequest,
+  securityKeyDto,
   addMemberRequest,
   acceptDiscoveredRequest,
   discoveredSuggestionDto,
@@ -11,8 +13,27 @@ import {
   invitationPreviewDto,
   approvePairingRequest,
   authResponse,
+  analyticsDto,
+  analyticsQuery,
+  budgetStatusDto,
+  chatChannelDto,
+  chatIdentityRequest,
+  createChatChannelRequest,
+  updateChatChannelRequest,
   createOrganizationRequest,
   createProjectRequest,
+  createScheduleRequest,
+  createStackRequest,
+  updateStackRequest,
+  installStackRequest,
+  installStackResponse,
+  stackDto,
+  createTaskTemplateRequest,
+  updateTaskTemplateRequest,
+  useTaskTemplateRequest,
+  taskTemplateDto,
+  scheduleDto,
+  updateScheduleRequest,
   createTaskRequest,
   createTeamRequest,
   cursorQuery,
@@ -66,13 +87,14 @@ import {
   githubSyncResponse,
   updateIntegrationRequest,
   setFeatureFlagRequest,
+  setIntegrationSecretRequest,
   updateProjectRequest,
   updateRepositoryRequest,
   updateWorkerRequest,
   verifyEmailRequest,
   workerDto,
 } from '@ao/contracts';
-import { AppError } from '@ao/core';
+import { AppError, ROLES } from '@ao/core';
 import { publicCatalogEnabled, requirePermission, requirePlatformAdmin, serverOverview, type Services } from '@ao/server';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { createRouter } from '../http.js';
@@ -104,7 +126,7 @@ export function userRoutes(route: Route, s: Services) {
     deliverSession(req, reply, await s.auth.register(body, meta(req)), secure),
   );
   route({ method: 'POST', path: '/auth/login', summary: 'Sign in', tag: 'auth', auth: 'none', body: loginRequest, response: authResponse }, async ({ req, reply, body }) =>
-    deliverSession(req, reply, await s.auth.login(body.email, body.password, meta(req), body.mfaCode), secure),
+    deliverSession(req, reply, await s.auth.login(body.email, body.password, meta(req), body.securityKey ? { securityKey: body.securityKey } : body.mfaCode), secure),
   );
   route({ method: 'POST', path: '/auth/refresh', summary: 'Rotate refresh token', tag: 'auth', auth: 'none', body: refreshRequest.partial(), response: authResponse }, async ({ req, reply, body }) => {
     const fromCookie = req.headers['x-client'] === 'web' ? req.cookies[REFRESH_COOKIE] : undefined;
@@ -150,13 +172,22 @@ export function userRoutes(route: Route, s: Services) {
     async ({ reply, params, query }) => reply.redirect(await s.oauth.callback(params.provider!, query), 302),
   );
   route({ method: 'POST', path: '/auth/oauth/complete', summary: 'Exchange the sign-in ticket for a session', tag: 'auth', auth: 'none', body: oauthCompleteRequest, response: authResponse }, async ({ req, reply, body }) =>
-    deliverSession(req, reply, await s.oauth.complete(body.ticket, body.mfaCode, meta(req)), secure),
+    deliverSession(req, reply, await s.oauth.complete(body.ticket, body.securityKey ? { securityKey: body.securityKey } : body.mfaCode, meta(req)), secure),
   );
   route({ method: 'POST', path: '/me/oauth/:provider/link', summary: 'Start connecting a provider to your account (returns its URL)', tag: 'auth', auth: 'user' }, async ({ userId, params }) => ({
     url: await s.oauth.start(params.provider!, { linkUserId: userId, next: '/settings' }),
   }));
   route({ method: 'DELETE', path: '/me/identities/:provider', summary: 'Disconnect a provider from your account', tag: 'auth', auth: 'user' }, async ({ userId, params }) => {
     await s.oauth.unlink(userId, params.provider!);
+  });
+  // Security keys and passkeys (WebAuthn) as a second step. Signed-in sessions only, like the rest of two-factor setup.
+  route({ method: 'GET', path: '/me/security-keys', summary: 'Your security keys', tag: 'auth', auth: 'user', response: z.array(securityKeyDto) }, ({ userId }) => s.webauthn.list(userId));
+  route({ method: 'POST', path: '/me/security-keys/options', summary: 'Start adding a security key (options for the browser)', tag: 'auth', auth: 'user' }, ({ userId }) => s.webauthn.registrationOptions(userId));
+  route({ method: 'POST', path: '/me/security-keys', summary: 'Finish adding a security key', tag: 'auth', auth: 'user', body: addSecurityKeyRequest, response: securityKeyDto }, ({ userId, body }) =>
+    s.webauthn.register(userId, body.name, body.response),
+  );
+  route({ method: 'DELETE', path: '/me/security-keys/:id', summary: 'Remove a security key', tag: 'auth', auth: 'user' }, async ({ userId, params }) => {
+    await s.webauthn.remove(userId, params.id!);
   });
   route({ method: 'POST', path: '/me/mfa/setup', summary: 'Start two-factor setup (returns a new TOTP secret)', tag: 'auth', auth: 'user', response: mfaSetupResponse }, ({ userId }) =>
     s.auth.setupMfa(userId),
@@ -274,6 +305,18 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'POST', path: '/admin/registry/reclassify', summary: 'Re-run automatic categorization (stale packages, or all)', tag: 'admin', auth: 'user', body: z.object({ all: z.boolean().default(false) }) }, async ({ req, body }) =>
     s.registry.reclassify(registryAdmin(req), body.all),
   );
+  route({ method: 'POST', path: '/admin/registry/embed', summary: 'Embed package listings for semantic suggestions (needs an embeddings API)', tag: 'admin', auth: 'user' }, async ({ req }) => s.registry.embedAll(registryAdmin(req)));
+  route({ method: 'POST', path: '/admin/registry/stacks', summary: 'Create a stack offered to every organization (public packages only)', tag: 'admin', auth: 'user', body: createStackRequest, response: stackDto }, async ({ req, body, reply }) => {
+    const created = await s.stacks.createPlatform(registryAdmin(req), body);
+    reply.code(201);
+    return created;
+  });
+  route({ method: 'PATCH', path: '/admin/registry/stacks/:slug', summary: 'Change a platform stack', tag: 'admin', auth: 'user', body: updateStackRequest, response: stackDto }, async ({ req, params, body }) =>
+    s.stacks.updatePlatform(registryAdmin(req), params.slug!, body),
+  );
+  route({ method: 'DELETE', path: '/admin/registry/stacks/:slug', summary: 'Delete a platform stack', tag: 'admin', auth: 'user' }, async ({ req, params }) => {
+    await s.stacks.removePlatform(registryAdmin(req), params.slug!);
+  });
   // ── Public catalog (marketplace pages, sitemaps). Off unless PUBLIC_CATALOG / DEPLOYMENT_MODE=cloud. ──
   const catalogOn = (reply: FastifyReply) => {
     if (!publicCatalogEnabled(s.config)) throw new AppError('NOT_FOUND', 'Not found');
@@ -290,6 +333,14 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'GET', path: '/catalog/packages/:namespace/:name/related', summary: 'Public packages similar to one package', tag: 'registry', auth: 'none' }, async ({ reply, params }) => {
     catalogOn(reply);
     return s.registry.related(null, params.namespace!, params.name!);
+  });
+  route({ method: 'GET', path: '/catalog/stacks', summary: 'Public stacks: packages that belong together', tag: 'registry', auth: 'none', response: z.array(stackDto) }, async ({ reply }) => {
+    catalogOn(reply);
+    return s.stacks.list(null);
+  });
+  route({ method: 'GET', path: '/catalog/stacks/:slug', summary: 'One public stack with its packages', tag: 'registry', auth: 'none', response: stackDto }, async ({ reply, params }) => {
+    catalogOn(reply);
+    return s.stacks.get(null, params.slug!);
   });
   route({ method: 'GET', path: '/catalog/facets', summary: 'Categories and technologies with package counts', tag: 'registry', auth: 'none', query: facetsQuery, response: facetsDto }, async ({ reply, query }) => {
     catalogOn(reply);
@@ -380,9 +431,30 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'POST', path: '/orgs/:orgId/integrations', summary: 'Create an integration; the webhook secret is returned once', tag: 'integrations', auth: 'org', permission: 'settings.manage', body: createIntegrationRequest }, ({ actor, body }) => s.integrations.create(actor, body));
   route({ method: 'PATCH', path: '/orgs/:orgId/integrations/:id', summary: 'Change an integration', tag: 'integrations', auth: 'org', permission: 'settings.manage', body: updateIntegrationRequest }, ({ actor, params, body }) => s.integrations.update(actor, params.id!, body));
   route({ method: 'POST', path: '/orgs/:orgId/integrations/:id/rotate-secret', summary: 'Replace the webhook secret; the new one is returned once', tag: 'integrations', auth: 'org', permission: 'settings.manage' }, ({ actor, params }) => s.integrations.rotateSecret(actor, params.id!));
+  route({ method: 'PUT', path: '/orgs/:orgId/integrations/:id/secret', summary: 'Store the signing secret the other system shows (Linear)', tag: 'integrations', auth: 'org', permission: 'settings.manage', body: setIntegrationSecretRequest }, async ({ actor, params, body }) => {
+    await s.integrations.setSecret(actor, params.id!, body.secret);
+  });
   route({ method: 'DELETE', path: '/orgs/:orgId/integrations/:id', summary: 'Delete an integration', tag: 'integrations', auth: 'org', permission: 'settings.manage' }, async ({ actor, params }) => {
     await s.integrations.remove(actor, params.id!);
   });
+  // ── Chat channels (Slack, Microsoft Teams) ─────────────────────────────────
+  route({ method: 'GET', path: '/orgs/:orgId/chat-channels', summary: 'List chat channels', tag: 'chat', auth: 'org', permission: 'settings.manage', response: z.array(chatChannelDto) }, ({ actor }) => s.chat.list(actor));
+  route({ method: 'POST', path: '/orgs/:orgId/chat-channels', summary: 'Send notifications to a Slack or Microsoft Teams channel', tag: 'chat', auth: 'org', permission: 'settings.manage', body: createChatChannelRequest, response: chatChannelDto }, async ({ actor, body, reply }) => {
+    const created = await s.chat.create(actor, body);
+    reply.code(201);
+    return created;
+  });
+  route({ method: 'PATCH', path: '/orgs/:orgId/chat-channels/:id', summary: 'Change a chat channel', tag: 'chat', auth: 'org', permission: 'settings.manage', body: updateChatChannelRequest, response: chatChannelDto }, ({ actor, params, body }) =>
+    s.chat.update(actor, params.id!, body),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/chat-channels/:id/test', summary: 'Send a test message', tag: 'chat', auth: 'org', permission: 'settings.manage' }, ({ actor, params }) => s.chat.test(actor, params.id!));
+  route({ method: 'DELETE', path: '/orgs/:orgId/chat-channels/:id', summary: 'Delete a chat channel', tag: 'chat', auth: 'org', permission: 'settings.manage' }, async ({ actor, params }) => {
+    await s.chat.remove(actor, params.id!);
+  });
+  route({ method: 'GET', path: '/orgs/:orgId/chat-identity', summary: 'Your identity in the chat workspace of this organization', tag: 'chat', auth: 'org' }, ({ actor }) => s.chat.identity(actor));
+  route({ method: 'PUT', path: '/orgs/:orgId/chat-identity', summary: 'Link your Slack member ID, so your actions in Slack run with your role', tag: 'chat', auth: 'org', body: chatIdentityRequest }, ({ actor, body }) =>
+    s.chat.setIdentity(actor, body.slackUserId),
+  );
   route({ method: 'POST', path: '/orgs/:orgId/tasks/:id/apply-plan', summary: 'Create the tasks a completed plan proposes (idempotent)', tag: 'tasks', auth: 'org', permission: 'task.create' }, ({ actor, params }) => s.tasks.applyPlan(actor, params.id!));
   route({ method: 'POST', path: '/orgs/:orgId/members/:userId/reset-mfa', summary: "Turn off a member's two-factor authentication (only members of this organization alone)", tag: 'organizations', auth: 'org', permission: 'member.remove', body: resetMfaRequest }, async ({ actor, params, body }) => {
     await s.auth.resetMfaFor({ ...actor, platformAdmin: false }, params.userId!, body.reason);
@@ -410,6 +482,14 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'DELETE', path: '/orgs/:orgId/members/:userId', summary: 'Remove member', tag: 'organizations', auth: 'org', permission: 'member.remove' }, ({ actor, params }) =>
     s.orgs.removeMember(actor, params.userId!),
   );
+  // Provisioning from an identity provider (SCIM). The requests of the provider itself are under /scim/v2.
+  route({ method: 'GET', path: '/orgs/:orgId/scim', summary: 'User provisioning (SCIM): whether it is on, and its address', tag: 'organizations', auth: 'org', permission: 'settings.manage' }, ({ actor }) => s.scim.status(actor));
+  route({ method: 'POST', path: '/orgs/:orgId/scim/token', summary: 'Turn provisioning on or replace its token; the token is returned once', tag: 'organizations', auth: 'org', permission: 'settings.manage', body: z.object({ defaultRole: z.enum(ROLES).default('DEVELOPER') }) }, ({ actor, body }) =>
+    s.scim.createToken(actor, body.defaultRole),
+  );
+  route({ method: 'DELETE', path: '/orgs/:orgId/scim', summary: 'Turn provisioning off', tag: 'organizations', auth: 'org', permission: 'settings.manage' }, async ({ actor }) => {
+    await s.scim.disable(actor);
+  });
   route({ method: 'GET', path: '/orgs/:orgId/teams', summary: 'List teams', tag: 'organizations', auth: 'org' }, ({ actor }) => s.orgs.listTeams(actor));
   route({ method: 'POST', path: '/orgs/:orgId/teams', summary: 'Create team', tag: 'organizations', auth: 'org', permission: 'team.manage', body: createTeamRequest }, ({ actor, body }) =>
     s.orgs.createTeam(actor, body.name, body.memberIds),
@@ -445,6 +525,7 @@ export function userRoutes(route: Route, s: Services) {
     { method: 'POST', path: '/orgs/:orgId/projects/:projectId/repositories/:repositoryId/clone', summary: "Clone a repository into workers' projects folders", tag: 'projects', auth: 'org', permission: 'project.update', body: z.object({ workerIds: z.array(z.string()).min(1).max(50) }) },
     ({ actor, params, body }) => s.discovery.requestClone(actor, params.projectId!, params.repositoryId!, body.workerIds),
   );
+  route({ method: 'GET', path: '/orgs/:orgId/projects/:projectId/queued-clones', summary: 'Clones waiting for offline workers', tag: 'projects', auth: 'org' }, ({ actor, params }) => s.discovery.queuedClones(actor, params.projectId!));
   route({ method: 'POST', path: '/orgs/:orgId/projects/:projectId/repositories/:repositoryId/split', summary: 'Move a repository into a new project of its own', tag: 'projects', auth: 'org', permission: 'project.update', response: projectDto }, ({ actor, params }) =>
     s.projects.splitRepository(actor, params.projectId!, params.repositoryId!),
   );
@@ -480,6 +561,42 @@ export function userRoutes(route: Route, s: Services) {
     if (!obj) throw new AppError('NOT_FOUND', 'Artifact not found');
     reply.header('content-type', obj.contentType).header('content-disposition', `inline; filename="${params.name}"`).header('x-content-type-options', 'nosniff');
     return reply.send(obj.body);
+  });
+
+  // ── Task templates ─────────────────────────────────────────────────────────
+  route({ method: 'GET', path: '/orgs/:orgId/task-templates', summary: 'List task templates (all, or those offered for one project)', tag: 'templates', auth: 'org', query: z.object({ projectId: z.string().optional() }), response: z.array(taskTemplateDto) }, ({ actor, query }) =>
+    s.taskTemplates.list(actor, query.projectId),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/task-templates', summary: 'Create a task template with {{variable}} placeholders', tag: 'templates', auth: 'org', permission: 'project.update', body: createTaskTemplateRequest, response: taskTemplateDto }, async ({ actor, body, reply }) => {
+    const created = await s.taskTemplates.create(actor, body);
+    reply.code(201);
+    return created;
+  });
+  route({ method: 'PATCH', path: '/orgs/:orgId/task-templates/:id', summary: 'Change a task template', tag: 'templates', auth: 'org', permission: 'project.update', body: updateTaskTemplateRequest, response: taskTemplateDto }, ({ actor, params, body }) =>
+    s.taskTemplates.update(actor, params.id!, body),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/task-templates/:id/use', summary: 'Create a task from a template', tag: 'templates', auth: 'org', permission: 'task.create', body: useTaskTemplateRequest, response: taskDto }, async ({ actor, params, body, reply }) => {
+    const task = await s.taskTemplates.use(actor, params.id!, body);
+    reply.code(201);
+    return task;
+  });
+  route({ method: 'DELETE', path: '/orgs/:orgId/task-templates/:id', summary: 'Delete a task template', tag: 'templates', auth: 'org', permission: 'project.update' }, async ({ actor, params }) => {
+    await s.taskTemplates.remove(actor, params.id!);
+  });
+
+  // ── Scheduled tasks ────────────────────────────────────────────────────────
+  route({ method: 'GET', path: '/orgs/:orgId/schedules', summary: 'List scheduled tasks', tag: 'schedules', auth: 'org', response: z.array(scheduleDto) }, ({ actor }) => s.schedules.list(actor));
+  route({ method: 'POST', path: '/orgs/:orgId/schedules', summary: 'Create a scheduled task (cron expression in a time zone)', tag: 'schedules', auth: 'org', permission: 'project.update', body: createScheduleRequest, response: scheduleDto }, async ({ actor, body, reply }) => {
+    const created = await s.schedules.create(actor, body);
+    reply.code(201);
+    return created;
+  });
+  route({ method: 'PATCH', path: '/orgs/:orgId/schedules/:id', summary: 'Change, enable or disable a scheduled task', tag: 'schedules', auth: 'org', permission: 'project.update', body: updateScheduleRequest, response: scheduleDto }, ({ actor, params, body }) =>
+    s.schedules.update(actor, params.id!, body),
+  );
+  route({ method: 'POST', path: '/orgs/:orgId/schedules/:id/run', summary: "Create the schedule's task now", tag: 'schedules', auth: 'org', permission: 'task.create', response: taskDto }, ({ actor, params }) => s.schedules.runNow(actor, params.id!));
+  route({ method: 'DELETE', path: '/orgs/:orgId/schedules/:id', summary: 'Delete a scheduled task', tag: 'schedules', auth: 'org', permission: 'project.update' }, async ({ actor, params }) => {
+    await s.schedules.remove(actor, params.id!);
   });
 
   // ── Workers (user-facing) ──────────────────────────────────────────────────
@@ -521,6 +638,23 @@ export function userRoutes(route: Route, s: Services) {
   // Marketplace (packages) for signed-in members: public packages plus their own and their organization's.
   route({ method: 'GET', path: '/orgs/:orgId/registry/packages', summary: 'Search the marketplace (curated first)', tag: 'registry', auth: 'org', query: catalogQuery, response: catalogPageDto }, ({ actor, query }) =>
     s.registry.search(actor, query),
+  );
+  // Stacks: several packages installed in one step.
+  route({ method: 'GET', path: '/orgs/:orgId/registry/stacks', summary: 'Stacks: the organization’s own, then the platform’s', tag: 'registry', auth: 'org', permission: 'capability.read', response: z.array(stackDto) }, ({ actor }) => s.stacks.list(actor));
+  route({ method: 'GET', path: '/orgs/:orgId/registry/stacks/:slug', summary: 'One stack with its packages', tag: 'registry', auth: 'org', permission: 'capability.read', response: stackDto }, ({ actor, params }) => s.stacks.get(actor, params.slug!));
+  route({ method: 'POST', path: '/orgs/:orgId/registry/stacks', summary: 'Create a stack of this organization', tag: 'registry', auth: 'org', permission: 'capability.manage', body: createStackRequest, response: stackDto }, async ({ actor, body, reply }) => {
+    const created = await s.stacks.create(actor, body);
+    reply.code(201);
+    return created;
+  });
+  route({ method: 'PATCH', path: '/orgs/:orgId/registry/stacks/:slug', summary: 'Change a stack of this organization', tag: 'registry', auth: 'org', permission: 'capability.manage', body: updateStackRequest, response: stackDto }, ({ actor, params, body }) =>
+    s.stacks.update(actor, params.slug!, body),
+  );
+  route({ method: 'DELETE', path: '/orgs/:orgId/registry/stacks/:slug', summary: 'Delete a stack of this organization', tag: 'registry', auth: 'org', permission: 'capability.manage' }, async ({ actor, params }) => {
+    await s.stacks.remove(actor, params.slug!);
+  });
+  route({ method: 'POST', path: '/orgs/:orgId/registry/stacks/:slug/install', summary: 'Install every package of a stack at one scope', tag: 'registry', auth: 'org', body: installStackRequest, response: installStackResponse }, ({ actor, params, body }) =>
+    s.stacks.install(actor, params.slug!, body),
   );
   route({ method: 'GET', path: '/orgs/:orgId/registry/facets', summary: 'Categories and technologies with package counts', tag: 'registry', auth: 'org', query: facetsQuery, response: facetsDto }, ({ query }) =>
     s.registry.facets(query.type),
@@ -569,6 +703,10 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'GET', path: '/orgs/:orgId/usage', summary: 'AI usage aggregates', tag: 'usage', auth: 'org', query: z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }) }, ({ actor, query }) =>
     s.queries.usage(actor, query.days),
   );
+  route({ method: 'GET', path: '/orgs/:orgId/analytics', summary: 'Outcomes of finished tasks: success rate, cost and time, by agent, model and project', tag: 'usage', auth: 'org', query: analyticsQuery, response: analyticsDto }, ({ actor, query }) =>
+    s.queries.analytics(actor, query),
+  );
+  route({ method: 'GET', path: '/orgs/:orgId/budget', summary: "This month's spend against the budget limits of the execution policy", tag: 'usage', auth: 'org', response: budgetStatusDto }, ({ actor }) => s.budgets.status(actor));
   route({ method: 'GET', path: '/orgs/:orgId/providers', summary: 'Organization provider configs', tag: 'providers', auth: 'org' }, ({ actor }) => s.queries.listProviders(actor));
   route(
     {

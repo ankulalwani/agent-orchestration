@@ -2,7 +2,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CircleCheck, Cpu, Play, Server } from 'lucide-react';
 import type { OverviewDto, TaskDto, WorkerDto } from '@ao/contracts';
-import { Badge, Button, Card, EmptyState, Skeleton, SlotMeter, Stat, StatStrip, cn, timeAgo } from '@ao/ui';
+import { Alert, Badge, Button, Card, EmptyState, Skeleton, SlotMeter, Stat, StatStrip, cn, timeAgo } from '@ao/ui';
+import { useBudget } from '../components/BudgetCard';
 import { get } from '../lib/api';
 import { useOrgId } from '../lib/session';
 import { RunsOn, TaskStatusBadge, humanize } from '../lib/format';
@@ -19,6 +20,7 @@ export function OverviewPage() {
     refetchInterval: 15_000,
   });
   const workers = useQuery({ queryKey: ['workers', orgId], queryFn: () => get<WorkerDto[]>(`/orgs/${orgId}/workers`), refetchInterval: 30_000 });
+  const budget = useBudget();
 
   if (overview.isLoading) {
     return (
@@ -33,6 +35,7 @@ export function OverviewPage() {
   if (!o) return <EmptyState title="Could not load the overview">The server did not answer. This page retries on its own.</EmptyState>;
   const firstRun = workers.isSuccess && !workers.data.length;
   const slots = (workers.data ?? []).filter((w) => w.status === 'ONLINE').reduce((a, w) => ({ used: a.used + w.activeTaskIds.length, max: a.max + w.maxConcurrentTasks }), { used: 0, max: 0 });
+  const over = [...(budget.data?.organization.state === 'exceeded' ? ['the organization'] : []), ...(budget.data?.projects.filter((p) => p.state === 'exceeded').map((p) => p.name) ?? [])];
 
   return (
     <div className="flex flex-col gap-4">
@@ -47,6 +50,11 @@ export function OverviewPage() {
             <Link to="/welcome">Get started</Link>
           </Button>
         </div>
+      )}
+      {over.length > 0 && (
+        <Alert tone="danger">
+          Budget reached for {over.join(', ')}. Tasks stop before their next agent session and queued tasks wait. <Link to="/settings?tab=policy">Review the budget</Link>
+        </Alert>
       )}
 
       <StatStrip>

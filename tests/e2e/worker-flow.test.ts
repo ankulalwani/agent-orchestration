@@ -584,6 +584,141 @@ describe('worker end-to-end', () => {
     }
   }, 120_000);
 
+  it('CI as verification: failed checks of the pushed commit go back to the agent; the fix joins the same pull request', async () => {
+    const http = await import('node:http');
+    const calls: Array<{ method: string; url: string }> = [];
+    const shas: string[] = [];
+    let polls = 0;
+    const api = http.createServer((req, res) => {
+      calls.push({ method: req.method!, url: req.url! });
+      const json = (body: unknown, code = 200) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+      req.resume();
+      req.on('end', () => {
+        const checks = /^\/repos\/acme\/site\/commits\/([a-f0-9]+)\/check-runs/.exec(req.url!);
+        if (req.method === 'POST' && req.url === '/repos/acme/site/pulls') return json({ html_url: 'https://github.com/acme/site/pull/43' }, 201);
+        if (checks) {
+          const sha = checks[1]!;
+          if (!shas.includes(sha)) shas.push(sha);
+          // The first commit: still running once, then a failed job. The second commit passes.
+          if (shas.indexOf(sha) === 0) return json({ check_runs: [{ id: 7, name: 'build', status: ++polls < 2 ? 'in_progress' : 'completed', conclusion: 'failure', html_url: 'https://github.com/acme/site/runs/7', output: { title: 'Tests failed', summary: '1 failing' }, app: { slug: 'github-actions' } }, { id: 8, name: 'lint', status: 'completed', conclusion: 'success', html_url: null, output: {} }] });
+          return json({ check_runs: [{ id: 9, name: 'build', status: 'completed', conclusion: 'success', html_url: 'https://github.com/acme/site/runs/9', output: {} }] });
+        }
+        if (/\/commits\/[a-f0-9]+\/status$/.test(req.url!)) return json({ statuses: [] });
+        if (req.url === '/repos/acme/site/actions/jobs/7/logs') return res.writeHead(200, { 'content-type': 'text/plain' }).end('npm test\nFAIL checkout.spec.ts MARKER-ci-log\nError: expected 200, got 500');
+        return json({ message: 'Not Found' }, 404);
+      });
+    });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    const g = (...a: string[]) => runCommand('git', a, { cwd: repo });
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-e2e-ci-remote-'));
+    await runCommand('git', ['init', '-q', '--bare', bare]);
+    const ci = { enabled: true, timeoutMs: 10 * 60_000, pollMs: 5000, startGraceMs: 60_000, required: true };
+    const verification = { enabled: true, autoDetect: false, steps: [{ kind: 'test', name: 'check', command: [process.execPath, 'check.js'], required: true, timeoutMs: 20_000 }], ci };
+    try {
+      await resetRepo();
+      await g('remote', 'add', 'origin', 'https://github.com/acme/site.git');
+      // An earlier test may have pointed this URL at its own bare repository.
+      for (const line of (await g('config', '--get-regexp', '^url\\..*\\.insteadof$')).stdout.split('\n').filter(Boolean)) await g('config', '--unset-all', line.split(' ')[0]!);
+      await g('config', `url.${bare.split(path.sep).join('/')}.insteadOf`, 'https://github.com/acme/site.git');
+      await worker.credentials.set('git-hosting:github.com', 'ghp_e2e_token');
+      worker.config.update((c) => ({ ...c, git: { ...c.git, hosting: [{ host: 'github.com', kind: 'github', apiBaseUrl: `http://127.0.0.1:${(api.address() as { port: number }).port}` }] } }));
+      const t = await createTask('ship with CI', 'mocka/scenario:success', { git: { policy: 'PULL_REQUEST', workOnBranch: true }, verification });
+      const done = await waitFor(() => getTask(t.id), settled, 90_000, 'CI task');
+      expect(done.status, done.statusReason ?? '').toBe('COMPLETED');
+      expect(done.remediationCount).toBe(1);
+      expect(shas).toHaveLength(2);
+      expect(done.gitResult).toMatchObject({ pushed: true, commit: expect.stringMatching(new RegExp(`^${shas[1]}`)), pullRequestUrl: 'https://github.com/acme/site/pull/43', ci: { state: 'success', checks: [{ name: 'build', state: 'success', url: 'https://github.com/acme/site/runs/9' }] } });
+      expect(done.gitResult!.filesChanged.map((f) => f.path)).toContain('mock-output.txt');
+      // One pull request: the fix was pushed to its branch.
+      expect(calls.filter((c) => c.method === 'POST')).toEqual([{ method: 'POST', url: '/repos/acme/site/pulls' }]);
+      expect((await runCommand('git', ['rev-parse', done.gitResult!.branch!], { cwd: bare })).stdout.trim()).toBe(shas[1]);
+      // The agent was told what failed, with the end of the job's log.
+      const out = fs.readFileSync(path.join(repo, 'mock-output.txt'), 'utf8');
+      expect(out).toContain('prompt-has-failures:true');
+      expect(out).toContain('prompt-markers:MARKER-ci-log');
+      await worker.flush();
+      const types = (await s.tasks.events(owner, t.id, { limit: 500 })).items.map((e) => e.type);
+      expect(types.filter((x) => x.startsWith('CiChecks'))).toEqual(['CiChecksStarted', 'CiChecksFailed', 'CiChecksStarted', 'CiChecksPassed']);
+
+      // Checks that cannot be read (here: no token for the host): with `required` the task waits for a
+      // person, without it that is a warning.
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      worker.config.update((c) => ({ ...c, git: { ...c.git, hosting: [] } }));
+      const none = { ...verification, ci: { ...ci, startGraceMs: 300 } };
+      const strict = await createTask('no checks strict', 'mockb/scenario:success', { git: { policy: 'COMMIT_AND_PUSH', workOnBranch: true }, verification: none });
+      const stopped = await waitFor(() => getTask(strict.id), settled, 90_000, 'strict CI task');
+      expect(stopped.status).toBe('RECOVERY_REQUIRED');
+      expect(stopped.statusReason).toMatch(/CI checks of [a-f0-9]{7}: this worker has no Git hosting token/);
+      expect(stopped.gitStatus).toBe('PUSHED');
+
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      const lenient = await createTask('no checks lenient', 'mockb/scenario:success', { git: { policy: 'COMMIT_AND_PUSH', workOnBranch: true }, verification: { ...none, ci: { ...none.ci, required: false } } });
+      const passed = await waitFor(() => getTask(lenient.id), settled, 90_000, 'lenient CI task');
+      expect(passed.status).toBe('COMPLETED');
+      expect(passed.gitResult?.warnings?.join(' ')).toMatch(/no Git hosting token/);
+      expect(passed.gitResult?.ci).toMatchObject({ state: 'unknown' });
+    } finally {
+      api.close();
+      await g('remote', 'remove', 'origin');
+      await g('checkout', '-q', 'main');
+      worker.config.update((c) => ({ ...c, git: { ...c.git, hosting: [] } }));
+    }
+  }, 240_000);
+
+  it('follow-up: a task that continues another works on its branch and pushes to its pull request', async () => {
+    const http = await import('node:http');
+    const posts: string[] = [];
+    const api = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        if (req.method === 'POST') posts.push(req.url!);
+        res.writeHead(201, { 'content-type': 'application/json' }).end('{"html_url":"https://github.com/acme/site/pull/44"}');
+      });
+    });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    const g = (...a: string[]) => runCommand('git', a, { cwd: repo });
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-e2e-followup-remote-'));
+    await runCommand('git', ['init', '-q', '--bare', bare]);
+    try {
+      await resetRepo();
+      await g('remote', 'add', 'origin', 'https://github.com/acme/site.git');
+      for (const line of (await g('config', '--get-regexp', '^url\\..*\\.insteadof$')).stdout.split('\n').filter(Boolean)) await g('config', '--unset-all', line.split(' ')[0]!);
+      await g('config', `url.${bare.split(path.sep).join('/')}.insteadOf`, 'https://github.com/acme/site.git');
+      await worker.credentials.set('git-hosting:github.com', 'ghp_e2e_token');
+      worker.config.update((c) => ({ ...c, git: { ...c.git, hosting: [{ host: 'github.com', kind: 'github', apiBaseUrl: `http://127.0.0.1:${(api.address() as { port: number }).port}` }] } }));
+      const created = await createTask('add discounts', 'mocka/scenario:success', { git: { policy: 'PULL_REQUEST', workOnBranch: true } });
+      const first = await waitFor(() => getTask(created.id), settled, 60_000, 'first task');
+      expect(first.gitResult).toMatchObject({ pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/44' });
+      const branch = first.gitResult!.branch!;
+
+      // Someone pushed a commit to the pull request's branch in the meantime, and the checkout went back to main.
+      const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-e2e-followup-clone-'));
+      await runCommand('git', ['clone', '-q', '--branch', branch, bare, other]);
+      fs.writeFileSync(path.join(other, 'REVIEWER.md'), 'a suggestion applied in the browser\n');
+      for (const a of [['add', '.'], ['-c', 'user.email=r@example.com', '-c', 'user.name=R', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'apply suggestion'], ['push', '-q', 'origin', branch]]) await runCommand('git', a, { cwd: other });
+      const reviewerCommit = (await runCommand('git', ['rev-parse', 'HEAD'], { cwd: other })).stdout.trim();
+      await g('checkout', '-q', 'main');
+
+      const t = await s.tasks.create(owner, { projectId, title: 'address the review', prompt: 'Do it', priority: 'NORMAL', dependencies: [], requirements: {}, capabilityIds: [], continuesTaskId: first.id, policy: { models: { preferred: [{ providerId: 'mocka', modelId: 'scenario:success' }] }, verification: { enabled: true, autoDetect: false, steps: [{ kind: 'test', name: 'check', command: [process.execPath, 'check.js'], required: true, timeoutMs: 20_000 }] }, git: { policy: 'PULL_REQUEST', workOnBranch: true } } });
+      const done = await waitFor(() => getTask(t.id), settled, 60_000, 'follow-up task');
+      expect(done.status, done.statusReason ?? '').toBe('COMPLETED');
+      expect(done.gitResult).toMatchObject({ branch, pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/44' });
+      expect(done.gitStatus).toBe('PR_OPENED');
+      expect(posts).toEqual(['/repos/acme/site/pulls']); // the pull request was opened once, by the first task
+      // The branch on the remote: the first task's commit, the reviewer's, then the follow-up's.
+      const history = (await runCommand('git', ['log', '--format=%H', '-3', branch], { cwd: bare })).stdout.trim().split('\n');
+      expect(history).toEqual([done.gitResult!.commit, reviewerCommit, first.gitResult!.commit]);
+      expect(fs.existsSync(path.join(repo, 'REVIEWER.md'))).toBe(true);
+    } finally {
+      api.close();
+      await g('remote', 'remove', 'origin');
+      await g('checkout', '-q', 'main');
+      worker.config.update((c) => ({ ...c, git: { ...c.git, hosting: [] } }));
+    }
+  }, 180_000);
+
   it('OS sandbox policy: required without a sandbox stops the task; with one, the agent runs inside it (SEC-014)', async () => {
     await resetRepo();
     const sandbox = { mode: 'required', network: false, writable: [], hidden: [] };

@@ -83,9 +83,16 @@ export async function api<T>(method: string, path: string, body?: unknown, heade
   return parse<T>(res);
 }
 
-/** Throws ApiError with code `MFA_REQUIRED` when the account needs a second factor; call again with `mfaCode`. */
-export async function login(email: string, password: string, mfaCode?: string) {
-  const s = await parse<AuthResponse>(await raw('POST', '/auth/login', { email, password, ...(mfaCode ? { mfaCode } : {}) }));
+/** The second step of a sign-in: a code, or a security key's answer to the challenge in `MFA_REQUIRED`'s context. */
+export type SecondFactor = string | { securityKey: unknown };
+const secondFactor = (f?: SecondFactor) => (!f ? {} : typeof f === 'string' ? { mfaCode: f } : { securityKey: f.securityKey });
+
+/**
+ * Throws ApiError with code `MFA_REQUIRED` when the account needs a second factor; call again with one.
+ * Its `context.securityKey` holds the options for a security key, when the account has any.
+ */
+export async function login(email: string, password: string, second?: SecondFactor) {
+  const s = await parse<AuthResponse>(await raw('POST', '/auth/login', { email, password, ...secondFactor(second) }));
   setSession(s);
   return s;
 }
@@ -97,8 +104,8 @@ export async function register(input: { email: string; password: string; name: s
 }
 
 /** Finishes an OAuth sign-in with the ticket from the callback; `MFA_REQUIRED` works as for `login`. */
-export async function completeOAuth(ticket: string, mfaCode?: string) {
-  const s = await parse<AuthResponse>(await raw('POST', '/auth/oauth/complete', { ticket, ...(mfaCode ? { mfaCode } : {}) }));
+export async function completeOAuth(ticket: string, second?: SecondFactor) {
+  const s = await parse<AuthResponse>(await raw('POST', '/auth/oauth/complete', { ticket, ...secondFactor(second) }));
   setSession(s);
   return s;
 }

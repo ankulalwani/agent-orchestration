@@ -354,8 +354,11 @@ export class TaskRun {
         if (result === 'stop') return;
         const v = await this.verify();
         if (v === 'passed') {
-          await this.finish();
-          return;
+          // Committing and pushing can send the task back to the agent: failed CI checks.
+          const f = await this.finish();
+          if (f === 'done' || f === 'stop') return;
+          verificationFailures = f;
+          continue;
         }
         if (v === 'stop') return;
         verificationFailures = v;
@@ -401,14 +404,21 @@ export class TaskRun {
     if (this.reattached) this.recovery('Worker restarted; continuing from last checkpoint');
 
     const isCode = (this.task.kind ?? 'code') === 'code';
-    const branch = this.policy.git.policy !== 'NONE' && this.policy.git.workOnBranch && isCode ? (this.local.branch ?? `${this.policy.git.branchPrefix}${slug(this.task.title)}-${this.taskId.slice(-6)}`) : null;
+    // A follow-up works on the branch of the task it continues, and adds to that task's pull request.
+    const continues = isCode && this.policy.git.policy !== 'NONE' ? (this.task.continues ?? null) : null;
+    const branch = continues
+      ? (this.local.branch ?? continues.branch)
+      : this.policy.git.policy !== 'NONE' && this.policy.git.workOnBranch && isCode
+        ? (this.local.branch ?? `${this.policy.git.branchPrefix}${slug(this.task.title)}-${this.taskId.slice(-6)}`)
+        : null;
+    if (continues?.pullRequestUrl && !this.local.pullRequests?.['']) this.local.pullRequests = { ...(this.local.pullRequests ?? {}), '': continues.pullRequestUrl };
     const git = this.newGit(this.cwd, primary.name);
     if (await git.isRepo()) {
       this.git = git;
       await git.excludeStateDir(`${STATE_DIR}/`);
       this.baseline = (this.local.baseline as Baseline | null) ?? (await git.baseline());
       if (branch) {
-        await git.ensureBranch(branch);
+        await git.ensureBranch(branch, { fromRemote: Boolean(continues) });
         this.local.branch = branch;
       }
       this.persist();
@@ -1102,10 +1112,19 @@ export class TaskRun {
     }
   }
 
-  /** Git policy + completion report + COMPLETED (spec §42, §45). */
-  private async finish() {
-    if (this.review) return this.finishReview();
-    if (this.planning) return this.finishPlan();
+  /**
+   * Git policy + completion report + COMPLETED (spec §42, §45). With `verification.ci`, the pushed
+   * commit's CI checks are awaited first; failed checks return their summary for the agent to fix.
+   */
+  private async finish(): Promise<'done' | 'stop' | string> {
+    if (this.review) {
+      await this.finishReview();
+      return 'done';
+    }
+    if (this.planning) {
+      await this.finishPlan();
+      return 'done';
+    }
     let gitResult: Record<string, unknown> | null = null;
     let gitStatus: 'NONE' | 'COMMITTED' | 'PUSHED' | 'PR_OPENED' | 'BLOCKED' | 'FAILED' = 'NONE';
     const agentReport = readAgentReport(this.stateRoot, this.taskId);
@@ -1131,7 +1150,9 @@ export class TaskRun {
             prBody: agentReport ?? this.task.originalPrompt,
             requirePushApproval: this.policy.requireApprovalFor.push,
             pushApproved,
+            existingPullRequestUrl: this.local.pullRequests?.[repository ?? ''] ?? null,
           });
+          if (r.pullRequestUrl) this.local.pullRequests = { ...(this.local.pullRequests ?? {}), [repository ?? '']: r.pullRequestUrl };
           const where = repository ? { repository } : {};
           if (r.commit) this.ev('GitCommitCreated', { commit: r.commit, branch: r.branch, files: r.filesChanged.length, ...where });
           if (r.pushed) this.ev('GitPushed', { branch: r.branch, ...where });
@@ -1159,10 +1180,93 @@ export class TaskRun {
         warnings: [...base.warnings, ...rest.flatMap((x) => x.r.warnings.map((w) => `${x.name}: ${w}`))],
         ...(rest.length ? { repositories: rest.map((x) => ({ name: x.name, branch: x.r.branch, commit: x.r.commit, pushed: x.r.pushed, pullRequestUrl: x.r.pullRequestUrl, filesChanged: x.r.filesChanged, blocked: x.r.blocked })) } : {}),
       };
+      // A task that commits again (after failed CI checks) reports the files of all its commits.
+      const files = new Map([...(this.local.committedFiles ?? []), ...(gitResult.filesChanged as Array<{ path: string; status: string }>)].map((f) => [f.path, f]));
+      gitResult.filesChanged = [...files.values()];
+      this.local.committedFiles = [...files.values()];
+      this.persist();
+      if (this.policy.verification.ci.enabled && this.git) {
+        const earlier = gitStatus === 'NONE' && Boolean(this.local.ciFailedCommit);
+        const ci = await this.ciGate(main?.r.pushed ? main.r.commit : null, gitResult, earlier ? 'PUSHED' : gitStatus);
+        if (ci !== 'passed') return ci;
+      }
     }
     const report = this.completionReport(gitResult, agentReport);
     await this.tr('COMPLETED', { verificationStatus: this.policy.verification.enabled ? 'PASSED' : 'SKIPPED', gitStatus, gitResult: gitResult as never, completionReport: report as never }, 'Completed and verified');
     await this.runPlugins('task.completed', { report: { summary: report.summary, filesChanged: report.filesChanged, verification: report.verification, git: gitResult } });
+    return 'done';
+  }
+
+  /**
+   * Waits for the CI checks of the commit that was pushed (`verification.ci`). 'passed': go on to
+   * complete; 'stop': the task waits for a person; otherwise the failed checks, for the agent.
+   * Without `required`, what cannot be decided (no checks, no access, a timeout) is a warning.
+   */
+  private async ciGate(commit: string | null, gitResult: Record<string, unknown>, gitStatus: string): Promise<'passed' | 'stop' | string> {
+    const ci = this.policy.verification.ci;
+    const warn = (text: string) => void (gitResult.warnings as string[]).push(text);
+    if (!commit) {
+      if (this.local.ciFailedCommit) {
+        await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED' }, `CI checks failed on ${this.local.ciFailedCommit.slice(0, 7)} and the agent pushed no further change`);
+        return 'stop';
+      }
+      warn('CI checks were not awaited: nothing was pushed');
+      return 'passed';
+    }
+    const short = commit.slice(0, 7);
+    const undecided = async (what: string): Promise<'passed' | 'stop'> => {
+      if (!ci.required) {
+        warn(`CI checks of ${short}: ${what}`);
+        gitResult.ci = { commit, state: 'unknown', checks: [] };
+        return 'passed';
+      }
+      await this.tr('RECOVERY_REQUIRED', { gitStatus: gitStatus as never, gitResult: gitResult as never }, `CI checks of ${short}: ${what}`);
+      return 'stop';
+    };
+    this.ev('CiChecksStarted', { commit });
+    await this.tr('VERIFYING', { gitStatus: gitStatus as never, gitResult: gitResult as never }, `Waiting for CI checks on ${short}`);
+    const t0 = Date.now();
+    for (;;) {
+      this.throwIfAborted();
+      let status;
+      try {
+        status = await this.git!.ciStatus(commit);
+      } catch (e) {
+        return undecided((e as Error).message);
+      }
+      if (!status) return undecided('this worker has no Git hosting token for the repository’s host, so the checks cannot be read');
+      const waited = Date.now() - t0;
+      if (status.state === 'none' && waited > this.scaled(ci.startGraceMs)) return undecided('no checks were reported for the commit');
+      if (status.state === 'success') {
+        this.ev('CiChecksPassed', { commit, checks: status.checks.map((c) => c.name) });
+        gitResult.ci = { commit, state: 'success', checks: status.checks.map((c) => ({ name: c.name, state: c.state, url: c.url })) };
+        this.local.ciFailedCommit = null;
+        this.persist();
+        return 'passed';
+      }
+      if (status.state === 'failure') {
+        const detailed = (await this.git!.ciStatus(commit, { logs: true }).catch(() => null)) ?? status;
+        const failed = detailed.checks.filter((c) => c.state === 'failure');
+        this.ev('CiChecksFailed', { commit, failed: failed.map((c) => c.name) });
+        this.local.ciFailedCommit = commit;
+        this.persist();
+        gitResult.ci = { commit, state: 'failure', checks: detailed.checks.map((c) => ({ name: c.name, state: c.state, url: c.url })) };
+        if (this.task.remediationCount >= this.policy.maxRemediationAttempts) {
+          await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED', gitStatus: gitStatus as never, gitResult: gitResult as never }, `CI checks still failing after ${this.policy.maxRemediationAttempts} remediation attempts`);
+          return 'stop';
+        }
+        this.ev('RemediationStarted', { attempt: this.task.remediationCount + 1, ci: true });
+        this.recovery(`CI checks failed on ${short}; remediating`);
+        await this.tr('RUNNING', { verificationStatus: 'FAILED', gitStatus: gitStatus as never, gitResult: gitResult as never, incRemediation: true }, 'CI checks failed; agent is fixing the failures');
+        return [
+          `The local checks passed and commit ${short} was pushed to branch ${this.local.branch ?? '(current)'}, but its CI checks failed:`,
+          ...failed.map((c) => [`- ${c.name}${c.summary ? `: ${c.summary}` : ''}${c.url ? ` (${c.url})` : ''}`, c.log ? this.scrub(c.log).split('\n').map((l) => `    ${l}`).join('\n') : ''].filter(Boolean).join('\n')),
+          'Fix the cause in the code. Your fix is committed and pushed to the same branch, and CI runs again.',
+        ].join('\n');
+      }
+      if (waited > this.scaled(ci.timeoutMs)) return undecided(`not finished after ${Math.round(ci.timeoutMs / 60_000)} minutes`);
+      await sleep(this.scaled(ci.pollMs));
+    }
   }
 
   // ── Reviews (FUT-003) ──────────────────────────────────────────────────────

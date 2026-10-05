@@ -28,6 +28,30 @@ const EVENT_TONE: Partial<Record<string, string>> = {
   SessionResumed: 'accent',
 };
 
+/** The attempts of a task that several agents try: who runs which, and which one won. */
+function Attempts({ task }: { task: TaskDto }) {
+  const orgId = useOrgId();
+  const group = task.attempt!;
+  const attempts = useQuery({ queryKey: ['tasks', orgId, 'attempts', group.groupId], queryFn: () => get<{ items: TaskDto[] }>(`/orgs/${orgId}/tasks?attemptGroupId=${group.groupId}&limit=10`), refetchInterval: 20_000 });
+  const items = [...(attempts.data?.items ?? [])].sort((a, b) => a.attempt!.index - b.attempt!.index);
+  return (
+    <Card title={`Attempt ${group.index + 1} of ${group.of}`} description="Several agents try this task. The first attempt that passes verification wins; the others are cancelled." padded={false}>
+      <ul className="divide-y divide-line" aria-label="Attempts">
+        {items.map((a) => (
+          <li key={a.id} className="flex items-center gap-3 px-4 py-2">
+            <span className="min-w-0 flex-1 truncate">
+              {a.id === task.id ? <strong>{a.attempt!.agentId}</strong> : <Link to={`/tasks/${a.id}`}>{a.attempt!.agentId}</Link>}
+              {a.id === task.id && <span className="text-xs text-fg-3"> · this attempt</span>}
+            </span>
+            {a.attempt!.winnerTaskId === a.id && <Badge tone="ok" plain>winner</Badge>}
+            <TaskStatusBadge status={a.status} />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 /** Task detail (spec §81) with live execution (§82) and controls (§83, §84). */
 export function TaskDetailPage() {
   const { taskId } = useParams();
@@ -74,7 +98,17 @@ export function TaskDetailPage() {
             <TaskStatusBadge status={t.status} />
             <Badge plain>{humanize(t.priority)}</Badge>
             {t.statusReason && <span className="text-xs text-fg-3">{t.statusReason}</span>}
-            {t.parentTaskId && (
+            {t.usage && (t.usage.costUsd > 0 || t.usage.inputTokens + t.usage.outputTokens > 0) && (
+              <span className="text-xs text-fg-3" title={`${t.usage.inputTokens} input and ${t.usage.outputTokens} output tokens, as reported by the agent`}>
+                spent {t.usage.costUsd > 0 ? `$${t.usage.costUsd.toFixed(2)}` : `${t.usage.inputTokens + t.usage.outputTokens} tokens`}
+              </span>
+            )}
+            {t.continues && (
+              <span className="text-xs text-fg-3">
+                follows up on <Link to={`/tasks/${t.continues.taskId}`}>a task</Link>, on branch <code>{t.continues.branch}</code>
+              </span>
+            )}
+            {t.parentTaskId && !t.continues && (
               <span className="text-xs text-fg-3">
                 part of <Link to={`/tasks/${t.parentTaskId}`}>a plan</Link>
               </span>
@@ -103,6 +137,11 @@ export function TaskDetailPage() {
               </>
             )}
             {active && <Button onClick={() => action.mutate({ action: 'restart' })}><RotateCcw aria-hidden="true" />Restart agent</Button>}
+            {t.status === 'COMPLETED' && (t.kind ?? 'code') === 'code' && t.gitResult?.branch && can('task.create') && (
+              <Button asChild title="A new task on this task's branch; it adds to the same pull request">
+                <Link to={`/tasks?new=1&continues=${t.id}`}>Follow up</Link>
+              </Button>
+            )}
             {!['COMPLETED', 'FAILED', 'CANCELLED'].includes(t.status) && (
               <Button variant="danger" onClick={() => confirm('Cancel this task? Work done so far is kept in the project directory.') && action.mutate({ action: 'cancel' })}><Ban aria-hidden="true" />Cancel</Button>
             )}
@@ -119,6 +158,7 @@ export function TaskDetailPage() {
         </Alert>
       )}
       {t.status === 'RECOVERY_REQUIRED' && <Alert tone="danger">Automatic recovery stopped: {t.statusReason}. Review the Recovery tab, then retry or restart.</Alert>}
+      {t.attempt && <Attempts task={t} />}
 
       <StatStrip>
         <Stat label="Worker" value={<span className="block truncate text-[15px] leading-7">{worker ? <Link to={`/workers/${worker.id}`} className="text-fg">{worker.name}</Link> : <span className="text-fg-3">Not claimed</span>}</span>} />

@@ -41,7 +41,7 @@ const toDto = (t: { _id: unknown; name: string; organizationId: unknown; role: s
  */
 export class ApiTokenService {
   async create(userId: string, input: { name: string; organizationId: string; role?: Role; expiresInDays?: number | null }) {
-    const m = await Membership.findOne({ userId: oid(userId), organizationId: oid(input.organizationId) }).lean();
+    const m = await Membership.findOne({ userId: oid(userId), organizationId: oid(input.organizationId), suspended: { $ne: true } }).lean();
     if (!m) throw new AppError('NOT_FOUND', 'Organization not found');
     const role = input.role ?? (m.role as Role);
     if (roleRank(role) > roleRank(m.role as Role)) throw new AppError('FORBIDDEN', `A token can't have a higher role than yours (${m.role})`);
@@ -76,7 +76,7 @@ export class ApiTokenService {
     if (!doc || (doc.expiresAt && doc.expiresAt.getTime() < Date.now())) throw new AppError('UNAUTHENTICATED', 'Invalid or expired API token');
     const user = await User.findById(doc.userId, { disabled: 1 }).lean();
     if (!user || user.disabled) throw new AppError('UNAUTHENTICATED', "The token owner's account is disabled");
-    const m = await Membership.findOne({ userId: doc.userId, organizationId: doc.organizationId }).lean();
+    const m = await Membership.findOne({ userId: doc.userId, organizationId: doc.organizationId, suspended: { $ne: true } }).lean();
     if (!m) throw new AppError('UNAUTHENTICATED', 'The token owner is no longer a member of this organization');
     const role = roleRank(m.role as Role) < roleRank(doc.role as Role) ? (m.role as Role) : (doc.role as Role);
     // At most one write per minute per token for "last used".

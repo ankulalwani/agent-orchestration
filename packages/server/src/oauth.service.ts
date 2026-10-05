@@ -5,7 +5,7 @@ import type { AuthResponse, OAuthProviderDto } from '@ao/contracts';
 import { API_PREFIX } from '@ao/contracts';
 import { createHash } from 'node:crypto';
 import type { ServerConfig } from './config.js';
-import type { AuthService } from './auth.service.js';
+import type { AuthService, SecondFactor } from './auth.service.js';
 import { audit } from './audit.js';
 
 const log = createLogger('oauth');
@@ -182,7 +182,7 @@ export class OAuthService {
   }
 
   /** Exchanges the ticket for a session. 2FA applies exactly as for password sign-in. */
-  async complete(ticket: string, mfaCode: string | undefined, meta: { ip?: string; userAgent?: string }): Promise<AuthResponse> {
+  async complete(ticket: string, mfaCode: SecondFactor | undefined, meta: { ip?: string; userAgent?: string }): Promise<AuthResponse> {
     const hash = sha256(ticket);
     const t = await OAuthTicket.findOneAndUpdate(
       { ticketHash: hash, usedAt: null, expiresAt: { $gt: new Date() }, attempts: { $lt: MAX_TICKET_ATTEMPTS } },

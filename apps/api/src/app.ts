@@ -11,7 +11,7 @@ import fastifyStatic from '@fastify/static';
 import { z } from 'zod';
 import { API_PREFIX, liveMessage } from '@ao/contracts';
 import { databaseHealthy } from '@ao/database';
-import { MAX_WORKER_PACKAGE_BYTES, type ReleaseActor, type Services } from '@ao/server';
+import { MAX_WORKER_PACKAGE_BYTES, ScimError, type ReleaseActor, type Services } from '@ao/server';
 import { AppError } from '@ao/core';
 import { createRouter, installErrorHandling } from './http.js';
 import { userRoutes } from './routes/user-routes.js';
@@ -105,6 +105,53 @@ export async function buildApp(services: Services, opts: BuildAppOptions = {}): 
       return reply.code(r.code).send({ status: r.status });
     });
   });
+  // Slack buttons and slash commands: form-encoded, signed over the raw body.
+  await app.register(async (scope) => {
+    scope.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'buffer', bodyLimit: 256 * 1024 }, (_req, body, done) => done(null, body));
+    scope.post(API_PREFIX + '/chat/slack/:id', async (req, reply) => {
+      const answer = await services.chat.handleSlack((req.params as { id: string }).id, req.headers, Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0));
+      return answer === undefined ? reply.code(200).send() : reply.code(200).send(answer);
+    });
+  });
+  // SCIM 2.0 user provisioning (RFC 7644), per organization, authenticated with its provisioning token.
+  await app.register(
+    async (scope) => {
+      scope.addContentTypeParser('application/scim+json', { parseAs: 'string', bodyLimit: 256 * 1024 }, (_req, body, done) => {
+        try {
+          done(null, body ? JSON.parse(body as string) : {});
+        } catch {
+          done(new ScimError(400, 'The body is not valid JSON', 'invalidSyntax'));
+        }
+      });
+      // Errors in the shape identity providers expect; nothing internal leaks.
+      scope.setErrorHandler((err: unknown, req, reply) => {
+        const e = err instanceof ScimError ? err : new ScimError((err as { statusCode?: number }).statusCode && (err as { statusCode: number }).statusCode < 500 ? (err as { statusCode: number }).statusCode : 500, (err as { statusCode?: number }).statusCode && (err as { statusCode: number }).statusCode < 500 ? String((err as Error).message) : `Something went wrong. Reference: ${req.correlationId}`);
+        if (e.status >= 500) req.log.error({ err: String(err) }, 'scim request failed');
+        return reply.code(e.status).type('application/scim+json').send(e.body());
+      });
+      const scim = services.scim;
+      const ctx = (req: { headers: { authorization?: string } }) => scim.authenticate(req.headers.authorization);
+      const send = (reply: FastifyReply, body: unknown, code = 200) => reply.code(code).type('application/scim+json').send(body);
+      const id = (req: { params: unknown }) => (req.params as { id: string }).id;
+      scope.get('/ServiceProviderConfig', async (req, reply) => (await ctx(req), send(reply, scim.serviceProviderConfig())));
+      scope.get('/ResourceTypes', async (req, reply) => (await ctx(req), send(reply, scim.resourceTypes())));
+      scope.get('/Schemas', async (req, reply) => (await ctx(req), send(reply, scim.emptyList())));
+      scope.get('/Groups', async (req, reply) => (await ctx(req), send(reply, scim.emptyList())));
+      scope.get('/Users', async (req, reply) => {
+        const q = req.query as { filter?: string; startIndex?: string; count?: string };
+        return send(reply, await scim.listUsers(await ctx(req), { filter: q.filter, startIndex: q.startIndex ? Number(q.startIndex) || 1 : undefined, count: q.count !== undefined ? Number(q.count) || 0 : undefined }));
+      });
+      scope.post('/Users', async (req, reply) => send(reply, await scim.createUser(await ctx(req), (req.body ?? {}) as never), 201));
+      scope.get('/Users/:id', async (req, reply) => send(reply, await scim.getUser(await ctx(req), id(req))));
+      scope.put('/Users/:id', async (req, reply) => send(reply, await scim.replaceUser(await ctx(req), id(req), (req.body ?? {}) as never)));
+      scope.patch('/Users/:id', async (req, reply) => send(reply, await scim.patchUser(await ctx(req), id(req), (req.body ?? {}) as never)));
+      scope.delete('/Users/:id', async (req, reply) => {
+        await scim.deleteUser(await ctx(req), id(req));
+        return reply.code(204).send();
+      });
+    },
+    { prefix: '/scim/v2' },
+  );
   // GitHub redirects the browser back here (app created, installed, member authorized); each ends on the dashboard.
   const q = (req: { query: unknown }, k: string) => {
     const v = (req.query as Record<string, unknown>)[k];

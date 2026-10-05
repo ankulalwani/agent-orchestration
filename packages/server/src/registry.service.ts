@@ -8,6 +8,8 @@ import {
   getCategory,
   getTechnology,
   rankSuggestions,
+  suggestionScore,
+  SUGGESTION_THRESHOLD,
   RELATED_THRESHOLD,
   signalsOfPackage,
   TECHNOLOGIES,
@@ -33,6 +35,7 @@ import { requirePermission, type Actor, type PlatformActor } from './context.js'
 import { requirePlatformAdmin } from './admin.service.js';
 import { audit } from './audit.js';
 import type { ServerConfig } from './config.js';
+import { EmbeddingService, cosine, type EmbeddingsConfig } from './embeddings.js';
 
 type AnyDoc = Record<string, any>;
 type Listing = z.output<typeof packageListingInput>;
@@ -101,10 +104,14 @@ export function toPackageDto(p: AnyDoc, verified: boolean, withReview = false) {
  * request. Curated packages come first in every listing.
  */
 export class RegistryService {
+  private embeddings: EmbeddingService;
+
   constructor(
-    private config: Pick<ServerConfig, 'REGISTRY_SEARCH'> = { REGISTRY_SEARCH: 'text' },
+    private config: Pick<ServerConfig, 'REGISTRY_SEARCH'> & EmbeddingsConfig = { REGISTRY_SEARCH: 'text' },
     private fetchImpl: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.embeddings = new EmbeddingService(config, fetchImpl);
+  }
 
   // ── Publishers ──────────────────────────────────────────────────────────────
 
@@ -412,8 +419,95 @@ export class RegistryService {
     const p = await CapabilityPackage.findById(id).lean();
     if (!p) return;
     const m = manifest ?? ((await Capability.findOne({ capabilityId: p.ref, version: p.latestVersion }, { manifest: 1 }).lean())?.manifest as CapabilityManifest | undefined);
-    await CapabilityPackage.updateOne({ _id: p._id }, { $set: classificationFields(p as never, m) });
+    // The listing may have changed: its embedding is made again (see embedStale).
+    await CapabilityPackage.updateOne({ _id: p._id }, { $set: classificationFields(p as never, m), $unset: { embedding: 1 } });
     this.facetCache.clear();
+    if (this.embeddings.enabled) void this.embedStale(50).catch(() => undefined);
+  }
+
+  // ── Semantic suggestions (only with an embeddings API configured) ───────────
+
+  /** What a package is, in a few hundred words, for the embedding model. */
+  private embeddingText(p: AnyDoc): string {
+    return [p.displayName ?? p.name, p.description ?? '', (p.tags ?? []).join(', '), [...(p.categories ?? []), ...(p.technologies ?? [])].join(', '), (p.readme ?? '').slice(0, 3000)].filter(Boolean).join('\n');
+  }
+
+  /**
+   * Embeds the packages that have no embedding from the current model. Returns how many were embedded.
+   * Runs in the background at startup and after a listing changes; a failing API leaves them for next time.
+   */
+  async embedStale(max = 5000): Promise<number> {
+    if (!this.embeddings.enabled) return 0;
+    const model = this.embeddings.model;
+    let done = 0;
+    while (done < max) {
+      const batch = await CapabilityPackage.find({ 'embedding.model': { $ne: model } }).sort({ _id: 1 }).limit(64).lean();
+      if (!batch.length) break;
+      const vectors = await this.embeddings.embed(batch.map((p) => this.embeddingText(p)));
+      await CapabilityPackage.bulkWrite(batch.map((p, i) => ({ updateOne: { filter: { _id: p._id }, update: { $set: { embedding: { model, vector: vectors[i] } } } } })), { ordered: false });
+      done += batch.length;
+    }
+    if (done) this.vectorCache = null;
+    return done;
+  }
+
+  async embedAll(actor: PlatformActor & { platformAdmin?: boolean }) {
+    requirePlatformAdmin(actor.platformAdmin);
+    if (!this.embeddings.enabled) throw new AppError('VALIDATION_FAILED', 'No embeddings API is configured (EMBEDDINGS_URL)');
+    const embedded = await this.embedStale(50_000);
+    await audit(actor, 'capability.embed', { type: 'registry', id: 'packages' }, { embedded, model: this.embeddings.model });
+    return { embedded, model: this.embeddings.model };
+  }
+
+  /** Vectors of the public packages compared in memory (the most used ones, when there are more than this). */
+  private static readonly SCAN_LIMIT = 5000;
+  private vectorCache: { at: number; model: string; rows: Array<{ id: unknown; vector: Float32Array }> } | null = null;
+
+  private async publicVectors() {
+    const model = this.embeddings.model;
+    if (this.vectorCache && this.vectorCache.model === model && Date.now() - this.vectorCache.at < 300_000) return this.vectorCache.rows;
+    const docs = await CapabilityPackage.find({ visibility: 'PUBLIC', deprecated: null, 'embedding.model': model }, { 'embedding.vector': 1 })
+      .sort({ curated: -1, curatedRank: 1, installs: -1 })
+      .limit(RegistryService.SCAN_LIMIT)
+      .lean();
+    const rows = docs.map((d) => ({ id: d._id, vector: Float32Array.from((d.embedding as { vector: number[] }).vector) }));
+    this.vectorCache = { at: Date.now(), model, rows };
+    return rows;
+  }
+
+  /**
+   * Public packages closest in meaning to a text, with their similarity. Empty without an embeddings API,
+   * and when the API fails: suggestions then rest on the rules alone. With Atlas (`REGISTRY_SEARCH=atlas`)
+   * the vector index "capability_embeddings" on `embedding.vector` is used; otherwise the most used
+   * packages are compared in memory.
+   */
+  private async semanticNeighbors(text: string, type: string | undefined, limit = 30): Promise<Array<{ doc: AnyDoc; similarity: number }>> {
+    if (!this.embeddings.enabled || text.trim().length < 8) return [];
+    let query: number[];
+    try {
+      [query] = (await this.embeddings.embed([text])) as [number[]];
+    } catch {
+      return [];
+    }
+    const min = this.embeddings.minSimilarity;
+    const common = { visibility: 'PUBLIC', deprecated: null, ...(type ? { type } : {}) };
+    if (this.config.REGISTRY_SEARCH === 'atlas') {
+      const rows = await CapabilityPackage.aggregate<AnyDoc>([
+        { $vectorSearch: { index: 'capability_embeddings', path: 'embedding.vector', queryVector: query, numCandidates: 400, limit: limit * 2, filter: { visibility: 'PUBLIC' } } },
+        { $addFields: { similarity: { $meta: 'vectorSearchScore' } } },
+        { $match: common },
+        { $project: { embedding: 0 } },
+      ]);
+      return rows.filter((r) => r.similarity >= min).slice(0, limit).map((doc) => ({ doc, similarity: doc.similarity as number }));
+    }
+    const scored = (await this.publicVectors())
+      .map((r) => ({ id: r.id, similarity: cosine(query, r.vector) }))
+      .filter((r) => r.similarity >= min)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, limit * 2);
+    if (!scored.length) return [];
+    const docs = new Map((await CapabilityPackage.find({ _id: { $in: scored.map((s) => s.id) }, ...common }).lean()).map((d) => [String(d._id), d]));
+    return scored.filter((s) => docs.has(String(s.id))).slice(0, limit).map((s) => ({ doc: docs.get(String(s.id))!, similarity: s.similarity }));
   }
 
   /**
@@ -507,8 +601,29 @@ export class RegistryService {
       stack = p.readiness?.stack ?? {};
       projectId = p._id;
     }
-    const signals = extractSignals({ text: parts.filter(Boolean).join('\n'), ...stack });
-    const ranked = rankSuggestions(await this.candidates(viewer, signals, input.type), signals, input.limit);
+    const text = parts.filter(Boolean).join('\n');
+    const signals = extractSignals({ text, ...stack });
+    const candidates = await this.candidates(viewer, signals, input.type);
+    const neighbors = await this.semanticNeighbors(text, input.type);
+    let ranked = rankSuggestions(candidates, signals, input.limit);
+    if (neighbors.length) {
+      // Closeness in meaning adds to the rules' relevance (up to 10, like two technologies), and by itself
+      // is enough to suggest a package the rules have no words for.
+      const similarity = new Map(neighbors.map((n) => [n.doc.ref as string, n.similarity]));
+      const pool = new Map<string, AnyDoc & SuggestCandidate>(candidates.map((c) => [c.ref as string, c]));
+      for (const n of neighbors) if (!pool.has(n.doc.ref)) pool.set(n.doc.ref, { ...n.doc, name: n.doc.name, displayName: n.doc.displayName, trust: n.doc.trust, curated: Boolean(n.doc.curated), categories: n.doc.categories ?? [], technologies: n.doc.technologies ?? [], keywords: n.doc.keywords ?? [], description: n.doc.description ?? '' });
+      ranked = [...pool.values()]
+        .map((item) => {
+          const rule = suggestionScore(item, signals);
+          const sim = similarity.get(item.ref as string);
+          const bonus = sim === undefined ? 0 : Math.max(SUGGESTION_THRESHOLD, Math.round(sim * 10));
+          return { item, relevance: rule.relevance + bonus, score: rule.score + bonus, reasons: sim === undefined ? rule.reasons : [...rule.reasons, 'Close in meaning to what you described'] };
+        })
+        .filter((r) => r.relevance >= SUGGESTION_THRESHOLD)
+        .sort((a, b) => Number(b.item.curated) - Number(a.item.curated) || b.score - a.score || a.item.name.localeCompare(b.item.name))
+        .slice(0, input.limit)
+        .map(({ item, score, reasons }) => ({ item, score: Math.round(score * 10) / 10, reasons }));
+    }
     let installed = new Set<string>();
     if (viewer && ranked.length) {
       const scopes: Record<string, unknown>[] = [{ scope: 'ORGANIZATION' }, { scope: 'USER', userId: oid(viewer.userId) }];

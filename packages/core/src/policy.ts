@@ -106,6 +106,21 @@ export const executionPolicySchema = z.object({
     enabled: z.boolean(),
     steps: z.array(verificationStepSchema),
     autoDetect: z.boolean(),
+    /**
+     * After the task branch is pushed (Git policy COMMIT_AND_PUSH or PULL_REQUEST), wait for the
+     * commit's CI checks on GitHub or GitLab. Failed checks go back to the agent like a failed
+     * verification step. Needs a hosting token for the remote on the worker (or the GitHub App).
+     */
+    ci: z.object({
+      enabled: z.boolean(),
+      /** How long to wait for the checks to finish. */
+      timeoutMs: z.number().int().positive(),
+      pollMs: z.number().int().positive(),
+      /** How long to wait for the first check to appear before deciding there are none. */
+      startGraceMs: z.number().int().min(0),
+      /** true: no checks, unreadable checks or a timeout stop the task for a person; false: they are warnings. */
+      required: z.boolean(),
+    }),
   }),
   capabilities: z.object({
     installPolicy: z.enum(CAPABILITY_INSTALL_POLICIES),
@@ -129,6 +144,21 @@ export const executionPolicySchema = z.object({
     writable: z.array(z.string()),
     /** Extra paths the agent may not read (added to ~/.ssh, ~/.gnupg, … and the worker's data folder). */
     hidden: z.array(z.string()),
+  }),
+  /**
+   * Spend limits, in US dollars and tokens as agents and providers report them. `null` = no limit.
+   * `task*` limits cover one task over its whole life; the monthly limits cover the calendar month (UTC).
+   * A task that reaches a limit stops with RECOVERY_REQUIRED, and queued tasks do not start.
+   * The organization limit is read from the platform and organization layers only, the project limit
+   * from those and the project layer; a task's own layer can lower the task limits, never raise them.
+   */
+  budget: z.object({
+    taskUsd: z.number().positive().nullable(),
+    taskTokens: z.number().int().positive().nullable(),
+    projectMonthlyUsd: z.number().positive().nullable(),
+    organizationMonthlyUsd: z.number().positive().nullable(),
+    /** Administrators are warned once a month when spend passes this share of a monthly limit. */
+    warnAt: z.number().min(0).max(1),
   }),
 });
 export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
@@ -159,7 +189,7 @@ export const DEFAULT_POLICY: ExecutionPolicy = {
     limitPollMaxMs: 30 * 60_000,
   },
   git: { policy: 'COMMIT', branchPrefix: 'ao/', workOnBranch: true, allowForcePush: false },
-  verification: { enabled: true, steps: [], autoDetect: true },
+  verification: { enabled: true, steps: [], autoDetect: true, ci: { enabled: false, timeoutMs: 30 * 60_000, pollMs: 30_000, startGraceMs: 2 * 60_000, required: false } },
   sandbox: { mode: 'off', network: true, writable: [], hidden: [] },
   capabilities: {
     installPolicy: 'ASK',
@@ -168,6 +198,7 @@ export const DEFAULT_POLICY: ExecutionPolicy = {
     blockedPermissions: [],
   },
   requireApprovalFor: { production: true, push: false, plan: false },
+  budget: { taskUsd: null, taskTokens: null, projectMonthlyUsd: null, organizationMonthlyUsd: null, warnAt: 0.8 },
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

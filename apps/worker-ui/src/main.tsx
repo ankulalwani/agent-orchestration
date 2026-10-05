@@ -727,7 +727,7 @@ function Mcp() {
             Locally installed MCP servers. Each one is checked with a real MCP handshake when saved and every 10 minutes; only healthy servers are advertised as <code>mcp:&lt;id&gt;</code>, so tasks that need one are scheduled only where it works. Organization MCP capabilities are configured from the dashboard.
           </p>
           {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
-          <Textarea aria-label="MCP servers JSON" rows={12} className="mono" value={text} onChange={(e) => setText(e.target.value)} placeholder='[{"id":"shopify-mcp","name":"Shopify","transport":"stdio","command":["npx","shopify-mcp"]}]' />
+          <Textarea aria-label="MCP servers JSON" rows={12} className="mono" disabled={!mcp.data} value={text} onChange={(e) => setText(e.target.value)} placeholder='[{"id":"shopify-mcp","name":"Shopify","transport":"stdio","command":["npx","shopify-mcp"]}]' />
         </div>
       </Card>
     </div>

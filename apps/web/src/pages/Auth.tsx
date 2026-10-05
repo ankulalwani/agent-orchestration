@@ -3,7 +3,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Field, Input, Spinner } from '@ao/ui';
 import { BrandMark } from '../Layout';
 import type { InvitationPreviewDto, OAuthProviderDto } from '@ao/contracts';
-import { ApiError, api, completeOAuth, login, oauthStartUrl, refreshSession, register } from '../lib/api';
+import { startAuthentication } from '@simplewebauthn/browser';
+import { ApiError, api, completeOAuth, login, oauthStartUrl, refreshSession, register, type SecondFactor } from '../lib/api';
 import { useSession } from '../lib/session';
 
 function AuthShell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -61,15 +62,46 @@ function ProviderButtons({ next, invitation, verb = 'Continue' }: { next?: strin
   );
 }
 
-function MfaCodeForm({ busy, error, code, setCode, onSubmit, onBack }: { busy: boolean; error: string | null; code: string; setCode: (v: string) => void; onSubmit: (e: FormEvent) => void; onBack: () => void }) {
+/** True when the server offered a security key with `MFA_REQUIRED`. */
+const offersSecurityKey = (e: unknown) => e instanceof ApiError && e.code === 'MFA_REQUIRED' && Boolean(e.context?.securityKey);
+
+/**
+ * Signs in with a security key: a sign-in without a second step gets a fresh challenge (each is used
+ * once), the browser's authenticator answers it, and the sign-in is repeated with the answer.
+ */
+async function signInWithSecurityKey(attempt: (second?: SecondFactor) => Promise<unknown>) {
+  let options: unknown;
+  try {
+    await attempt();
+    return;
+  } catch (e) {
+    if (!offersSecurityKey(e)) throw e;
+    options = (e as ApiError).context!.securityKey;
+  }
+  let answer;
+  try {
+    answer = await startAuthentication({ optionsJSON: options as never });
+  } catch {
+    throw new ApiError(0, 'CANCELLED', 'The security key was not used. Try again, or enter a code.');
+  }
+  await attempt({ securityKey: answer });
+}
+
+function MfaCodeForm({ busy, error, code, setCode, onSubmit, onBack, onSecurityKey }: { busy: boolean; error: string | null; code: string; setCode: (v: string) => void; onSubmit: (e: FormEvent) => void; onBack: () => void; /** Set when the account has a security key. */ onSecurityKey?: () => void }) {
   return (
     <AuthShell title="Two-factor authentication">
       <form className="stack" onSubmit={onSubmit}>
         {error && <Alert tone="danger">{error}</Alert>}
+        {onSecurityKey && (
+          <>
+            <Button type="button" variant="primary" loading={busy} onClick={onSecurityKey}>Use a security key</Button>
+            <div className="flex items-center gap-3 text-xs text-fg-3 before:h-px before:flex-1 before:bg-line after:h-px after:flex-1 after:bg-line">or enter a code</div>
+          </>
+        )}
         <Field label="Authentication code" hint="The 6-digit code from your authenticator app, or one of your recovery codes">
-          {(id) => <Input id={id} autoFocus inputMode="numeric" autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} />}
+          {(id) => <Input id={id} autoFocus={!onSecurityKey} inputMode="numeric" autoComplete="one-time-code" required value={code} onChange={(e) => setCode(e.target.value)} />}
         </Field>
-        <Button variant="primary" type="submit" loading={busy}>Verify</Button>
+        <Button variant={onSecurityKey ? 'default' : 'primary'} type="submit" loading={busy}>Verify</Button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onBack}>
           Back
         </button>
@@ -93,15 +125,19 @@ export function OAuthCompletePage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function finish(mfaCode?: string) {
+  const [hasKey, setHasKey] = useState(false);
+  async function finish(mfaCode?: string, withKey = false) {
     setBusy(true);
     setError(null);
     try {
-      await completeOAuth(ticket, mfaCode);
+      if (withKey) await signInWithSecurityKey((second) => completeOAuth(ticket, second));
+      else await completeOAuth(ticket, mfaCode);
       nav(next, { replace: true });
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'MFA_REQUIRED') setMfaStep(true);
-      else {
+      if (err instanceof ApiError && err.code === 'MFA_REQUIRED') {
+        setMfaStep(true);
+        setHasKey(offersSecurityKey(err));
+      } else {
         setError(message(err));
         setCode('');
       }
@@ -128,6 +164,7 @@ export function OAuthCompletePage() {
           void finish(code);
         }}
         onBack={() => nav('/login', { replace: true })}
+        onSecurityKey={hasKey ? () => void finish(undefined, true) : undefined}
       />
     );
   }
@@ -156,16 +193,19 @@ export function LoginPage() {
   const [mfaStep, setMfaStep] = useState(false);
   const [mfaCode, setMfaCode] = useState('');
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  const [hasKey, setHasKey] = useState(false);
+  async function submit(e: FormEvent | null, withKey = false) {
+    e?.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await login(email, password, mfaStep ? mfaCode : undefined);
+      if (withKey) await signInWithSecurityKey((second) => login(email, password, second));
+      else await login(email, password, mfaStep ? mfaCode : undefined);
       nav(params.get('next') ?? '/', { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'MFA_REQUIRED') {
         setMfaStep(true);
+        setHasKey(offersSecurityKey(err));
       } else {
         setError(message(err));
         setMfaCode('');
@@ -183,6 +223,7 @@ export function LoginPage() {
         code={mfaCode}
         setCode={setMfaCode}
         onSubmit={submit}
+        onSecurityKey={hasKey ? () => void submit(null, true) : undefined}
         onBack={() => {
           setMfaStep(false);
           setMfaCode('');

@@ -26,6 +26,13 @@ const userSchema = new Schema(
       recoveryCodeHashes: { type: [String], select: false, default: undefined },
       /** Last accepted TOTP time step: a code is accepted only once. */
       lastStep: { type: Number, select: false, default: null },
+      /**
+       * Security keys and passkeys (WebAuthn) usable as the second step: { credentialId, publicKey
+       * (base64url), counter, transports, name, createdAt, lastUsedAt }. Public keys only.
+       */
+      securityKeys: { type: [Mixed], select: false, default: undefined },
+      /** The WebAuthn challenge in flight: { value, purpose: 'register' | 'signin', expiresAt }. Used once. */
+      challenge: { type: Mixed, select: false, default: undefined },
     },
     /** False for accounts created through an OAuth provider until a password is set (password reset). */
     hasPassword: { type: Boolean, default: true },
@@ -54,22 +61,41 @@ const organizationSchema = new Schema(
       requireWorkerApproval: { type: Boolean, default: false },
       retentionDays: { events: { type: Number, default: 180 }, agentOutput: { type: Number, default: 30 }, audit: { type: Number, default: 730 } },
     },
+    /**
+     * User provisioning from an identity provider (SCIM 2.0): the bearer token (hashed), the role new
+     * members get, and when it was last used. Absent: provisioning is off.
+     */
+    scim: {
+      tokenHash: { type: String, select: false, default: undefined },
+      tokenPrefix: { type: String, default: undefined },
+      defaultRole: { type: String, enum: ROLES, default: 'DEVELOPER' },
+      createdAt: { type: Date, default: undefined },
+      lastUsedAt: { type: Date, default: undefined },
+    },
     /** Data owned by extensions (see docs/PUBLIC_PRIVATE_BOUNDARY.md); the core never reads it. */
     cloud: { type: Mixed, default: null },
   },
   opts,
 );
 organizationSchema.index({ slug: 1 }, { unique: true });
+organizationSchema.index({ 'scim.tokenHash': 1 }, { unique: true, partialFilterExpression: { 'scim.tokenHash': { $type: 'string' } } });
 
 const membershipSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, required: true, ref: 'Organization' },
     userId: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
     role: { type: String, enum: ROLES, required: true },
+    /** The member's Slack member ID in the organization's workspace: their actions in Slack run with their role. */
+    slackUserId: { type: String, default: undefined },
+    /** Deactivated by the identity provider (SCIM `active: false`): the member keeps their place but has no access. */
+    suspended: { type: Boolean, default: false },
+    /** The identity provider's id for this member (SCIM `externalId`). */
+    scimExternalId: { type: String, default: undefined },
   },
   opts,
 );
 membershipSchema.index({ organizationId: 1, userId: 1 }, { unique: true });
+membershipSchema.index({ organizationId: 1, slackUserId: 1 }, { unique: true, partialFilterExpression: { slackUserId: { $type: 'string' } } });
 membershipSchema.index({ userId: 1 });
 
 const teamSchema = new Schema(
@@ -313,6 +339,12 @@ const taskSchema = new Schema(
     appliedTransitionIds: { type: [String], default: [], select: false },
     correlationId: { type: String, required: true },
     activeMs: { type: Number, default: 0 },
+    /** A follow-up continues another task's branch and pull request: { taskId, branch, pullRequestUrl }. */
+    continues: { type: Mixed, default: null },
+    /** Attempts of one task tried by several agents: { groupId, index, of, agentId, winnerTaskId }. */
+    attempt: { type: Mixed, default: null },
+    /** Spend of all agent sessions of this task, as reported by agents and providers. */
+    usage: { costUsd: { type: Number, default: 0 }, inputTokens: { type: Number, default: 0 }, outputTokens: { type: Number, default: 0 } },
     /** Set by the scheduler when a task has been offered; not a claim. */
     offeredTo: { type: Schema.Types.ObjectId, default: null },
     offeredAt: { type: Date, default: null },
@@ -328,6 +360,8 @@ taskSchema.index({ status: 1, leaseExpiresAt: 1 });
 taskSchema.index({ status: 1, waitingUntil: 1 });
 taskSchema.index({ status: 1, priority: 1, queuedAt: 1 });
 taskSchema.index({ dependencies: 1 });
+taskSchema.index({ 'attempt.groupId': 1 }, { sparse: true });
+taskSchema.index({ projectId: 1, 'gitResult.pullRequestUrl': 1 }, { sparse: true });
 taskSchema.index(
   { organizationId: 1, idempotencyKey: 1 },
   { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
@@ -422,6 +456,23 @@ publisherSchema.index({ namespace: 1 }, { unique: true });
 publisherSchema.index({ organizationId: 1 }, { unique: true, partialFilterExpression: { kind: 'organization' } });
 publisherSchema.index({ userId: 1 }, { unique: true, partialFilterExpression: { kind: 'user' } });
 
+/** A stack: packages that belong together, installed in one step. The platform's (organizationId null) or an organization's. */
+const capabilityStackSchema = new Schema(
+  {
+    slug: { type: String, required: true },
+    organizationId: { type: Schema.Types.ObjectId, default: null },
+    name: { type: String, required: true },
+    description: { type: String, default: '' },
+    readme: { type: String, default: null },
+    /** [{ ref, versionRange, note }] in display order. */
+    items: { type: [Mixed], default: [] },
+    installs: { type: Number, default: 0 },
+    createdBy: { type: Schema.Types.ObjectId, default: null },
+  },
+  opts,
+);
+capabilityStackSchema.index({ organizationId: 1, slug: 1 }, { unique: true });
+
 /** One package ("@namespace/name") with its marketplace listing. Versions live in `capabilities`. */
 const capabilityPackageSchema = new Schema(
   {
@@ -453,6 +504,8 @@ const capabilityPackageSchema = new Schema(
     /** Words a matching task or search would use: name parts, tags, triggers, technologies. */
     keywords: { type: [String], default: [] },
     classifierVersion: { type: Number, default: 0 },
+    /** Embedding of the listing, for semantic suggestions (only when the server has an embeddings API): { model, vector }. */
+    embedding: { type: Mixed, select: false, default: undefined },
     // Latest active version, denormalized for search and filtering
     latestVersion: { type: String, required: true },
     trust: { type: String, required: true },
@@ -487,6 +540,7 @@ capabilityPackageSchema.index({ visibility: 1, categories: 1, curated: -1, curat
 capabilityPackageSchema.index({ visibility: 1, technologies: 1, curated: -1, curatedRank: 1, installs: -1 });
 capabilityPackageSchema.index({ keywords: 1 });
 capabilityPackageSchema.index({ classifierVersion: 1 });
+capabilityPackageSchema.index({ 'embedding.model': 1, _id: 1 });
 capabilityPackageSchema.index({ organizationId: 1 });
 capabilityPackageSchema.index({ userId: 1 });
 capabilityPackageSchema.index({ 'review.status': 1, 'review.requestedAt': 1 });
@@ -596,6 +650,22 @@ const usageRecordSchema = new Schema(
   { timestamps: { createdAt: true, updatedAt: false } },
 );
 usageRecordSchema.index({ organizationId: 1, createdAt: -1 });
+usageRecordSchema.index({ organizationId: 1, projectId: 1, createdAt: -1 });
+
+/** One document per budget notice sent, so a limit warns once per month (the unique index is the guard). */
+const budgetAlertSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    scope: { type: String, enum: ['organization', 'project'], required: true },
+    /** The project id, or '' for the organization. */
+    scopeId: { type: String, default: '' },
+    /** Calendar month, `YYYY-MM` (UTC). */
+    period: { type: String, required: true },
+    level: { type: String, enum: ['warning', 'exceeded'], required: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+);
+budgetAlertSchema.index({ organizationId: 1, scope: 1, scopeId: 1, period: 1, level: 1 }, { unique: true });
 usageRecordSchema.index({ eventId: 1 }, { unique: true, partialFilterExpression: { eventId: { $type: 'string' } } });
 
 const settingSchema = new Schema({ key: { type: String, required: true }, value: { type: Mixed } }, opts);
@@ -607,7 +677,7 @@ const integrationSchema = new Schema(
     organizationId: { type: Schema.Types.ObjectId, required: true },
     projectId: { type: Schema.Types.ObjectId, required: true },
     name: { type: String, required: true },
-    kind: { type: String, enum: ['github', 'gitlab', 'generic'], required: true },
+    kind: { type: String, enum: ['github', 'gitlab', 'jira', 'linear', 'generic'], required: true },
     enabled: { type: Boolean, default: true },
     /** Webhook secret (HMAC key, or GitLab's token), encrypted. */
     secretEnc: { type: String, required: true, select: false },
@@ -621,6 +691,87 @@ const integrationSchema = new Schema(
   opts,
 );
 integrationSchema.index({ organizationId: 1, name: 1 }, { unique: true });
+
+/** A clone asked of a worker that was offline; sent when it connects. Mongo removes it after `expiresAt`. */
+const pendingCloneSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    workerId: { type: Schema.Types.ObjectId, required: true },
+    projectId: { type: Schema.Types.ObjectId, required: true },
+    repositoryId: { type: Schema.Types.ObjectId, required: true },
+    requestedBy: { type: Schema.Types.ObjectId, required: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+);
+pendingCloneSchema.index({ workerId: 1, repositoryId: 1 }, { unique: true });
+pendingCloneSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+// ── Task templates (reusable task text with {{variables}}) ────────────────────
+const taskTemplateSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    name: { type: String, required: true },
+    description: { type: String, default: '' },
+    /** Offered for this project only; null: every project. */
+    projectId: { type: Schema.Types.ObjectId, default: null },
+    task: { type: Mixed, required: true },
+    variables: { type: [Mixed], default: [] },
+    createdBy: { type: Schema.Types.ObjectId, required: true },
+    useCount: { type: Number, default: 0 },
+  },
+  opts,
+);
+taskTemplateSchema.index({ organizationId: 1, name: 1 }, { unique: true });
+
+// ── Chat channels (notifications to Slack / Microsoft Teams; Slack actions) ───
+const chatChannelSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    name: { type: String, required: true },
+    kind: { type: String, enum: ['slack', 'teams'], required: true },
+    enabled: { type: Boolean, default: true },
+    /** The incoming webhook URL is a credential: stored encrypted. */
+    webhookUrlEnc: { type: String, required: true, select: false },
+    webhookHost: { type: String, required: true },
+    /** Slack app signing secret, encrypted; null: notifications only. */
+    signingSecretEnc: { type: String, default: null, select: false },
+    interactive: { type: Boolean, default: false },
+    events: { type: [String], default: [] },
+    projectIds: { type: [Schema.Types.ObjectId], default: [] },
+    createdBy: { type: Schema.Types.ObjectId, required: true },
+    lastDeliveryAt: { type: Date, default: null },
+    lastDeliveryResult: { type: String, default: null },
+  },
+  opts,
+);
+chatChannelSchema.index({ organizationId: 1, name: 1 }, { unique: true });
+
+// ── Schedules (tasks created on a cron expression) ────────────────────────────
+const scheduleSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    projectId: { type: Schema.Types.ObjectId, required: true },
+    name: { type: String, required: true },
+    cron: { type: String, required: true },
+    timeZone: { type: String, default: 'UTC' },
+    enabled: { type: Boolean, default: true },
+    overlap: { type: String, enum: ['skip', 'allow'], default: 'skip' },
+    /** The task created on each run (a task request without project, dependencies and idempotency key). */
+    task: { type: Mixed, required: true },
+    /** Tasks are created on behalf of this member. */
+    createdBy: { type: Schema.Types.ObjectId, required: true },
+    /** null while disabled. Moving it forward atomically is what lets only one server instance run a slot. */
+    nextRunAt: { type: Date, default: null },
+    lastRunAt: { type: Date, default: null },
+    lastTaskId: { type: Schema.Types.ObjectId, default: null },
+    lastResult: { type: String, default: null },
+    runCount: { type: Number, default: 0 },
+  },
+  opts,
+);
+scheduleSchema.index({ organizationId: 1, name: 1 }, { unique: true });
+scheduleSchema.index({ enabled: 1, nextRunAt: 1 });
 
 // ── Invitations ───────────────────────────────────────────────────────────────
 /** Invitation for someone who may not have an account yet (spec §18). The token is stored hashed. */
@@ -833,6 +984,12 @@ export const CapabilityInstallation = model('CapabilityInstallation', capability
 export const ProviderConfig = model('ProviderConfig', providerConfigSchema);
 export const Secret = model('Secret', secretSchema);
 export const UsageRecord = model('UsageRecord', usageRecordSchema);
+export const BudgetAlert = model('BudgetAlert', budgetAlertSchema);
+export const Schedule = model('Schedule', scheduleSchema);
+export const ChatChannel = model('ChatChannel', chatChannelSchema);
+export const TaskTemplate = model('TaskTemplate', taskTemplateSchema);
+export const PendingClone = model('PendingClone', pendingCloneSchema);
+export const CapabilityStack = model('CapabilityStack', capabilityStackSchema);
 export const Setting = model('Setting', settingSchema);
 export const ConcurrencySlot = model('ConcurrencySlot', concurrencySlotSchema);
 export const Invitation = model('Invitation', invitationSchema);
@@ -849,6 +1006,7 @@ export const ALL_MODELS = [
   TaskEvent, AuditLog, Notification, PushToken, Capability, CapabilityInstallation, ProviderConfig, Secret,
   UsageRecord, Setting, ConcurrencySlot, Invitation, OAuthState, OAuthTicket, ApiToken, Integration, DeviceLogin,
   GitHubApp, GitHubInstallation, GitHubUserToken, GitHubState, DiscoveredRepository, Publisher, CapabilityPackage,
+  BudgetAlert, Schedule, ChatChannel, TaskTemplate, PendingClone, CapabilityStack,
 ];
 
 export type TaskDoc = InferSchemaType<typeof taskSchema> & { _id: mongoose.Types.ObjectId; createdAt: Date; updatedAt: Date };

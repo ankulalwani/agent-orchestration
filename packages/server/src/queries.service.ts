@@ -1,6 +1,6 @@
 import { AppError, maskSecret } from '@ao/core';
-import { AuditLog, Notification, PushToken, ProviderConfig, Secret, Task, UsageRecord, Worker, isDuplicateKeyError, oid } from '@ao/database';
-import type { OverviewDto } from '@ao/contracts';
+import { AuditLog, Notification, Project, PushToken, ProviderConfig, Secret, Task, UsageRecord, Worker, isDuplicateKeyError, oid } from '@ao/database';
+import type { AnalyticsDto, OverviewDto } from '@ao/contracts';
 import { requirePermission, type Actor } from './context.js';
 import { decodeCursor, encodeCursor, toNotificationDto, toTaskDto } from './dto.js';
 import { audit } from './audit.js';
@@ -125,6 +125,77 @@ export class QueryService {
       },
       { $sort: { count: -1 } },
     ]);
+  }
+
+  /**
+   * Outcomes of the tasks that finished in the last `days` days: success and first-pass rates, cost and
+   * time, in total, per day and by agent, model and project. A task counts for the agent and model it
+   * finished on.
+   */
+  async analytics(actor: Actor, q: { days: number; projectId?: string }, now = new Date()): Promise<AnalyticsDto> {
+    requirePermission(actor, 'task.read');
+    const orgId = oid(actor.organizationId);
+    // Whole UTC days, today included.
+    const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (q.days - 1)));
+    const scope = { organizationId: orgId, ...(q.projectId ? { projectId: oid(q.projectId, 'Project') } : {}) };
+    const figures = {
+      finished: { $sum: 1 },
+      completed: { $sum: { $cond: [{ $eq: ['$status', 'COMPLETED'] }, 1, 0] } },
+      failed: { $sum: { $cond: [{ $eq: ['$status', 'FAILED'] }, 1, 0] } },
+      firstPass: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'COMPLETED'] }, { $eq: [{ $ifNull: ['$remediationCount', 0] }, 0] }] }, 1, 0] } },
+      remediations: { $sum: { $ifNull: ['$remediationCount', 0] } },
+      costUsd: { $sum: { $ifNull: ['$usage.costUsd', 0] } },
+      activeMs: { $sum: { $cond: [{ $eq: ['$status', 'COMPLETED'] }, { $ifNull: ['$activeMs', 0] }, 0] } },
+      leadMs: { $sum: { $cond: [{ $eq: ['$status', 'COMPLETED'] }, { $subtract: ['$completedAt', '$createdAt'] }, 0] } },
+    };
+    type Group<K> = { _id: K; finished: number; completed: number; failed: number; firstPass: number; remediations: number; costUsd: number; activeMs: number; leadMs: number };
+    const [facets] = await Task.aggregate<{
+      totals: Group<null>[];
+      daily: Array<{ _id: string; completed: number; failed: number; costUsd: number }>;
+      byAgent: Group<string | null>[];
+      byModel: Group<{ providerId: string | null; modelId: string | null }>[];
+      byProject: Group<unknown>[];
+    }>([
+      { $match: { ...scope, status: { $in: ['COMPLETED', 'FAILED'] }, completedAt: { $gte: since } } },
+      {
+        $facet: {
+          totals: [{ $group: { _id: null, ...figures } }],
+          daily: [{ $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$completedAt', timezone: 'UTC' } }, completed: figures.completed, failed: figures.failed, costUsd: figures.costUsd } }],
+          byAgent: [{ $group: { _id: '$agentId', ...figures } }, { $sort: { finished: -1 } }, { $limit: 20 }],
+          byModel: [{ $group: { _id: { providerId: '$providerId', modelId: '$modelId' }, ...figures } }, { $sort: { finished: -1 } }, { $limit: 30 }],
+          byProject: [{ $group: { _id: '$projectId', ...figures } }, { $sort: { finished: -1 } }, { $limit: 50 }],
+        },
+      },
+    ]);
+    const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
+    const shape = (g: Omit<Group<unknown>, '_id'>) => ({
+      finished: g.finished,
+      completed: g.completed,
+      failed: g.failed,
+      successRate: ratio(g.completed, g.finished),
+      firstPassRate: ratio(g.firstPass, g.completed),
+      avgRemediations: g.finished ? g.remediations / g.finished : 0,
+      costUsd: g.costUsd,
+      costPerCompletedUsd: ratio(g.costUsd, g.completed),
+      avgActiveMs: ratio(g.activeMs, g.completed),
+      avgLeadMs: ratio(g.leadMs, g.completed),
+    });
+    const empty = { finished: 0, completed: 0, failed: 0, firstPass: 0, remediations: 0, costUsd: 0, activeMs: 0, leadMs: 0 };
+    const byDay = new Map((facets?.daily ?? []).map((d) => [d._id, d]));
+    const projectNames = new Map((await Project.find({ _id: { $in: (facets?.byProject ?? []).map((p) => p._id) } }, { name: 1 }).lean()).map((p) => [String(p._id), p.name]));
+    return {
+      since: since.toISOString(),
+      days: q.days,
+      totals: { ...shape(facets?.totals[0] ?? empty), created: await Task.countDocuments({ ...scope, createdAt: { $gte: since } }) },
+      daily: Array.from({ length: q.days }, (_, i) => {
+        const date = new Date(since.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+        const d = byDay.get(date);
+        return { date, completed: d?.completed ?? 0, failed: d?.failed ?? 0, costUsd: d?.costUsd ?? 0 };
+      }),
+      byAgent: (facets?.byAgent ?? []).map((g) => ({ agentId: g._id ?? 'none', ...shape(g) })),
+      byModel: (facets?.byModel ?? []).map((g) => ({ providerId: g._id.providerId ?? 'none', modelId: g._id.modelId ?? 'none', ...shape(g) })),
+      byProject: (facets?.byProject ?? []).map((g) => ({ projectId: String(g._id), name: projectNames.get(String(g._id)) ?? 'deleted project', ...shape(g) })),
+    };
   }
 
   // ── Organization provider configuration (models & policy; credentials stay on workers) ──

@@ -44,7 +44,11 @@ export async function startControlPlane(opts: StartControlPlaneOptions = {}): Pr
   void services.registry
     .reclassifyStale()
     .then((n) => n && log.info({ packages: n }, 'reclassified capability packages'))
-    .catch((e) => log.warn({ err: String(e) }, 'capability reclassification failed'));
+    .catch((e) => log.warn({ err: String(e) }, 'capability reclassification failed'))
+    // With an embeddings API configured: embed the listings that have no embedding from its model yet.
+    .then(() => services.registry.embedStale())
+    .then((n) => n && log.info({ packages: n }, 'embedded capability packages'))
+    .catch((e) => log.warn({ err: String(e) }, 'embedding capability packages failed'));
   // Key rotation: move secrets to the current key in the background (SEC-007).
   if (config.ENCRYPTION_KEYS_PREVIOUS.length) void reencryptSecrets(services.box).catch((e) => {
       log.error({ err: String(e) }, 'secret re-encryption failed');

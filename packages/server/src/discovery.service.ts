@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import { AppError, createLogger, localRepositoryKey, newSecretToken, repositoryKey, sanitizeRepositoryName, sha256 } from '@ao/core';
-import { DiscoveredRepository, GitHubState, Project, Task, Worker, oid } from '@ao/database';
+import { DiscoveredRepository, GitHubState, PendingClone, Project, Task, Worker, oid } from '@ao/database';
 import type { GitHubService } from './github.service.js';
 import type { DiscoveredSuggestionDto, RepositoryMapping, acceptDiscoveredRequest, discoveryReport, dismissDiscoveredRequest } from '@ao/contracts';
 import { requirePermission, type Actor, type WorkerActor } from './context.js';
@@ -9,6 +9,8 @@ import type { ProjectService } from './project.service.js';
 import { audit } from './audit.js';
 
 const log = createLogger('discovery');
+/** How long a clone asked of an offline worker waits for it. */
+const QUEUED_CLONE_TTL_MS = 7 * 86_400_000;
 
 /** Identity keys of a reported repository: its remotes (origin first), then its root commit. */
 export function discoveredKeys(r: { remotes: Array<{ name: string; url: string }>; rootCommit: string | null }): string[] {
@@ -156,22 +158,63 @@ export class DiscoveryService {
     if (!repo.url) throw new AppError('VALIDATION_FAILED', 'This repository has no remote URL to clone from');
     const workers = await Worker.find({ _id: { $in: workerIds.map((w) => oid(w, 'Worker')) }, organizationId: oid(actor.organizationId) }).lean();
     const requested: string[] = [];
+    const queued: string[] = [];
     const skipped: Array<{ workerId: string; reason: string }> = [];
     for (const id of workerIds) {
       const w = workers.find((x) => String(x._id) === id);
       if (!w) skipped.push({ workerId: id, reason: 'Worker not found' });
       else if (!(w.tools ?? []).includes('clone')) skipped.push({ workerId: id, reason: `${w.name} has no projects folder (set one in its local UI → Projects)` });
       else if (project.workerPaths.some((p) => String(p.workerId) === id && String(p.repositoryId) === repositoryId)) skipped.push({ workerId: id, reason: `${w.name} already has it` });
-      else if (!this.live.isWorkerConnected(id)) skipped.push({ workerId: id, reason: `${w.name} is offline` });
-      else {
-        const requestId = newSecretToken(18);
-        await GitHubState.create({ stateHash: sha256(requestId), purpose: 'clone', organizationId: oid(actor.organizationId), userId: oid(actor.userId), data: { workerId: id, projectId, repositoryId }, expiresAt: new Date(Date.now() + 60 * 60_000) });
-        this.live.sendToWorker(id, { type: 'repository.clone', requestId, projectId, repositoryId, name: repo.name, url: repo.url, defaultBranch: repo.defaultBranch ?? 'main', viaGithubApp: Boolean(repo.github) });
+      else if (!this.live.isWorkerConnected(id)) {
+        // Kept for when the worker connects (asking again renews it).
+        await PendingClone.updateOne(
+          { workerId: w._id, repositoryId: oid(repositoryId) },
+          { $set: { organizationId: oid(actor.organizationId), projectId: oid(projectId), requestedBy: oid(actor.userId), expiresAt: new Date(Date.now() + QUEUED_CLONE_TTL_MS) } },
+          { upsert: true },
+        );
+        queued.push(id);
+      } else {
+        await this.sendClone(id, actor.organizationId, actor.userId, projectId, repo);
         requested.push(id);
       }
     }
-    await audit(actor, 'project.repository_clone_requested', { type: 'project', id: projectId }, { repositoryId, requested, skipped: skipped.length });
-    return { requested, skipped };
+    await audit(actor, 'project.repository_clone_requested', { type: 'project', id: projectId }, { repositoryId, requested, queued, skipped: skipped.length });
+    return { requested, queued, skipped };
+  }
+
+  private async sendClone(workerId: string, organizationId: string, userId: string, projectId: string, repo: { _id: unknown; name: string; url?: string | null; defaultBranch?: string | null; github?: unknown }) {
+    const requestId = newSecretToken(18);
+    const repositoryId = String(repo._id);
+    await GitHubState.create({ stateHash: sha256(requestId), purpose: 'clone', organizationId: oid(organizationId), userId: oid(userId), data: { workerId, projectId, repositoryId }, expiresAt: new Date(Date.now() + 60 * 60_000) });
+    this.live.sendToWorker(workerId, { type: 'repository.clone', requestId, projectId, repositoryId, name: repo.name, url: repo.url!, defaultBranch: repo.defaultBranch ?? 'main', viaGithubApp: Boolean(repo.github) });
+  }
+
+  /**
+   * A worker connected: send the clones that were asked of it while it was offline. A request whose
+   * repository is gone, or which the worker has a checkout of by now, is dropped.
+   */
+  async deliverQueuedClones(worker: WorkerActor) {
+    const pending = await PendingClone.find({ workerId: oid(worker.workerId), organizationId: oid(worker.organizationId), expiresAt: { $gt: new Date() } }).lean();
+    let sent = 0;
+    for (const p of pending) {
+      // Taken by deleting it, so two connections of the same worker send it once.
+      const taken = await PendingClone.deleteOne({ _id: p._id });
+      if (!taken.deletedCount) continue;
+      const project = await Project.findOne({ _id: p.projectId, organizationId: p.organizationId, archived: { $ne: true } }).lean();
+      const repo = project?.repositories.find((r) => String(r._id) === String(p.repositoryId));
+      if (!project || !repo?.url) continue;
+      if (project.workerPaths.some((w) => String(w.workerId) === worker.workerId && String(w.repositoryId) === String(p.repositoryId))) continue;
+      await this.sendClone(worker.workerId, String(p.organizationId), String(p.requestedBy), String(project._id), repo);
+      sent++;
+    }
+    return sent;
+  }
+
+  /** Clones waiting for offline workers, for the project page. */
+  async queuedClones(actor: Actor, projectId: string) {
+    requirePermission(actor, 'project.read');
+    const pending = await PendingClone.find({ organizationId: oid(actor.organizationId), projectId: oid(projectId, 'Project'), expiresAt: { $gt: new Date() } }).lean();
+    return pending.map((p) => ({ workerId: String(p.workerId), repositoryId: String(p.repositoryId), expiresAt: p.expiresAt.toISOString() }));
   }
 
   private async cloneRequest(worker: WorkerActor, requestId: string) {

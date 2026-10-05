@@ -8,6 +8,7 @@ import { PageHeader } from '../Layout';
 import { TRUST_TONE } from './Capabilities';
 import { CATEGORIES } from '@ao/core/shared';
 import { categoryLabel } from '../components/CapabilitySuggestions';
+import { PlatformStacks } from '../components/Stacks';
 
 interface CatalogPage {
   items: PackageDto[];
@@ -133,6 +134,8 @@ export function AdminMarketplacePage() {
           </table>
         )}
       </Card>
+
+      <PlatformStacks />
 
       <Card title="Categorization">
         <div className="stack">

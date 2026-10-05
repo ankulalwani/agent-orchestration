@@ -18,10 +18,21 @@ export const NOTIFICATION_TYPES = [
   'worker.offline',
   'worker.pending_approval',
   'deployment.result',
+  'budget.warning',
+  'budget.exceeded',
   /** Organization-level notices from extensions (for example account or plan changes). */
   'organization.notice',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+/** A notification as it leaves the server for other systems; the body is already redacted. */
+export interface OutboundNotification {
+  organizationId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  taskId: string | null;
+}
 
 export interface Mailer {
   send(to: string, subject: string, text: string): Promise<void>;
@@ -63,6 +74,12 @@ export class NotificationService {
     private mailer: Mailer,
   ) {}
 
+  private sinks: Array<(n: OutboundNotification) => Promise<void>> = [];
+  /** Other places a notification goes (chat channels). A sink never delays or fails the notification. */
+  onNotify(sink: (n: OutboundNotification) => Promise<void>) {
+    this.sinks.push(sink);
+  }
+
   /**
    * Notify organization members. `minRole` filters recipients; the task creator is always included.
    * Delivery: in-app (always), push (if enabled & tokens), email for high-severity types.
@@ -82,7 +99,7 @@ export class NotificationService {
     const orgId = oid(input.organizationId);
     let userIds = input.userIds;
     if (!userIds) {
-      const members = await Membership.find({ organizationId: orgId, ...(input.roles ? { role: { $in: input.roles } } : {}) }).lean();
+      const members = await Membership.find({ organizationId: orgId, suspended: { $ne: true }, ...(input.roles ? { role: { $in: input.roles } } : {}) }).lean();
       userIds = members.map((m) => String(m.userId));
     }
     const body = redactString(input.body ?? '');
@@ -98,6 +115,8 @@ export class NotificationService {
       })),
     );
     for (const d of docs) this.live.publishToOrg(input.organizationId, { type: 'notification', notification: toNotificationDto(d.toObject()) });
+    const outbound = { organizationId: input.organizationId, type: input.type, title: input.title, body, taskId: input.taskId ?? null };
+    for (const sink of this.sinks) void sink(outbound).catch((e) => captureError(e, { tags: { component: 'notifications.sink' } }));
 
     const emailTypes: NotificationType[] = ['task.failed', 'task.recovery_required', 'worker.offline', 'task.approval_required'];
     if (input.email ?? emailTypes.includes(input.type)) {

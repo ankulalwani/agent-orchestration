@@ -15,7 +15,7 @@ import type { ProjectDto } from '@ao/contracts';
 import type { Actor, Services } from '@ao/server';
 import { buildApp } from '../../apps/api/src/app.js';
 import { WorkerRuntime } from '../../apps/worker/src/runtime.js';
-import { cleanupStep, makeOwner, makeServices } from '../helpers.js';
+import { cleanupStep, makeOwner, makeServices, makeWorker } from '../helpers.js';
 
 let s: Services;
 let app: FastifyInstance;
@@ -87,13 +87,44 @@ describe('cloning to workers', () => {
   it('skips a worker without a projects folder', async () => {
     await worker.heartbeat(true);
     const r = await s.discovery.requestClone(owner, project.id, project.repositories[0]!.id, [workerId]);
-    expect(r).toEqual({ requested: [], skipped: [{ workerId, reason: expect.stringContaining('no projects folder') }] });
+    expect(r).toEqual({ requested: [], queued: [], skipped: [{ workerId, reason: expect.stringContaining('no projects folder') }] });
+  });
+
+  it('keeps a clone asked of an offline worker and sends it once when the worker connects', async () => {
+    const elsewhere = await s.projects.create(owner, { name: 'elsewhere', description: '', defaultBranch: 'main', environments: [], knowledge: '' });
+    const offline = (await makeWorker(s, owner, elsewhere.id, { name: 'laptop', tools: ['git', 'clone'] })).worker;
+    const repositoryId = project.repositories[0]!.id;
+    expect(await s.discovery.requestClone(owner, project.id, repositoryId, [offline.workerId])).toEqual({ requested: [], queued: [offline.workerId], skipped: [] });
+    // Asking again renews the request instead of adding one.
+    await s.discovery.requestClone(owner, project.id, repositoryId, [offline.workerId]);
+    expect(await s.discovery.queuedClones(owner, project.id)).toEqual([{ workerId: offline.workerId, repositoryId, expiresAt: expect.any(String) }]);
+
+    const received: Array<Record<string, unknown>> = [];
+    const unregister = s.live.registerWorker(offline.workerId, (m) => received.push(m as Record<string, unknown>));
+    // Two connections at once (a reconnect racing the old socket) still send it once.
+    expect((await Promise.all([s.discovery.deliverQueuedClones(offline), s.discovery.deliverQueuedClones(offline)])).reduce((a, b) => a + b, 0)).toBe(1);
+    expect(received).toEqual([expect.objectContaining({ type: 'repository.clone', projectId: project.id, repositoryId, name: 'shop', url: remote })]);
+    // The request it got is one the worker may ask a token for.
+    await expect(s.discovery.cloneToken(offline, String(received[0]!.requestId))).resolves.toEqual({ token: null });
+    expect(await s.discovery.queuedClones(owner, project.id)).toEqual([]);
+    expect(await s.discovery.deliverQueuedClones(offline)).toBe(0);
+
+    // A queued clone of a repository that was removed in the meantime is dropped.
+    const gone = await s.projects.create(owner, { name: 'gone', description: '', defaultBranch: 'main', environments: [], knowledge: '' });
+    const { Project } = await import('@ao/database');
+    await Project.updateOne({ _id: gone.id }, { $set: { 'repositories.0.url': remote } });
+    unregister();
+    expect((await s.discovery.requestClone(owner, gone.id, gone.repositories[0]!.id, [offline.workerId])).queued).toEqual([offline.workerId]);
+    await s.projects.archive(owner, gone.id);
+    received.length = 0;
+    expect(await s.discovery.deliverQueuedClones(offline)).toBe(0);
+    expect(received).toEqual([]);
   });
 
   it('clones into the projects folder next to an unrelated folder of the same name, and maps it', async () => {
     worker.config.update({ projectsRoot });
     await worker.heartbeat(true);
-    await waitFor(async () => (await s.workers.list(owner))[0]?.tools, (t) => Boolean(t?.includes('clone')), 10_000, 'clone capability');
+    await waitFor(async () => (await s.workers.list(owner)).find((w) => w.id === workerId)?.tools, (t) => Boolean(t?.includes('clone')), 10_000, 'clone capability');
     const r = await s.discovery.requestClone(owner, project.id, project.repositories[0]!.id, [workerId]);
     expect(r.requested).toEqual([workerId]);
 

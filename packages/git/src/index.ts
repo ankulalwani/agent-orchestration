@@ -49,6 +49,22 @@ export interface CommitResult {
   warnings: string[];
 }
 
+/** One CI check of a commit. `log`: the end of a failed check's log, or its annotations, when asked for. */
+export interface CiCheck {
+  name: string;
+  state: 'pending' | 'success' | 'failure' | 'skipped';
+  url: string | null;
+  summary: string | null;
+  log: string | null;
+}
+/** `none`: the host reports no checks for the commit (yet). */
+export interface CiStatus {
+  state: 'none' | 'pending' | 'success' | 'failure';
+  checks: CiCheck[];
+}
+/** Characters kept from the end of a failed check's log. */
+const CI_LOG_TAIL = 6000;
+
 /** Where a remote lives: host and repository path, from https, ssh or scp-style URLs. */
 export function parseRemote(url: string): { host: string; path: string } | null {
   const trimmed = url.trim();
@@ -222,12 +238,23 @@ export class GitManager {
   }
 
   /** Create (or switch to) the task branch. `switch -c` carries uncommitted changes; nothing is discarded. */
-  async ensureBranch(name: string) {
+  async ensureBranch(name: string, o: { /** A branch that exists on origin (a follow-up): get it, and what was pushed to it since. */ fromRemote?: boolean } = {}) {
     if (!/^[A-Za-z0-9._/-]{1,200}$/.test(name) || name.includes('..')) throw new AppError('UNSAFE_ARGUMENT', 'Invalid branch name');
+    const has = async () => (await this.run(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`], { allowFail: true })).exitCode === 0;
+    const tracking = `refs/remotes/origin/${name}`;
+    let fetched = false;
+    if (o.fromRemote) {
+      const url = (await this.run(['remote', 'get-url', 'origin'], { allowFail: true })).stdout.trim();
+      const host = url ? parseRemote(url)?.host : null;
+      const env = host && this.opts.pushAuth ? ((await this.opts.pushAuth(host).catch(() => null)) ?? undefined) : undefined;
+      // Best effort: without a remote, or without access, the local branch (or a new one) is used.
+      fetched = Boolean(url) && (await this.run(['fetch', '--quiet', 'origin', `refs/heads/${name}:${tracking}`], { allowFail: true, timeoutMs: 300_000, env })).exitCode === 0;
+      if (fetched && !(await has())) await this.run(['branch', '--quiet', name, tracking], { allowFail: true });
+    }
     const current = await this.currentBranch();
-    if (current === name) return;
-    const exists = (await this.run(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`], { allowFail: true })).exitCode === 0;
-    await this.run(exists ? ['switch', name] : ['switch', '-c', name]);
+    if (current !== name) await this.run((await has()) ? ['switch', name] : ['switch', '-c', name]);
+    // Commits others pushed to the branch, when they follow ours (never a merge commit, never a reset).
+    if (fetched) await this.run(['merge', '--ff-only', '--quiet', tracking], { allowFail: true });
   }
 
   /** Files changed by the task: current changes minus untouched pre-existing user changes. */
@@ -312,6 +339,67 @@ export class GitManager {
     return data.html_url ?? data.web_url ?? '';
   }
 
+  /**
+   * The CI checks of a commit on the remote's host: GitHub check runs and commit statuses, or GitLab
+   * pipeline jobs and statuses. Null when the worker has no account for the host (nothing can be read).
+   * With `logs`, a failed check also carries the end of its log (GitHub Actions, GitLab CI) or its
+   * annotations, for the agent to act on.
+   */
+  async ciStatus(sha: string, o: { logs?: boolean } = {}): Promise<CiStatus | null> {
+    const remoteUrl = (await this.run(['config', '--get', 'remote.origin.url'], { allowFail: true })).stdout.trim();
+    const remote = remoteUrl ? parseRemote(remoteUrl) : null;
+    const account = remote && this.opts.hosting ? await this.opts.hosting(remote.host) : null;
+    if (!remote || !account) return null;
+    const f = this.opts.fetchImpl ?? fetch;
+    const api = account.apiBaseUrl.replace(/\/+$/, '');
+    const github = account.kind === 'github';
+    const headers: Record<string, string> = github ? { authorization: `Bearer ${account.token}`, accept: 'application/vnd.github+json', 'user-agent': 'agent-orchestration' } : { 'private-token': account.token };
+    const get = async (url: string) => {
+      const res = await f(url, { headers, signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new AppError('UPSTREAM_ERROR', `${github ? 'GitHub' : 'GitLab'} did not return the checks of ${sha.slice(0, 7)} (HTTP ${res.status})`);
+      return res;
+    };
+    const tail = async (url: string) => {
+      try {
+        const res = await f(url, { headers, signal: AbortSignal.timeout(30_000) });
+        return res.ok ? (await res.text()).slice(-CI_LOG_TAIL).trim() || null : null;
+      } catch {
+        return null; // the log is a help, not a requirement
+      }
+    };
+    const checks: CiCheck[] = [];
+    if (github) {
+      const repo = `${api}/repos/${remote.path}`;
+      const runs = ((await (await get(`${repo}/commits/${sha}/check-runs?per_page=100`)).json()) as { check_runs?: Array<Record<string, any>> }).check_runs ?? [];
+      for (const r of runs) {
+        const state: CiCheck['state'] = r.status !== 'completed' ? 'pending' : ['success', 'neutral'].includes(r.conclusion) ? 'success' : r.conclusion === 'skipped' ? 'skipped' : 'failure';
+        const check: CiCheck = { name: String(r.name), state, url: r.html_url ?? null, summary: [r.output?.title, r.output?.summary].filter(Boolean).join(': ').slice(0, 2000) || null, log: null };
+        if (state === 'failure' && o.logs) {
+          check.log = r.app?.slug === 'github-actions' ? await tail(`${repo}/actions/jobs/${r.id}/logs`) : null;
+          if (!check.log) {
+            const annotations = await f(`${repo}/check-runs/${r.id}/annotations?per_page=30`, { headers, signal: AbortSignal.timeout(30_000) })
+              .then((res) => (res.ok ? (res.json() as Promise<Array<Record<string, any>>>) : []))
+              .catch(() => []);
+            check.log = annotations.map((a) => `${a.path}:${a.start_line} ${a.annotation_level}: ${a.message}`).join('\n').slice(0, CI_LOG_TAIL) || null;
+          }
+        }
+        checks.push(check);
+      }
+      const statuses = ((await (await get(`${repo}/commits/${sha}/status`)).json()) as { statuses?: Array<Record<string, any>> }).statuses ?? [];
+      for (const st of statuses) checks.push({ name: String(st.context), state: st.state === 'success' ? 'success' : st.state === 'pending' ? 'pending' : 'failure', url: st.target_url ?? null, summary: st.description ?? null, log: null });
+    } else {
+      const project = `${api}/api/v4/projects/${encodeURIComponent(remote.path)}`;
+      const statuses = (await (await get(`${project}/repository/commits/${sha}/statuses?per_page=100`)).json()) as Array<Record<string, any>>;
+      for (const st of statuses) {
+        const failed = ['failed', 'canceled'].includes(st.status);
+        const state: CiCheck['state'] = st.status === 'success' ? 'success' : ['skipped', 'manual'].includes(st.status) || (failed && st.allow_failure) ? 'skipped' : failed ? 'failure' : 'pending';
+        checks.push({ name: String(st.name), state, url: st.target_url ?? null, summary: st.description ?? null, log: state === 'failure' && o.logs ? await tail(`${project}/jobs/${st.id}/trace`) : null });
+      }
+    }
+    const state = !checks.length ? 'none' : checks.some((c) => c.state === 'pending') ? 'pending' : checks.some((c) => c.state === 'failure') ? 'failure' : 'success';
+    return { state, checks };
+  }
+
   /** PR creation through the GitHub CLI integration, when installed and authenticated. */
   private async createPullRequestWithGh(title: string, body: string, base: string | null): Promise<string | null> {
     const bodyFile = path.join(this.cwd, '.agent-orchestration', 'metadata', `pr-body-${Date.now()}.md`);
@@ -330,7 +418,7 @@ export class GitManager {
    * Apply the task's Git policy (spec §42). Never discards anything; returns blocked reasons instead
    * of failing the task when an optional step (push/PR) cannot be done.
    */
-  async applyPolicy(input: { policy: GitPolicy; baseline: Baseline; branch: string | null; message: string; prTitle: string; prBody: string; requirePushApproval?: boolean; pushApproved?: boolean }): Promise<CommitResult> {
+  async applyPolicy(input: { policy: GitPolicy; baseline: Baseline; branch: string | null; message: string; prTitle: string; prBody: string; requirePushApproval?: boolean; pushApproved?: boolean; /** The pull request an earlier commit of this task opened: later commits join it. */ existingPullRequestUrl?: string | null }): Promise<CommitResult> {
     const { include, warnings } = await this.taskChanges(input.baseline);
     const result: CommitResult = {
       policy: input.policy,
@@ -367,7 +455,8 @@ export class GitManager {
       result.blocked.push(`Push failed: ${(e as Error).message}`);
       return result;
     }
-    if (input.policy === 'PULL_REQUEST') {
+    if (input.policy === 'PULL_REQUEST' && input.existingPullRequestUrl) result.pullRequestUrl = input.existingPullRequestUrl;
+    else if (input.policy === 'PULL_REQUEST') {
       try {
         result.pullRequestUrl = await this.createPullRequest(input.prTitle, input.prBody, input.baseline.branch, result.branch);
       } catch (e) {

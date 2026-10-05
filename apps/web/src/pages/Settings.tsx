@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AddMemberResponse, InvitationDto, MemberDto } from '@ao/contracts';
+import type { AddMemberResponse, InvitationDto, MemberDto, SecurityKeyDto } from '@ao/contracts';
+import { startRegistration } from '@simplewebauthn/browser';
 import { ROLES, canAssignRole, type Role } from '@ao/core/shared';
 import { KeyRound } from 'lucide-react';
 import { Alert, Badge, Button, Card, Check, CopyButton, EmptyState, Field, Input, Select, Spinner, Tabs, Textarea } from '@ao/ui';
@@ -14,8 +15,10 @@ import { PageHeader } from '../Layout';
 import { Integrations } from './Integrations';
 import { GitHubSettings } from './GitHubSettings';
 import { ResetMfaDialog } from '../components/ResetMfaDialog';
+import { BudgetCard } from '../components/BudgetCard';
+import { ChatChannels, ChatIdentity } from './ChatChannels';
 
-type Tab = 'general' | 'members' | 'policy' | 'secrets' | 'github' | 'integrations' | 'account';
+type Tab = 'general' | 'members' | 'policy' | 'secrets' | 'github' | 'integrations' | 'chat' | 'account';
 
 interface Org {
   id: string;
@@ -28,7 +31,7 @@ interface Org {
 
 export function SettingsPage() {
   const [params] = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() => (['account', 'github'].includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'general'));
+  const [tab, setTab] = useState<Tab>(() => (['account', 'github', 'policy'].includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'general'));
   const { can } = useSession();
   return (
     <div className="stack max-w-[1080px]">
@@ -42,20 +45,27 @@ export function SettingsPage() {
           { id: 'members', label: 'Members' },
           ...(can('policy.manage') ? [{ id: 'policy' as const, label: 'Execution policy' }] : []),
           { id: 'github' as const, label: 'GitHub' },
-          ...(can('settings.manage') ? [{ id: 'secrets' as const, label: 'Secrets' }, { id: 'integrations' as const, label: 'Integrations' }] : []),
+          ...(can('settings.manage') ? [{ id: 'secrets' as const, label: 'Secrets' }, { id: 'integrations' as const, label: 'Integrations' }, { id: 'chat' as const, label: 'Chat' }] : []),
           { id: 'account', label: 'Your account' },
         ]}
       />
       {tab === 'general' && <General />}
       {tab === 'members' && <Members />}
-      {tab === 'policy' && <Policy />}
+      {tab === 'policy' && (
+        <>
+          <BudgetCard />
+          <Policy />
+        </>
+      )}
       {tab === 'secrets' && <Secrets />}
       {tab === 'integrations' && <Integrations />}
       {tab === 'github' && <GitHubSettings />}
+      {tab === 'chat' && <ChatChannels />}
       {tab === 'account' && (
         <>
           <ConnectedAccounts />
           <TwoFactor />
+          <ChatIdentity />
           <ApiTokens />
         </>
       )}
@@ -135,6 +145,60 @@ function ConnectedAccounts() {
   );
 }
 
+/** Security keys and passkeys as a second step, once two-factor authentication is on. */
+function SecurityKeys() {
+  const qc = useQueryClient();
+  const keys = useQuery({ queryKey: ['security-keys'], queryFn: () => get<SecurityKeyDto[]>('/me/security-keys') });
+  const [name, setName] = useState('');
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['security-keys'] });
+  const add = useMutation({
+    mutationFn: async () => {
+      const options = await post<never>('/me/security-keys/options');
+      let response;
+      try {
+        response = await startRegistration({ optionsJSON: options });
+      } catch (e) {
+        throw new Error((e as Error).name === 'InvalidStateError' ? 'This security key is already on your account.' : 'The security key was not added. Try again.');
+      }
+      return post<SecurityKeyDto>('/me/security-keys', { name, response });
+    },
+    onSuccess: () => {
+      setName('');
+      refresh();
+    },
+  });
+  const remove = useMutation({ mutationFn: (id: string) => del(`/me/security-keys/${encodeURIComponent(id)}`), onSuccess: refresh });
+  const err = add.error ?? remove.error;
+  return (
+    <div className="stack rounded-md border border-line p-3">
+      <div>
+        <strong>Security keys</strong>
+        <p className="small muted">A hardware key or a passkey on this device can stand in for the code when you sign in. Your authenticator app and recovery codes keep working.</p>
+      </div>
+      {err && <Alert tone="danger">{(err as Error).message}</Alert>}
+      {(keys.data?.length ?? 0) > 0 && (
+        <ul className="flex flex-col divide-y divide-line" aria-label="Security keys">
+          {keys.data!.map((k) => (
+            <li key={k.id} className="flex items-center justify-between gap-3 py-2">
+              <span className="min-w-0">
+                <span className="block truncate">{k.name}</span>
+                <span className="block text-xs text-fg-3">Added {new Date(k.createdAt).toLocaleDateString()} · {k.lastUsedAt ? `last used ${new Date(k.lastUsedAt).toLocaleString()}` : 'not used yet'}</span>
+              </span>
+              <Button size="sm" variant="danger" onClick={() => confirm(`Remove "${k.name}"?`) && remove.mutate(k.id)}>Remove</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <Field label="Name for a new key">{(id) => <Input id={id} value={name} maxLength={60} placeholder="YubiKey, laptop fingerprint…" onChange={(e) => setName(e.target.value)} />}</Field>
+        </div>
+        <Button loading={add.isPending} onClick={() => add.mutate()}>Add a security key</Button>
+      </div>
+    </div>
+  );
+}
+
 /** Two-factor authentication for the signed-in user (TOTP authenticator app + recovery codes). */
 function TwoFactor() {
   const { session } = useSession();
@@ -189,6 +253,7 @@ function TwoFactor() {
         {enabled ? (
           <>
             <p className="flex items-center gap-2"><Badge tone="ok">on</Badge> <span>On. Signing in asks for a code from your authenticator app.</span></p>
+            <SecurityKeys />
             <form
               className="stack"
               onSubmit={(e) => {
@@ -282,6 +347,81 @@ function General() {
         <Field label="Organization knowledge" hint="Given to agents in every task of this organization, before project and task knowledge: conventions, coding standards, how to reach internal services. No secrets: use Secrets for those.">
           {(id) => <Textarea id={id} rows={8} maxLength={50_000} value={knowledge} disabled={!editable} onChange={(e) => setKnowledge(e.target.value)} />}
         </Field>
+      </div>
+    </Card>
+  );
+}
+
+interface ScimStatus {
+  enabled: boolean;
+  baseUrl: string;
+  tokenPrefix: string | null;
+  defaultRole: Role;
+  lastUsedAt: string | null;
+  token?: string;
+}
+
+/** User provisioning from an identity provider (SCIM 2.0). */
+function Provisioning() {
+  const orgId = useOrgId();
+  const { org } = useSession();
+  const qc = useQueryClient();
+  const status = useQuery({ queryKey: ['scim', orgId], queryFn: () => get<ScimStatus>(`/orgs/${orgId}/scim`) });
+  const [role, setRole] = useState<Role>('DEVELOPER');
+  const [token, setToken] = useState<string | null>(null);
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['scim', orgId] });
+  const create = useMutation({
+    mutationFn: () => post<ScimStatus>(`/orgs/${orgId}/scim/token`, { defaultRole: role }),
+    onSuccess: (r) => {
+      setToken(r.token ?? null);
+      refresh();
+    },
+  });
+  const disable = useMutation({
+    mutationFn: () => del(`/orgs/${orgId}/scim`),
+    onSuccess: () => {
+      setToken(null);
+      refresh();
+    },
+  });
+  useEffect(() => {
+    if (status.data?.enabled) setRole(status.data.defaultRole);
+  }, [status.data]);
+  const s = status.data;
+  if (!s) return null;
+  const err = create.error ?? disable.error;
+  // Never the owner role, and never above the administrator's own.
+  const roles = ROLES.filter((r) => r !== 'OWNER' && canAssignRole(org!.role, r));
+  return (
+    <Card title="Provisioning (SCIM)" description="Let your identity provider (Okta, Microsoft Entra ID, …) add, suspend and remove members. People it adds sign in with single sign-on." actions={s.enabled ? <Badge tone="ok">on</Badge> : <Badge plain>off</Badge>}>
+      <div className="stack max-w-[680px]">
+        {err && <Alert tone="danger">{(err as ApiError).message}</Alert>}
+        {token && (
+          <Alert>
+            Copy this token into your identity provider now; it won't be shown again: <code style={{ wordBreak: 'break-all' }}>{token}</code>
+          </Alert>
+        )}
+        {s.enabled && (
+          <>
+            <Field label="SCIM base URL">{(id) => <Input id={id} readOnly value={s.baseUrl} onFocus={(e) => e.target.select()} />}</Field>
+            <p className="small muted">
+              Token <code>{s.tokenPrefix}…</code> · {s.lastUsedAt ? `last used ${new Date(s.lastUsedAt).toLocaleString()}` : 'not used yet'}. Send <code>roles</code> to choose a member's role; without it they get the role below.
+            </p>
+          </>
+        )}
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <Field label="Role for new members">
+            {(id) => (
+              <Select id={id} className="!w-44" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                {roles.map((r) => <option key={r} value={r}>{humanize(r)}</option>)}
+              </Select>
+            )}
+          </Field>
+          <Button variant={s.enabled ? 'default' : 'primary'} loading={create.isPending} onClick={() => (!s.enabled || confirm('Replace the token? The current one stops working at once.')) && create.mutate()}>
+            {s.enabled ? 'Replace the token' : 'Turn on provisioning'}
+          </Button>
+          {s.enabled && <Button variant="danger" loading={disable.isPending} onClick={() => confirm('Turn provisioning off? Members stay as they are; the identity provider can no longer change them.') && disable.mutate()}>Turn off</Button>}
+        </div>
       </div>
     </Card>
   );
@@ -384,6 +524,7 @@ function Members() {
           }}
         />
       )}
+      {can('settings.manage') && <Provisioning />}
       <Card title="Members" padded={false}>
         {members.isLoading ? (
           <div className="card-body"><Spinner /></div>
@@ -404,6 +545,7 @@ function Members() {
                       <span className="grid size-7 flex-none place-items-center rounded-sm bg-surface-3 text-xs font-semibold text-fg-2" aria-hidden="true">{(m.name || m.email).charAt(0).toUpperCase()}</span>
                       <div className="min-w-0">
                         <span className="font-medium">{m.name}</span>{m.userId === session!.user.id && <span className="muted"> (you)</span>}
+                        {m.suspended && <Badge tone="warn" className="ml-2">suspended</Badge>}
                         <div className="small muted">{m.email}</div>
                       </div>
                     </div>

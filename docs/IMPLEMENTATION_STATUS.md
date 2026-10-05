@@ -157,6 +157,27 @@ Last full refresh: 2026-09-28.
 | FUT-006 | Environment profiles | 78 | COMPLETE | A task's environment profile reaches the worker with its variables and resolved secret values (audited), as environment variables of the agent and the verification steps; values are scrubbed from recorded output; a missing secret stops the task; per-environment approval (`worker-flow.test.ts`: approval, agent and verification see the values, scrubbing mutation-checked, missing secret) |
 | FUT-007 | IDE/extension entry points | 87 | COMPLETE | VS Code extension (`apps/vscode`): sign in with an API token (secret storage), create a task from a selection (code, file and lines in the prompt) or free text, review the current branch, Explorer task list with status and attention states, links to the dashboard; commands tested against a real control plane (`vscode-extension.test.ts`); activation and command registration verified in VS Code 1.139.1 (`pnpm --filter agent-orchestration-vscode test:vscode`, opt-in); packaged with `vsce`. Not published to the Marketplace; no JetBrains plugin |
 
+## OPERATIONS AND GROWTH (added 2026-10-05)
+None of these were tried against the real external services; each names what stood in for them.
+
+| ID | Feature | Status | Evidence / notes |
+|---|---|---|---|
+| OPS-001 | Spend budgets | COMPLETE | USD and token limits per task, per project and per organization (calendar month, UTC) in the execution policy; a task stops with RECOVERY_REQUIRED before its next agent session, queued tasks wait, one warning and one "reached" notice per month; narrower layers cannot raise wider limits (`budget.test.ts`, browser test). Spend is known when a session ends, so one session can overshoot |
+| OPS-002 | Scheduled tasks | COMPLETE | Cron expressions in an IANA time zone (own parser: `cron.test.ts`, incl. daylight-saving changes), overlap skip, run now, one task per run across instances, tasks on behalf of the creator (`schedules.test.ts`, browser test) |
+| OPS-003 | Chat channels | COMPLETE | Notifications to Slack and Microsoft Teams (incoming webhooks); Slack buttons and a slash command checked against Slack's signature, run with the member's role by linked Slack member ID (`chat.test.ts` against a local fake of Slack and Teams, browser test). Teams is notifications only |
+| OPS-004 | Insights | COMPLETE | Success and first-pass rate, cost, time; by agent, model and project; daily chart (`analytics.test.ts`, browser test with screenshots) |
+| OPS-005 | Several agents on one task | COMPLETE | 2 to 4 attempts, each pinned to an agent; first to pass verification wins, the others are cancelled; a worker runs one attempt of a task at a time (`attempts.test.ts`, browser test). Needs a worker per attempt to run at the same moment |
+| OPS-006 | Task templates | COMPLETE | `{{variable}}` placeholders with labels, defaults and optional ones; picker in the New task dialog (`task-templates.test.ts`, browser test) |
+| OPS-007 | CI checks as verification | COMPLETE | Waits for GitHub check runs and statuses or GitLab job statuses of the pushed commit; failed checks go back to the agent with the end of the job log; the fix joins the same branch and pull request (`ci.test.ts`; `worker-flow.test.ts` end to end with the mock agent, a real Git remote and a fake GitHub API) |
+| OPS-008 | Follow-ups | COMPLETE | A task continues another's branch and pull request, fetching what others pushed; GitHub reviews that request changes, and comment commands on such a pull request, create follow-ups with the review's line comments (`integrations.test.ts` against a fake GitHub API; `worker-flow.test.ts` end to end) |
+| OPS-009 | Jira and Linear | COMPLETE | Issues by label and comment commands become tasks; signatures checked (Jira `X-Hub-Signature`, Linear `Linear-Signature` with Linear's own secret); replies as issue comments (`integrations.test.ts` against fakes of both APIs) |
+| OPS-010 | Queued clone requests | COMPLETE | A clone asked of an offline worker is kept for 7 days and sent once when it connects (`clone.test.ts`) |
+| AUTH-008 | Security keys (WebAuthn) | COMPLETE | Security keys and passkeys as a second step next to authenticator codes; single-use challenges; replayed answers and answers for another origin refused (`web-security-keys.test.ts` in Chromium with its virtual authenticator). Not tried with a physical key |
+| ORG-006 | Provisioning (SCIM 2.0) | COMPLETE | Users: create, find, replace, patch (Okta and Entra forms), suspend, remove; per-organization bearer token; suspension applies at once (`scim.test.ts`). Groups are not provisioned; not tried against Okta or Entra |
+| CAP-014 | Stacks | COMPLETE | Platform and organization stacks installed in one step under the usual policy; public catalog endpoints (`stacks.test.ts`, browser test). Marketing-site pages are in the site repository. No paid listings |
+| CAP-015 | Semantic suggestions | COMPLETE | Optional OpenAI-compatible embeddings API; closeness in meaning adds to the rule-based ranking; falls back to the rules when the API fails (`semantic-suggestions.test.ts` against a fake embeddings API). Not tried with a real model; the Atlas vector-search path is unverified |
+| EXT-002 | Task create guard | COMPLETE | `tasks.addCreateGuard` for a distribution's own limits on every way a task is created (`extension-contract.test.ts`) |
+
 ## TEST / DOCS / LEGAL
 | ID | Requirement | § | Status | Evidence / notes |
 |---|---|---|---|---|

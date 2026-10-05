@@ -10,6 +10,9 @@ import { InvitePage, LoginPage, OAuthCompletePage, RegisterPage, ResetPasswordPa
 import { OverviewPage } from './pages/Overview';
 import { TasksPage } from './pages/Tasks';
 import { TaskDetailPage } from './pages/TaskDetail';
+import { SchedulesPage } from './pages/Schedules';
+import { InsightsPage } from './pages/Insights';
+import { TemplatesPage } from './pages/Templates';
 import { ProjectsPage, ProjectDetailPage } from './pages/Projects';
 import { WorkersPage, WorkerDetailPage, PairPage } from './pages/Workers';
 import { AgentsPage, ProvidersPage } from './pages/AgentsProviders';
@@ -65,6 +68,9 @@ export function renderWebApp(extension: WebExtension = {}, root: HTMLElement = d
                   <Route path="/welcome" element={<OnboardingPage />} />
                   <Route path="/tasks" element={<TasksPage />} />
                   <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
+                  <Route path="/schedules" element={<SchedulesPage />} />
+                  <Route path="/insights" element={<InsightsPage />} />
+                  <Route path="/templates" element={<TemplatesPage />} />
                   <Route path="/projects" element={<ProjectsPage />} />
                   <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
                   <Route path="/workers" element={<WorkersPage />} />

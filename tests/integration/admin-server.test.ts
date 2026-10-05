@@ -15,6 +15,7 @@ const SECRETS = {
   OIDC_CLIENT_SECRET: 'oidc-client-secret-value',
   S3_ACCESS_KEY_ID: 's3-access-key-id-value',
   S3_SECRET_ACCESS_KEY: 's3-secret-access-key-value',
+  EMBEDDINGS_API_KEY: 'embeddings-api-key-value',
 };
 const URLS = {
   MONGODB_URI: 'mongodb://dbuser:db-password-value@db.internal:27017/ao',
