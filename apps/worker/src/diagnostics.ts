@@ -38,7 +38,7 @@ export async function runDiagnostics(rt: WorkerRuntime): Promise<Check[]> {
     });
   }
   const anyAgent = (await rt.agentInventory()).some((a) => a.installed && a.enabled && a.id !== 'mock');
-  if (!anyAgent) add({ id: 'agents', label: 'Coding agents', status: 'warn', detail: 'No enabled coding agent is installed', fix: 'Install at least one agent (e.g. Claude Code, Codex, Gemini CLI, OpenCode or Aider)' });
+  if (!anyAgent) add({ id: 'agents', label: 'Coding agents', status: 'warn', detail: 'No enabled coding agent is installed', fix: 'Install at least one agent (e.g. Claude Code, Codex, Gemini CLI, Cursor Agent or Copilot CLI)' });
 
   const providers = rt.providers.inventory();
   if (!providers.length) add({ id: 'providers', label: 'AI providers', status: 'warn', detail: 'No providers configured', fix: 'Add a provider in the local UI (AI Providers) or via the CLI' });

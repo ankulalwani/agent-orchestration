@@ -36,6 +36,23 @@ const AGENT_STATE: Record<string, string[]> = {
   'gemini-cli': ['.gemini'],
   opencode: ['.config/opencode', '.local/share/opencode', '.local/state/opencode', '.cache/opencode'],
   aider: ['.aider', '.aider.chat.history.md', '.aider.input.history'],
+  cursor: ['.cursor', '.config/cursor', '.local/share/cursor-agent'],
+  copilot: ['.copilot'],
+  kiro: ['.kiro', '.local/share/kiro-cli'],
+  qwen: ['.qwen'],
+  kimi: ['.kimi-code'],
+  grok: ['.grok'],
+  amp: ['.config/amp', '.local/share/amp'],
+  droid: ['.factory'],
+  auggie: ['.augment'],
+  crush: ['.config/crush', '.local/share/crush'],
+  cline: ['.cline'],
+  kilo: ['.config/kilo', '.local/share/kilo', '.local/state/kilo', '.cache/kilo'],
+  pi: ['.pi'],
+  continue: ['.continue'],
+  qoder: ['.qoder'],
+  codebuddy: ['.codebuddy'],
+  vibe: ['.vibe'],
 };
 const COMMON_STATE = ['.cache', '.npm', '.local/share/pnpm', '.bun', '.cargo/registry', 'go/pkg/mod'];
 /** Never readable by agents. Cloud credential files stay readable: Bedrock/Vertex agents may use profiles. */

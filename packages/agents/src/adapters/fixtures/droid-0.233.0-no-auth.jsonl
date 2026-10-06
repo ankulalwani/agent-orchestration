@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","cwd":"C:\\work\\repo","session_id":"34b0c88b-7eb0-49f7-8556-881d6f979637","tools":["Read","LS"],"model":"gpt-6-sol","reasoning_effort":"medium"}
+{"type":"error","source":"cli","message":"Error: Authentication failed. Please log in using /login or set a valid FACTORY_API_KEY environment variable.","timestamp":1791249395696,"session_id":"34b0c88b-7eb0-49f7-8556-881d6f979637"}

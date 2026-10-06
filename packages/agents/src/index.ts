@@ -1,12 +1,14 @@
 import type { AgentAdapter, AgentInstallation } from './types.js';
 import { ClaudeCodeAdapter } from './adapters/claude-code.js';
 import { AiderAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter } from './adapters/doc-adapters.js';
+import { AmpAdapter, AuggieAdapter, ClineAdapter, CodeBuddyAdapter, ContinueAdapter, CopilotAdapter, CrushAdapter, CursorAdapter, DroidAdapter, GrokAdapter, KiloAdapter, KimiAdapter, KiroAdapter, PiAdapter, QoderAdapter, QwenAdapter, TraeAdapter, VibeAdapter } from './adapters/more-adapters.js';
 import { MockAgentAdapter } from './adapters/mock.js';
 
 export * from './types.js';
 export * from './runtime.js';
 export * from './detection.js';
 export { ClaudeCodeAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, AiderAdapter, MockAgentAdapter };
+export { AmpAdapter, AuggieAdapter, ClineAdapter, CodeBuddyAdapter, ContinueAdapter, CopilotAdapter, CrushAdapter, CursorAdapter, DroidAdapter, GrokAdapter, KiloAdapter, KimiAdapter, KiroAdapter, PiAdapter, QoderAdapter, QwenAdapter, TraeAdapter, VibeAdapter };
 export { MOCK_AGENT_SCRIPT } from './adapters/mock.js';
 export { GATEWAY_KIND, gatewayLaunch } from './adapters/base.js';
 
@@ -68,7 +70,12 @@ export class AgentManager {
 }
 
 export function defaultAgentManager(opts: { enableMock?: boolean } = {}) {
-  const list: AgentAdapter[] = [new ClaudeCodeAdapter(), new CodexAdapter(), new GeminiAdapter(), new OpenCodeAdapter(), new AiderAdapter()];
+  const list: AgentAdapter[] = [
+    new ClaudeCodeAdapter(), new CodexAdapter(), new GeminiAdapter(), new OpenCodeAdapter(), new AiderAdapter(),
+    new CursorAdapter(), new CopilotAdapter(), new KiroAdapter(), new QwenAdapter(), new KimiAdapter(), new GrokAdapter(), new TraeAdapter(),
+    new AmpAdapter(), new DroidAdapter(), new AuggieAdapter(), new CrushAdapter(), new ClineAdapter(), new KiloAdapter(), new PiAdapter(),
+    new ContinueAdapter(), new QoderAdapter(), new CodeBuddyAdapter(), new VibeAdapter(),
+  ];
   if (opts.enableMock) list.push(new MockAgentAdapter());
   return new AgentManager(list);
 }

@@ -117,7 +117,7 @@ export function OnboardingPage() {
           ) : (
             <>
               <div>
-                <strong className="text-fg">Agents:</strong> {agents.length ? [...new Set(agents.map((a) => `${a.name} ${a.version ?? ''}`))].join(', ') : <span className="muted">none detected — install Claude Code, Codex, Gemini CLI, OpenCode or Aider on the worker</span>}
+                <strong className="text-fg">Agents:</strong> {agents.length ? [...new Set(agents.map((a) => `${a.name} ${a.version ?? ''}`))].join(', ') : <span className="muted">none detected — install Claude Code, Codex, Gemini CLI, Cursor Agent, Copilot CLI or another supported agent on the worker</span>}
               </div>
               <div>
                 <strong className="text-fg">Models:</strong> each agent runs on its own login (for example your Claude subscription); nothing to set up.

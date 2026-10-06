@@ -70,7 +70,7 @@ export function analyzeReadiness(input: ReadinessInput): ReadinessReport {
   add(
     agents.length
       ? { id: 'agents', area: 'agents', category: 'available', title: `Coding agents: ${agents.map((a) => a.id).join(', ')}`, explanation: 'At least one agent can execute tasks on this worker.', confidence: 'high' }
-      : { id: 'agents', area: 'agents', category: 'required', title: 'Install a coding agent', explanation: 'No supported coding agent (Claude Code, Codex, Gemini CLI, OpenCode, Aider) is installed on this worker.', confidence: 'high' },
+      : { id: 'agents', area: 'agents', category: 'required', title: 'Install a coding agent', explanation: 'No supported coding agent (Claude Code, Codex, Gemini CLI, Cursor Agent, Copilot CLI, OpenCode, Aider or another) is installed on this worker.', confidence: 'high' },
   );
   const healthy = worker.providers.filter((p) => p.healthy);
   add(

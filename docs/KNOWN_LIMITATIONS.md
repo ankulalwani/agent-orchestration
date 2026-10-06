@@ -64,9 +64,11 @@ Actual, current limitations. Updated as the implementation changes. Last updated
   repository creation and scoped tokens are tested against a local fake of GitHub's web and REST API, not
   against github.com. Cloning and pushing with an app token (the `http.extraheader` Git environment) were
   not run against GitHub; cloning was tested from a local bare repository.
-- **Multi-repository tasks need Claude Code** (`--add-dir`, listed in `claude --help` 2.1.281; the full
-  multi-repository flow was tested with the mock agent). Codex, Gemini CLI, OpenCode and Aider don't declare
-  the capability, so workers with only those agents don't get tasks of projects with several repositories.
+- **Multi-repository tasks need an agent with an extra-directory flag**: Claude Code, Cursor Agent, Copilot
+  CLI, Qwen Code, Kimi Code, Qoder CLI, CodeBuddy Code (`--add-dir`) or Auggie (`--add-workspace`). The flags
+  are listed in each tool's `--help`; the full multi-repository flow was tested with the mock agent only.
+  The other agents don't declare the capability, so workers with only those don't get tasks of projects with
+  several repositories.
 - **Review and plan tasks** of multi-repository projects look at the primary repository only.
 - **Discovery on macOS and Linux** scans `/` minus system folders and was only tested on Windows (and on a
   temporary folder tree in the test suite). A first scan of large drives can take minutes.
@@ -84,6 +86,18 @@ Actual, current limitations. Updated as the implementation changes. Last updated
   system). Codex 0.157.1, Gemini CLI 0.61.0, OpenCode 1.18.32 and Aider 0.86.2 were run for real (flags,
   output formats, failure handling), but a successful task needs accounts for them. Success-path events of Codex, Gemini
   CLI and OpenCode follow their documentation. Resume is verified for Claude Code and Codex only.
+- **The agents added on 2026-10-06** (Cursor Agent, Copilot CLI, Qwen Code, Kimi Code, Grok CLI, Trae Agent,
+  Amp, Factory Droid, Auggie, Crush, Cline, Kilo Code, Pi, Continue CLI, Qoder CLI, CodeBuddy Code, Mistral
+  Vibe) were run for real without credentials (flags accepted, sign-in failure recognised). Copilot CLI, Qwen
+  Code, Kilo Code, Pi, Crush and Trae Agent also completed a task against a fake model through the gateway.
+  None has run with its vendor's account, so for the others success-path events follow the vendors'
+  documentation, and none claims resume. **Kiro CLI** has no Windows build and was written from its
+  documentation only; the dashboard marks it as not verified.
+- **Amp without a login** starts a browser login and waits. The worker reports sign-in as required when that
+  line appears, but the process itself ends only when the hang timeout stops it. Run `amp login` on the worker
+  first, or put `AMP_API_KEY` in the task's environment profile.
+- **Agents without a model flag** (Amp, Continue CLI, Mistral Vibe) run on the model their own
+  configuration names; a task's model choice is not applied to them.
 - **Live provider APIs.** Providers were tested against a local HTTP fake, not the real services.
 - **macOS and Linux.** Their installers were only syntax-checked. The Windows installer ran for real
   (scheduled task, restarts, uninstall), but starting at sign-in was not exercised.

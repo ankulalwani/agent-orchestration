@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { providerEnv } from './adapters/base.js';
+import { AmpAdapter, AuggieAdapter, ClineAdapter, CodeBuddyAdapter, ContinueAdapter, CopilotAdapter, CrushAdapter, CursorAdapter, DroidAdapter, GrokAdapter, KiloAdapter, KimiAdapter, KiroAdapter, PiAdapter, QoderAdapter, QwenAdapter, TraeAdapter, VibeAdapter, GATEWAY_KIND, type AgentAdapter } from './index.js';
 import { ClaudeCodeAdapter, MockAgentAdapter, AiderAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, classifyText, extractRetryAt, startAgentSession, baseEnv, defaultAgentManager, type AgentEvent, type ParseContext } from './index.js';
 
 const ctx = (): ParseContext => ({ sessionId: null, lastState: null, retryAt: null, detail: null, resultSeen: false, resultIsError: false, recentText: [] });
@@ -147,6 +148,171 @@ describe('Codex / Gemini / OpenCode / Aider (checked against the real CLIs; outp
   });
 });
 
+describe('Cursor, Copilot, Kiro, Qwen, Kimi, Grok, Trae and the other added CLIs (output of the real CLIs in adapters/fixtures)', () => {
+  const fixture = (name: string) => fs.readFileSync(path.join(__dirname, 'adapters', 'fixtures', name), 'utf8').split(/\r?\n/).filter(Boolean);
+  const run = (a: AgentAdapter, lines: string[], code: number, stream: 'stdout' | 'stderr' = 'stdout') => {
+    const c = ctx();
+    const events = lines.flatMap((l) => {
+      c.recentText.push(l);
+      return a.parseLine(l, stream, c);
+    });
+    return { events, exit: a.classifyExit(code, null, c) };
+  };
+  const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ao-cli-'));
+  const inst = (p: string) => ({ installed: true, path: p, version: '1', authenticated: null, notes: [] });
+  const request = (provider: { providerId: string; kind: string; modelId: string; apiKey?: string; baseUrl?: string } = { providerId: 'native:x', kind: 'native', modelId: 'default' }) => ({ taskId: 't', cwd: dir(), prompt: 'P', provider, sessionId: 'our-uuid', stateDir: dir() });
+  const gateway = { providerId: 'addon', kind: GATEWAY_KIND, modelId: 'ao-addon', apiKey: 'session-token', baseUrl: 'http://127.0.0.1:4000' };
+
+  // Each CLI run without credentials: [agent, adapter, fixture, exit code, stream]. None may count as success.
+  it.each<[string, AgentAdapter, string, number, 'stdout' | 'stderr']>([
+    ['Cursor Agent', new CursorAdapter(), 'cursor-2026.10.01-no-auth.stderr.txt', 1, 'stderr'],
+    ['Copilot CLI', new CopilotAdapter(), 'copilot-1.0.92-no-auth.stderr.txt', 1, 'stderr'],
+    ['Qwen Code', new QwenAdapter(), 'qwen-0.25.0-no-auth.jsonl', 1, 'stdout'],
+    ['Kimi Code', new KimiAdapter(), 'kimi-2.1.1-no-model.stderr.txt', 1, 'stderr'],
+    ['Grok', new GrokAdapter(), 'grok-1.0.46-no-auth.jsonl', 1, 'stdout'],
+    ['Droid', new DroidAdapter(), 'droid-0.233.0-no-auth.jsonl', 1, 'stdout'],
+    ['Auggie', new AuggieAdapter(), 'auggie-0.36.0-no-auth.stderr.txt', 1, 'stderr'],
+    ['Crush', new CrushAdapter(), 'crush-0.97.1-no-providers.stderr.txt', 1, 'stderr'],
+    ['Cline', new ClineAdapter(), 'cline-3.0.68-unauthorized.jsonl', 1, 'stdout'],
+    ['Kilo Code', new KiloAdapter(), 'kilo-7.8.3-no-auth.jsonl', 1, 'stdout'],
+    ['Pi', new PiAdapter(), 'pi-0.73.1-no-key.stderr.txt', 1, 'stderr'],
+    ['Continue', new ContinueAdapter(), 'continue-1.5.47-no-auth.stderr.txt', 1, 'stderr'],
+    ['Qoder', new QoderAdapter(), 'qoder-1.1.65-no-auth.jsonl', 1, 'stdout'],
+    // These two exit 0 without a login: the output decides, not the exit code.
+    ['CodeBuddy', new CodeBuddyAdapter(), 'codebuddy-2.161.4-no-auth.jsonl', 0, 'stdout'],
+    ['Mistral Vibe', new VibeAdapter(), 'vibe-2.2.1-no-key.txt', 0, 'stdout'],
+  ])('%s without credentials → AUTH_REQUIRED', (_name, adapter, file, code, stream) => {
+    expect(run(adapter, fixture(file), code, stream).exit.state).toBe('AUTH_REQUIRED');
+  });
+
+  it('Amp: its browser login flow is reported as AUTH_REQUIRED at once; confirmations are off through a settings file', async () => {
+    const { events } = run(new AmpAdapter(), fixture('amp-2026.10.06-login-flow.txt'), 1);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'state', state: 'AUTH_REQUIRED' }));
+    const inv = await new AmpAdapter().buildInvocation(request(), inst('amp'));
+    expect(JSON.parse(fs.readFileSync(inv.args[inv.args.indexOf('--settings-file') + 1]!, 'utf8'))).toEqual({ 'amp.dangerouslyAllowAll': true });
+    expect(inv.args.slice(-3, -1)).toEqual(['--stream-json', '-x']);
+  });
+
+  it('Claude-dialect stream (Qwen through the gateway): session, tool, message, usage and completion', () => {
+    const { events, exit } = run(new QwenAdapter(), fixture('qwen-0.25.0-gateway.jsonl'), 0);
+    expect(events[0]).toMatchObject({ type: 'session' });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool', name: 'write_file' }));
+    expect(events).toContainEqual({ type: 'message', text: 'Created hello.txt. Done.' });
+    expect(exit.state).toBe('COMPLETED');
+    // Cursor's tool calls and Droid's messages use their own event shapes.
+    const cursor = run(new CursorAdapter(), ['{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"npm test"}}},"session_id":"s1"}', '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s1"}'], 0);
+    expect(cursor.events).toContainEqual({ type: 'tool', name: 'shell', summary: 'npm test' });
+    expect(cursor.exit.state).toBe('COMPLETED');
+    const droid = run(new DroidAdapter(), ['{"type":"message","role":"assistant","text":"working"}', '{"type":"completion","finalText":"done","session_id":"s2"}'], 0);
+    expect(droid.events).toEqual(expect.arrayContaining([{ type: 'message', text: 'working' }, { type: 'session', sessionId: 's2' }, { type: 'message', text: 'done' }]));
+  });
+
+  it('Copilot: gateway run parsed; custom-provider variables for the gateway and for direct providers', async () => {
+    const { events, exit } = run(new CopilotAdapter(), fixture('copilot-1.0.92-gateway.jsonl'), 0);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool', name: 'create' }));
+    expect(events).toContainEqual({ type: 'message', text: 'Created hello.txt. Done.' });
+    expect(events).toContainEqual({ type: 'session', sessionId: '7732ba63-53e3-4ea6-8c3c-f4feea58bc00' });
+    expect(exit.state).toBe('COMPLETED');
+    const a = new CopilotAdapter();
+    const gw = await a.buildInvocation(request(gateway), inst('copilot'));
+    expect(gw.env).toMatchObject({ COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:4000/openai/v1', COPILOT_PROVIDER_TYPE: 'openai', COPILOT_PROVIDER_API_KEY: 'session-token', COPILOT_MODEL: 'ao-addon' });
+    expect(gw.args).toEqual(expect.arrayContaining(['--allow-all-tools', '--no-ask-user', '--output-format', 'json']));
+    expect(gw.args.at(-2)).toBe('-p');
+    const direct = await a.buildInvocation(request({ providerId: 'a', kind: 'anthropic', modelId: 'claude-sonnet-5', apiKey: 'sk-ant' }), inst('copilot'));
+    expect(direct.env).toMatchObject({ COPILOT_PROVIDER_TYPE: 'anthropic', COPILOT_PROVIDER_BASE_URL: 'https://api.anthropic.com', COPILOT_PROVIDER_API_KEY: 'sk-ant', COPILOT_MODEL: 'claude-sonnet-5' });
+    const ollama = await a.buildInvocation(request({ providerId: 'o', kind: 'ollama', modelId: 'qwen3', baseUrl: 'http://localhost:11434' }), inst('copilot'));
+    expect(ollama.env.COPILOT_PROVIDER_BASE_URL).toBe('http://localhost:11434/v1');
+    // Its own login: nothing injected.
+    expect((await a.buildInvocation(request(), inst('copilot'))).env).not.toHaveProperty('COPILOT_PROVIDER_BASE_URL');
+  });
+
+  it('Qwen: our session id, --auth-type only for an OpenAI-compatible endpoint', async () => {
+    const a = new QwenAdapter();
+    const own = await a.buildInvocation(request(), inst('qwen'));
+    expect(own.args.slice(0, 5)).toEqual(['--yolo', '--output-format', 'stream-json', '--session-id', 'our-uuid']);
+    expect(own.args).not.toContain('--auth-type');
+    const gw = await a.buildInvocation(request(gateway), inst('qwen'));
+    expect(gw.args).toEqual(expect.arrayContaining(['--auth-type', 'openai', '--model', 'ao-addon']));
+    expect(gw.args.filter((x) => x === '--auth-type')).toHaveLength(1);
+    expect(gw.env).toMatchObject({ OPENAI_BASE_URL: 'http://127.0.0.1:4000/openai/v1', OPENAI_API_KEY: 'session-token', OPENAI_MODEL: 'ao-addon' });
+    const direct = await a.buildInvocation(request({ providerId: 'c', kind: 'openai-compatible', modelId: 'm1', apiKey: 'k', baseUrl: 'https://llm.example/v1' }), inst('qwen'));
+    expect(direct.args).toEqual(expect.arrayContaining(['--auth-type', 'openai']));
+    expect(direct.env).toMatchObject({ OPENAI_API_KEY: 'k', OPENAI_BASE_URL: 'https://llm.example/v1', OPENAI_MODEL: 'm1' });
+  });
+
+  it('Pi: gateway run parsed; add-on models through a models.json of its own', async () => {
+    const { events, exit } = run(new PiAdapter(), fixture('pi-0.73.1-gateway.jsonl'), 0);
+    expect(events[0]).toMatchObject({ type: 'session' });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool', name: 'write' }));
+    expect(events).toContainEqual({ type: 'message', text: 'Created hello.txt. Done.' });
+    expect(exit.state).toBe('COMPLETED');
+    const inv = await new PiAdapter().buildInvocation(request(gateway), inst('pi'));
+    expect(inv.args).toEqual(expect.arrayContaining(['-p', '--mode', 'json', '--provider', 'ao_gateway', '--model', 'ao-addon']));
+    const models = JSON.parse(fs.readFileSync(path.join(inv.env.PI_CODING_AGENT_DIR!, 'models.json'), 'utf8'));
+    expect(models.providers.ao_gateway).toMatchObject({ baseUrl: 'http://127.0.0.1:4000/openai/v1', apiKey: 'AO_GATEWAY_KEY', models: [{ id: 'ao-addon' }] });
+    expect(inv.env.AO_GATEWAY_KEY).toBe('session-token'); // the key itself is not written to disk
+  });
+
+  it('Trae: exit code 0 is decided by its summary; the configuration file holds no key', async () => {
+    const a = new TraeAdapter();
+    expect(run(a, fixture('trae-0.1.0-gateway.txt'), 0).exit.state).toBe('COMPLETED');
+    expect(run(a, ['│ Error       │ ❌ Error code: 401 - invalid api key                     ', '│ Success          │ ❌ No                                 │'], 0).exit.state).toBe('AUTH_REQUIRED');
+    expect(run(a, ['│ Success          │ ❌ No                                 │'], 0).exit.state).toBe('FAILED');
+    expect(a.capabilities().nativeLogin).toBe(false);
+    const inv = await a.buildInvocation(request(gateway), inst('trae-cli'));
+    const config = fs.readFileSync(inv.args[inv.args.indexOf('--config-file') + 1]!, 'utf8');
+    expect(config).toContain('provider: openrouter');
+    expect(config).toContain('base_url: "http://127.0.0.1:4000/openai/v1"');
+    expect(config).not.toContain('session-token');
+    expect(inv.env.OPENROUTER_API_KEY).toBe('session-token');
+    expect(inv.args.slice(0, 2)).toEqual(['run', '--file']);
+    expect(fs.readFileSync(inv.args[2]!, 'utf8')).toBe('P');
+    await expect(a.buildInvocation(request(), inst('trae-cli'))).rejects.toThrow(/cannot use the provider kind native/);
+  });
+
+  it('Kilo Code and Crush: their own configuration for add-on models', async () => {
+    const kilo = await new KiloAdapter().buildInvocation(request(gateway), inst('kilo'));
+    expect(JSON.parse(kilo.env.KILO_CONFIG_CONTENT!).provider.ao_gateway.options.baseURL).toBe('http://127.0.0.1:4000/openai/v1');
+    expect(kilo.env).not.toHaveProperty('OPENCODE_CONFIG_CONTENT');
+    expect(kilo.args).toEqual(expect.arrayContaining(['run', '--format', 'json', '--auto', '--model', 'ao_gateway/ao-addon']));
+    const crush = await new CrushAdapter().buildInvocation(request(gateway), inst('crush'));
+    const config = JSON.parse(fs.readFileSync(path.join(crush.env.CRUSH_GLOBAL_CONFIG!, 'crush.json'), 'utf8'));
+    expect(config.providers.ao_gateway).toMatchObject({ type: 'openai-compat', base_url: 'http://127.0.0.1:4000/openai/v1', api_key: '$AO_GATEWAY_KEY' });
+    expect(crush.args.slice(0, 4)).toEqual(['run', '--quiet', '--model', 'ao_gateway/ao-addon']);
+    expect(new CrushAdapter().capabilities().gitExcludes).toEqual(['.crush']);
+  });
+
+  it('command lines the CLIs accepted, and what each adapter claims', async () => {
+    const args = async (a: AgentAdapter, exe: string, extra: { additionalDirs?: string[] } = {}) => (await a.buildInvocation({ ...request({ providerId: 'native:x', kind: 'native', modelId: 'm1' }), ...extra }, inst(exe))).args;
+    const other = path.join(dir(), 'web');
+    expect((await args(new CursorAdapter(), 'cursor-agent', { additionalDirs: [other] })).slice(0, -1)).toEqual(['-p', '--output-format', 'stream-json', '--force', '--trust', '--model', 'm1', '--add-dir', other]);
+    expect((await args(new KiroAdapter(), 'kiro-cli')).slice(0, -1)).toEqual(['chat', '--no-interactive', '--trust-all-tools', '--model', 'm1']);
+    // Kimi's prompt mode refuses --yolo and --auto.
+    const kimi = await args(new KimiAdapter(), 'kimi');
+    expect(kimi.slice(0, 4)).toEqual(['--output-format', 'stream-json', '--model', 'm1']);
+    expect(kimi).not.toContain('--auto');
+    const grok = await args(new GrokAdapter(), 'grok');
+    expect(fs.readFileSync(grok[grok.indexOf('--prompt-file') + 1]!, 'utf8')).toBe('P');
+    expect(grok).toEqual(expect.arrayContaining(['--output-format', 'streaming-json', '--always-approve', '--session-id', 'our-uuid']));
+    expect((await args(new DroidAdapter(), 'droid')).slice(0, 7)).toEqual(['exec', '--output-format', 'stream-json', '--auto', 'medium', '-m', 'm1']);
+    await expect(new DroidAdapter().buildInvocation({ ...request(), settings: { autonomy: 'yolo' } }, inst('droid'))).rejects.toThrow(/Invalid autonomy/);
+    expect((await args(new AuggieAdapter(), 'auggie')).slice(0, 3)).toEqual(['--print', '--output-format', 'json']);
+    expect((await args(new ClineAdapter(), 'cline')).slice(0, 3)).toEqual(['--json', '--auto-approve', 'true']);
+    expect((await args(new ContinueAdapter(), 'cn')).slice(0, 4)).toEqual(['-p', '--auto', '--format', 'json']);
+    expect((await args(new QoderAdapter(), 'qodercli')).slice(0, 6)).toEqual(['-p', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--session-id', 'our-uuid']);
+    expect((await args(new CodeBuddyAdapter(), 'codebuddy')).slice(0, 4)).toEqual(['-p', '--output-format', 'stream-json', '-y']);
+    expect((await args(new VibeAdapter(), 'vibe')).slice(0, 3)).toEqual(['--output', 'streaming', '-p']);
+    // No prompt on a command line: only the pointer to the prompt file, or the file itself.
+    for (const a of defaultAgentManager().list().filter((x) => x.id !== 'claude-code' && x.id !== 'trae')) expect((await a.buildInvocation({ ...request(), prompt: 'do "things" & more' }, inst(a.executables[0]!))).args.join(' '), a.id).not.toContain('things');
+
+    expect(new KiroAdapter().capabilities().verification).toBe('documentation');
+    for (const a of [new CursorAdapter(), new KiroAdapter(), new KimiAdapter(), new GrokAdapter(), new AmpAdapter(), new DroidAdapter(), new AuggieAdapter(), new ClineAdapter(), new ContinueAdapter(), new QoderAdapter(), new CodeBuddyAdapter(), new VibeAdapter()]) {
+      expect(a.capabilities(), a.id).toMatchObject({ gateway: false, supportedProviders: [], resume: false });
+    }
+    for (const a of [new CopilotAdapter(), new QwenAdapter(), new TraeAdapter(), new CrushAdapter(), new KiloAdapter(), new PiAdapter()]) expect(a.capabilities().gateway, a.id).toBe(true);
+  });
+});
+
 describe('provider environment for agents', () => {
   it('Bedrock: a stored key becomes AWS_* variables; Vertex: project and region for Claude Code', () => {
     expect(providerEnv('bedrock', 'AKID:SECRET:TOKEN', null, { region: 'eu-west-1', profile: 'work' })).toEqual({ AWS_REGION: 'eu-west-1', AWS_PROFILE: 'work', AWS_ACCESS_KEY_ID: 'AKID', AWS_SECRET_ACCESS_KEY: 'SECRET', AWS_SESSION_TOKEN: 'TOKEN' });
@@ -233,7 +399,7 @@ describe('runtime with mock agent', () => {
 
   it('manager inventory lists all adapters and detects claude on this machine if installed', async () => {
     const inv = await defaultAgentManager({ enableMock: true }).inventory();
-    expect(inv.map((a) => a.id)).toEqual(['claude-code', 'codex', 'gemini', 'opencode', 'aider', 'mock']);
+    expect(inv.map((a) => a.id)).toEqual(['claude-code', 'codex', 'gemini', 'opencode', 'aider', 'cursor', 'copilot', 'kiro', 'qwen', 'kimi', 'grok', 'trae', 'amp', 'droid', 'auggie', 'crush', 'cline', 'kilo', 'pi', 'continue', 'qoder', 'codebuddy', 'vibe', 'mock']);
     expect(inv.find((a) => a.id === 'mock')!.installed).toBe(true);
   }, 60_000);
 });

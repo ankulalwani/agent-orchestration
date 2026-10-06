@@ -24,8 +24,9 @@ describe.runIf(enabled)('harnesses through the model gateway (real CLIs, fake mo
         expect(r.created?.trim()).toBe(CONTENT);
         return;
       }
-      // The harness returned its tool's result to the model through the gateway.
-      expect(r.requests.at(-1)!.messages.some((m: any) => m.role === 'tool')).toBe(true);
+      // The harness returned its tool's result to the model through the gateway. (Not always in its last
+      // request: Kilo Code asks for a session title afterwards.)
+      expect(r.requests.some((q) => q.messages.some((m: any) => m.role === 'tool'))).toBe(true);
       // Codex's own sandbox refuses commands in this setup on Windows ("blocked by policy"), which is
       // Codex's policy, not the gateway's: its round trip is checked above.
       if (agentId !== 'codex' || process.platform !== 'win32') expect(r.created?.trim()).toBe(CONTENT);

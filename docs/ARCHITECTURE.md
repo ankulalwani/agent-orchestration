@@ -14,7 +14,7 @@ _(planned)_. See `IMPLEMENTATION_STATUS.md` for per-requirement status.
                                             │ outbound HTTPS + WSS only
              ┌──────────────── Worker (apps/worker, native OS service) ─────────────────┐
              │ Control-plane client · Event buffer · Task executor · Recovery engine    │
-             │ Agent manager ─► adapters (claude-code, codex, gemini, opencode, aider)  │
+             │ Agent manager ─► adapters (claude-code, codex, gemini, cursor, … 23)     │
              │ Provider manager ─► providers (anthropic, openai, google, openrouter,…)  │
              │ Git manager · Verification engine · Credential store · Local API + UI    │
              └──────────────────────────────────────────────────────────────────────────┘

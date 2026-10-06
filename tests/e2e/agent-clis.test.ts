@@ -13,10 +13,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { AiderAdapter, CodexAdapter, GeminiAdapter, OpenCodeAdapter, startAgentSession, type AgentAdapter, type AgentEvent } from '../../packages/agents/src/index.js';
+import { AiderAdapter, AuggieAdapter, ClineAdapter, CodeBuddyAdapter, CodexAdapter, ContinueAdapter, CopilotAdapter, CrushAdapter, CursorAdapter, DroidAdapter, GeminiAdapter, GrokAdapter, KiloAdapter, KimiAdapter, OpenCodeAdapter, PiAdapter, QoderAdapter, QwenAdapter, VibeAdapter, startAgentSession, which, type AgentAdapter, type AgentEvent } from '../../packages/agents/src/index.js';
 
 const bins = [path.resolve('.tools/agents/node_modules/.bin'), path.resolve(process.platform === 'win32' ? '.tools/aider-venv/Scripts' : '.tools/aider-venv/bin')];
 const enabled = process.env.AO_TEST_AGENT_CLIS === '1' && bins.every((b) => fs.existsSync(b));
+// Optional folders with the CLIs added later (Cursor's package, and the Python CLIs).
+const moreBins = [path.resolve('.tools/cursor-agent/dist-package'), path.resolve(process.platform === 'win32' ? '.tools/py-agents-venv/Scripts' : '.tools/py-agents-venv/bin')];
 
 async function run(adapter: AgentAdapter, provider: { providerId: string; kind: string; modelId: string; apiKey?: string }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `ao-cli-${adapter.id}-`));
@@ -54,7 +56,7 @@ async function run(adapter: AgentAdapter, provider: { providerId: string; kind: 
 
 describe.runIf(enabled)('real agent CLIs (invalid credentials)', () => {
   beforeAll(() => {
-    process.env.PATH = [...bins, process.env.PATH].join(path.delimiter);
+    process.env.PATH = [...bins, ...moreBins, process.env.PATH].join(path.delimiter);
   });
 
   it('Codex', async () => {
@@ -82,4 +84,18 @@ describe.runIf(enabled)('real agent CLIs (invalid credentials)', () => {
     const untracked = r.status.split('\n').filter(Boolean).map((l) => l.slice(3));
     expect(untracked.filter((f) => !f.startsWith('.aider.tags.cache') && !f.startsWith('.agent-orchestration'))).toEqual([]);
   }, 240_000);
+
+  // The CLIs added on 2026-10-06, on their own login (none here): each must accept the adapter's
+  // command line and end as AUTH_REQUIRED. Those that are not installed are skipped. Amp is left out
+  // (without a login it waits for a browser), and so is Trae Agent (it has no login of its own).
+  const added: AgentAdapter[] = [new CursorAdapter(), new CopilotAdapter(), new QwenAdapter(), new KimiAdapter(), new GrokAdapter(), new DroidAdapter(), new AuggieAdapter(), new CrushAdapter(), new ClineAdapter(), new KiloAdapter(), new PiAdapter(), new ContinueAdapter(), new QoderAdapter(), new CodeBuddyAdapter(), new VibeAdapter()];
+  for (const adapter of added) {
+    it(`${adapter.name}`, async (t) => {
+      if (!adapter.executables.some((e) => which(e))) return t.skip();
+      const r = await run(adapter, { providerId: `native:${adapter.id}`, kind: 'native', modelId: 'default', apiKey: '' });
+      expect(r.exit.state, JSON.stringify(r.exit)).toBe('AUTH_REQUIRED');
+      // Nothing left in the project besides our own state directory.
+      expect(r.status.split('\n').filter(Boolean).map((l) => l.slice(3)).filter((f) => !f.startsWith('.agent-orchestration'))).toEqual([]);
+    }, 240_000);
+  }
 });

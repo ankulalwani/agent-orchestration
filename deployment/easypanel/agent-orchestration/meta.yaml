@@ -2,7 +2,7 @@ name: Agent Orchestration
 description:
   Agent Orchestration is a self-hosted control plane for AI coding agents. It
   dispatches tasks to workers on your own machines, where Claude Code, Codex,
-  Gemini CLI, OpenCode or Aider do the work. Every task is verified with your
+  Gemini CLI, Cursor Agent, Copilot CLI or 18 other coding agents do the work. Every task is verified with your
   own commands (tests, typecheck, build) and committed on a task branch, and the
   report separates verified results from the agent's claims. This template runs
   the API and web dashboard with MongoDB and Redis. Self-hosted installations
@@ -61,7 +61,7 @@ benefits:
 features:
   - title: Multi-Agent Dispatch
     description:
-      Works with Claude Code, Codex, Gemini CLI, OpenCode and Aider, with
+      Works with Claude Code, Codex, Gemini CLI, Cursor Agent, Copilot CLI and 18 other coding agents, with
       fallback models when an agent reaches its usage limit.
   - title: Web Dashboard, Mobile App and IDE
     description:

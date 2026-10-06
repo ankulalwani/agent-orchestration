@@ -62,7 +62,7 @@ own claims** (what it says it did). You always know which is which.
 
 | | |
 |---|---|
-| 🧠 **Bring any agent** | Claude Code, Codex, Gemini CLI, OpenCode and Aider are detected on each worker and use their own login. |
+| 🧠 **Bring any agent** | 23 coding agents are detected on each worker and use their own login: Claude Code, Codex, Gemini CLI, Cursor Agent, GitHub Copilot CLI, OpenCode, Aider, Kiro, Qwen Code, Kimi Code, Grok, Trae Agent and [more](docs/agents/README.md). |
 | 🔌 **Bring any model** | OpenRouter, OpenAI, Anthropic, Gemini, Groq, DeepSeek, NVIDIA NIM, Ollama, LM Studio or any OpenAI-compatible endpoint takes over when an agent hits its usage limit. Keys never leave the worker. |
 | ✅ **Proof, not promises** | Tests, type checks, lint, build and browser checks run after every attempt. |
 | ♻️ **Survives bad days** | Provider limits, context exhaustion, crashes, hangs and lost workers are detected and resumed from checkpoints. |

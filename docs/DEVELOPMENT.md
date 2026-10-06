@@ -41,7 +41,7 @@ pnpm dev:worker     # prints the worker's local UI link
 
 In the dashboard: create an account (the first one administers the installation) → **Getting started** →
 pair the worker → map a project to a local checkout → create a task. With no agent installed, the mock
-agent can run tasks end to end; with Claude Code, Codex, Gemini CLI, OpenCode or Aider installed and signed
+agent can run tasks end to end; with Claude Code, Codex, Gemini CLI or another [supported agent](agents/README.md) installed and signed
 in, the worker detects them.
 
 ## 4. Before opening a pull request

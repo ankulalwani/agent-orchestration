@@ -30,7 +30,7 @@ Type-check a package: `cd packages/<name> && npx tsc --noEmit`.
 | Deployment | `tests/deploy` | helm lint, kubeconform, hadolint, shellcheck (from `.tools/`; skipped when missing) |
 | Redis | `tests/integration/bullmq.test.ts`, `tests/chaos/redis.test.ts` | Redis (`.tools/redis/*/redis-server.exe` or `AO_TEST_REDIS`; skipped when missing) |
 | Claude Code, live | `tests/e2e/claude-code-live.test.ts` | A real coding task through control plane, worker and the installed `claude` with its login (opt-in: `AO_TEST_CLAUDE_LIVE=1`; uses your Claude usage, about US$0.06 with the default Haiku model; `AO_TEST_CLAUDE_MODEL` to change) |
-| Agent CLIs | `tests/e2e/agent-clis.test.ts` | Codex, Gemini CLI, OpenCode, Aider from `.tools/` (opt-in: `AO_TEST_AGENT_CLIS=1`; makes rejected requests to the providers) |
+| Agent CLIs | `tests/e2e/agent-clis.test.ts`, `gateway-agents.test.ts` | The agent CLIs from `.tools/` (opt-in: `AO_TEST_AGENT_CLIS=1`; makes rejected requests to the providers): npm packages in `.tools/agents`, Aider in `.tools/aider-venv`, Trae Agent and Mistral Vibe in `.tools/py-agents-venv`, Cursor Agent's package in `.tools/cursor-agent/dist-package`. CLIs that are missing are skipped |
 | Backup drill | `tests/integration/backup-restore.test.ts` | MongoDB Database Tools (`.tools/mongotools/*/bin` or `AO_TEST_MONGO_TOOLS`; skipped when missing) |
 | S3 | `tests/integration/s3.test.ts` | SeaweedFS (`.tools/seaweed/weed.exe` or `AO_TEST_SEAWEED`; skipped when missing) |
 

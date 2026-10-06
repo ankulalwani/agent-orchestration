@@ -34,7 +34,7 @@ control-plane URL, approve the pairing code in the dashboard, and the worker app
 
 ## 3. Agents, models and capabilities
 
-- **Agents:** install and sign in to any of Claude Code, Codex, Gemini CLI, OpenCode or Aider on the worker
+- **Agents:** install and sign in to any [supported agent](agents/README.md) (Claude Code, Codex, Gemini CLI, Cursor Agent, Copilot CLI, OpenCode, Aider and others) on the worker
   machine. The worker detects them; tasks use each agent's own login by default.
 - **Add-on models (optional):** in the worker UI → AI models, add OpenRouter, OpenAI, Anthropic, Gemini,
   Groq, DeepSeek, NVIDIA NIM, Ollama, LM Studio or any OpenAI-compatible endpoint, used when an agent reaches

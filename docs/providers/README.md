@@ -25,15 +25,22 @@ reset time is retried after 15 minutes; a reset time is never guessed.
 ## The model gateway
 
 Harnesses speak their own API: Claude Code the Anthropic Messages API, Codex the OpenAI Responses API,
-Gemini CLI the Gemini API, OpenCode and Aider OpenAI chat completions. Add-on providers offer OpenAI-compatible
+Gemini CLI the Gemini API, and OpenCode, Aider, Copilot CLI, Qwen Code, Kilo Code, Pi, Crush and Trae Agent
+OpenAI chat completions. Add-on providers offer OpenAI-compatible
 chat completions. The worker's **model gateway** sits in between, like OmniRoute or free-claude-code but built
 in:
 
 - It listens on `127.0.0.1` only, on a random port, and each agent session gets its own token.
 - The harness is started with its endpoint pointed at the gateway (`ANTHROPIC_BASE_URL` for Claude Code; a
   custom `model_provider` for Codex; `GOOGLE_GEMINI_BASE_URL` with API-key authentication and a settings home
-  of its own for Gemini CLI; `OPENCODE_CONFIG_CONTENT` for OpenCode; `OPENAI_API_BASE` for Aider). Its own
-  tools, prompts and settings are unchanged.
+  of its own for Gemini CLI; `OPENCODE_CONFIG_CONTENT` for OpenCode and `KILO_CONFIG_CONTENT` for Kilo Code;
+  `OPENAI_API_BASE` for Aider; `COPILOT_PROVIDER_BASE_URL` for Copilot CLI; `--auth-type openai` with
+  `OPENAI_BASE_URL` for Qwen Code; a `models.json` of its own for Pi; a `crush.json` of its own for Crush;
+  a configuration file with its `openrouter` provider for Trae Agent). Its own tools, prompts and settings
+  are unchanged.
+- Agents that only talk to their vendor's service (Cursor Agent, Kiro CLI, Kimi Code, Grok CLI, Amp, Factory
+  Droid, Auggie, Cline, Continue CLI, Qoder CLI, CodeBuddy Code, Mistral Vibe) cannot use the gateway: when
+  one of them reaches its limit, the task moves to another agent.
 - It translates requests and streamed answers both ways, including tool calls and tool results (Codex's
   free-form tools such as `apply_patch` become functions with one `input` argument). Thinking/reasoning
   blocks are not sent upstream, and hosted server tools (web search) are not available through it.
@@ -44,8 +51,9 @@ in:
 - **Order:** add-on providers are used in the order of the list (move them up and down). List the models to
   use per provider (the first is preferred); without a list, every model the provider lists is used.
 
-All five harnesses were run for real through the gateway (Claude Code 2.1.281, Codex 0.157.1, Gemini CLI
-0.61.0, OpenCode 1.18.32, Aider 0.86.2) against a fake OpenAI-compatible model that asks each to create a
+Eleven harnesses were run for real through the gateway (Claude Code 2.1.281, Codex 0.157.1, Gemini CLI
+0.61.0, OpenCode 1.18.32, Aider 0.86.2, Copilot CLI 1.0.92, Qwen Code 0.25.0, Kilo Code 7.8.3, Pi 0.73.1,
+Crush 0.97.1, Trae Agent 0.1.0) against a fake OpenAI-compatible model that asks each to create a
 file with its own tools; no real add-on provider was used.
 
 ## Providers

@@ -1,0 +1,3 @@
+❌ No auth provided. Please log in with `auggie login` or set the AUGMENT_SESSION_AUTH environment variable.
+❌ Failed to initialize API connection
+   Reason: Cannot create API setup: Authentication failed: No auth provided. Please log in with `auggie login` or set the AUGMENT_SESSION_AUTH environment variable.

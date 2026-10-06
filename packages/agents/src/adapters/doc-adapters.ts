@@ -15,26 +15,26 @@ import { GATEWAY_KIND, classifyPlainExit, detectExecutable, gatewayLaunch, parse
  * The prompt goes into a file in the task state directory and the agent is told to read it (no
  * command-line length limits, nothing sensitive in process listings).
  */
-const POINTER = (file: string) =>
+export const POINTER = (file: string) =>
   `Read the task instructions in the file ${file} and follow them exactly. That file is the complete task description.`;
 
-const LIMITED: AgentState[] = ['RATE_LIMITED', 'CAPACITY_LIMITED', 'CONTEXT_EXHAUSTED', 'AUTH_REQUIRED', 'NETWORK_ERROR'];
+export const LIMITED: AgentState[] = ['RATE_LIMITED', 'CAPACITY_LIMITED', 'CONTEXT_EXHAUSTED', 'AUTH_REQUIRED', 'NETWORK_ERROR'];
 
 /** HTTP status → agent state, for CLIs that report the provider's status code. */
-function stateForStatus(status: unknown): AgentState | null {
+export function stateForStatus(status: unknown): AgentState | null {
   if (status === 401 || status === 403) return 'AUTH_REQUIRED';
   if (status === 429) return 'RATE_LIMITED';
   if (status === 503 || status === 529) return 'CAPACITY_LIMITED';
   return null;
 }
 
-function record(ctx: ParseContext, state: AgentState | null, detail: string) {
+export function record(ctx: ParseContext, state: AgentState | null, detail: string) {
   if (state) ctx.lastState = state;
   ctx.detail = detail.slice(0, 500);
   ctx.retryAt = extractRetryAt(detail) ?? ctx.retryAt;
 }
 
-function parseJson(line: string): Record<string, any> | null {
+export function parseJson(line: string): Record<string, any> | null {
   if (!line.startsWith('{')) return null;
   try {
     return JSON.parse(line) as Record<string, any>;
@@ -44,7 +44,7 @@ function parseJson(line: string): Record<string, any> | null {
 }
 
 /** Exit handling for JSON-event CLIs: explicit failure events win over the exit code. */
-function classifyJsonExit(code: number | null, signal: string | null, ctx: ParseContext) {
+export function classifyJsonExit(code: number | null, signal: string | null, ctx: ParseContext) {
   if (ctx.lastState && LIMITED.includes(ctx.lastState)) return { state: ctx.lastState, detail: ctx.detail ?? undefined, retryAt: ctx.retryAt };
   if (ctx.resultIsError) return { state: 'FAILED' as AgentState, detail: ctx.detail ?? 'The agent reported an error' };
   if (signal) return { state: 'CRASHED' as AgentState, detail: `Terminated by ${signal}` };
@@ -52,7 +52,7 @@ function classifyJsonExit(code: number | null, signal: string | null, ctx: Parse
   return classifyPlainExit(code, signal, ctx);
 }
 
-abstract class CliAdapter implements AgentAdapter {
+export abstract class CliAdapter implements AgentAdapter {
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly executables: string[];
@@ -90,8 +90,13 @@ abstract class CliAdapter implements AgentAdapter {
       const gwReq = { ...req, provider: { ...req.provider, modelId: gw.model } };
       return { command: inst.path ?? this.executables[0]!, args: this.withGatewayArgs(this.args(file, POINTER(file), gwReq), gw.args), env: { ...baseEnv(), ...gw.env, ...(req.env ?? {}) } };
     }
-    const env = { ...baseEnv(), ...providerEnv(req.provider.kind, req.provider.apiKey, req.provider.baseUrl, req.provider.extra), ...(req.env ?? {}) };
+    const env = { ...baseEnv(), ...this.directEnv(req), ...(req.env ?? {}) };
     return { command: inst.path ?? this.executables[0]!, args: this.args(file, POINTER(file), req), env };
+  }
+
+  /** Environment for the harness's own login or a provider it supports directly. */
+  protected directEnv(req: AgentStartRequest): Record<string, string> {
+    return providerEnv(req.provider.kind, req.provider.apiKey, req.provider.baseUrl, req.provider.extra);
   }
 
   /** Where the gateway's extra arguments go: before the last argument (the prompt), e.g. Codex config overrides. */
@@ -264,9 +269,9 @@ const OPENCODE_PROVIDER: Record<string, string> = { 'azure-openai': 'azure', bed
  * claimed.
  */
 export class OpenCodeAdapter extends CliAdapter {
-  readonly id = 'opencode';
-  readonly name = 'OpenCode';
-  readonly executables = ['opencode'];
+  readonly id: string = 'opencode';
+  readonly name: string = 'OpenCode';
+  readonly executables: string[] = ['opencode'];
   protected readonly providers = ['anthropic', 'openai', 'google', 'openrouter', 'ollama', 'openai-compatible', 'azure-openai', 'bedrock'];
 
   override capabilities(): AgentCapabilities {

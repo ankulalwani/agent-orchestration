@@ -111,15 +111,22 @@ export function gatewayLaunch(agentId: string, p: ProviderBinding): { env: Recor
       // rejected in headless runs by 0.61, so the adapter also selects the API-key type in a settings file.)
       return { env: { GOOGLE_GEMINI_BASE_URL: `${root}/gemini`, GEMINI_API_KEY: token, GOOGLE_API_KEY: '', GOOGLE_GENAI_USE_VERTEXAI: 'false', GOOGLE_GENAI_USE_GCA: 'false' }, args: [], model };
     case 'opencode':
+    case 'kilo':
       return {
         env: {
-          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          // Kilo Code is built on OpenCode and reads the same configuration under its own variable.
+          [agentId === 'kilo' ? 'KILO_CONFIG_CONTENT' : 'OPENCODE_CONFIG_CONTENT']: JSON.stringify({
             provider: { ao_gateway: { npm: '@ai-sdk/openai-compatible', name: 'Agent Orchestration add-on models', options: { baseURL: `${root}/openai/v1`, apiKey: token }, models: { [model]: { name: model, tool_call: true } } } },
           }),
         },
         args: [],
         model: `ao_gateway/${model}`,
       };
+    case 'copilot':
+      // Its custom-provider mode (`copilot help providers`): OpenAI chat completions, no GitHub login needed.
+      return { env: { COPILOT_PROVIDER_BASE_URL: `${root}/openai/v1`, COPILOT_PROVIDER_TYPE: 'openai', COPILOT_PROVIDER_API_KEY: token, COPILOT_MODEL: model }, args: [], model };
+    case 'qwen':
+      return { env: { OPENAI_BASE_URL: `${root}/openai/v1`, OPENAI_API_KEY: token, OPENAI_MODEL: model, QWEN_CODE_SUPPRESS_YOLO_WARNING: '1' }, args: ['--auth-type', 'openai'], model };
     case 'aider':
       return { env: { OPENAI_API_BASE: `${root}/openai/v1`, OPENAI_API_KEY: token }, args: [], model: `openai/${model}` };
     default:
