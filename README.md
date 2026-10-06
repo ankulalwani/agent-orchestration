@@ -138,13 +138,14 @@ More in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 | 🖼️ **Web dashboard** | [`apps/web`](apps/web) | Live operational UI, served by the control plane in production. |
 | 🤖 **Worker** | [`apps/worker`](apps/worker) | Native process on each machine: runs agents, Git, verification and recovery. |
 | 🪟 **Worker UI** | [`apps/worker-ui`](apps/worker-ui) | Local UI (`127.0.0.1:47821`) for pairing, providers, agents, project paths and diagnostics. |
+| 🖥️ **Desktop app** | [`apps/desktop`](apps/desktop) | The worker as an app for Windows, macOS and Linux: window, tray icon, start at login, no Node.js to install. |
 | ⌨️ **CLI** | [`apps/cli`](apps/cli) | `agentctl`: tasks, status, logs, worker control, `doctor`. |
 | 🧩 **VS Code extension** | [`apps/vscode`](apps/vscode) | Start tasks from a selection, review branches, see the task list in the editor. |
 | 📱 **Mobile** | [`apps/mobile`](apps/mobile) | Expo / React Native: monitor, approve, answer agents. |
 | 🧱 **Packages** | [`packages/*`](packages) | Core domain (state machine, policies, selection, fallback), contracts, database, agents, providers, git, verification, queue, UI kit. |
 
 **Deploy with:** [Docker Compose](docker-compose.yml) · [Helm](deployment/helm) · [Terraform](deployment/terraform)
-· worker installers for [Linux](installers/linux), [macOS](installers/macos) and [Windows](installers/windows).
+· the worker as a [desktop app](docs/workers/README.md#install), or its installers for [Linux](installers/linux), [macOS](installers/macos) and [Windows](installers/windows).
 
 ## 🚦 Project status
 

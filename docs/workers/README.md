@@ -8,6 +8,27 @@ A worker is a native Node.js process on a machine with your code and AI agents. 
 
 ## Install
 
+**Desktop app.** For a developer's own computer this is the shortest way: download the installer, start the app, connect it. Nothing else has to be installed; the app brings its own Node.js.
+
+| OS | Download (always the newest release) | Verified |
+|---|---|---|
+| Windows 10/11, x64 | [`agent-orchestration-worker-windows-x64-setup.exe`](https://github.com/ankulalwani/agent-orchestration/releases/latest/download/agent-orchestration-worker-windows-x64-setup.exe) | Installed, connected to a control plane, taken over from a command-line worker, updated to a newer version and uninstalled on Windows 11, with an installer built locally (GNU toolchain; the release installer is built with MSVC) |
+| macOS 11+, Apple silicon | [`agent-orchestration-worker-macos-arm64.dmg`](https://github.com/ankulalwani/agent-orchestration/releases/latest/download/agent-orchestration-worker-macos-arm64.dmg) | Not run on a Mac yet |
+| macOS 11+, Intel | [`agent-orchestration-worker-macos-x64.dmg`](https://github.com/ankulalwani/agent-orchestration/releases/latest/download/agent-orchestration-worker-macos-x64.dmg) | Not run on a Mac yet |
+| Linux x64 (glibc 2.35+) | [`.AppImage`](https://github.com/ankulalwani/agent-orchestration/releases/latest/download/agent-orchestration-worker-linux-x64.AppImage) or [`.deb`](https://github.com/ankulalwani/agent-orchestration/releases/latest/download/agent-orchestration-worker-linux-x64.deb) | Built, and both run in an Ubuntu 22.04 container with a virtual display (`.deb` installed, `.AppImage` unpacked); not on a real desktop session |
+
+- The window shows the same local UI as the browser does, with a folder chooser next to path fields. Closing the window keeps the worker running; the tray icon shows its state and opens the window, the log and **Quit**. Quitting the app stops the worker.
+- **Start at login** is in the tray menu and in **Settings**. The app then starts in the tray.
+- The worker runs as you and uses the same data folder as a worker installed with the scripts below, so the pairing, settings and credentials carry over in both directions.
+- If a worker installed from the command line already runs on the computer, the app says so and offers **Use the desktop app instead** (removes that worker's autostart entry and stops it, keeps its data) or **Keep it and open its UI**.
+- The installers are **not code-signed yet**. Windows SmartScreen shows "Windows protected your PC": choose **More info**, then **Run anyway**. macOS refuses to open the app on the first start: open **System Settings → Privacy & Security** and choose **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/Agent Orchestration Worker.app"`). Compare the download with the checksum on the release page if you want to be sure of the file.
+- Linux: the tray icon needs an AppIndicator host (on GNOME, the AppIndicator extension). Without one the app works, and the window is the only way to reach it. The `.AppImage` updates itself; a `.deb` is updated by installing the newer one.
+- Updates: the worker inside the app updates as described under [Updating](#updating). The app itself (window, tray, bundled Node.js) changes rarely; **Check for updates…** in the tray menu (or **Updates → Check for app updates…**) installs a newer one, after asking.
+- For scripts: start the app again with `--quit` to stop the running app and its worker cleanly.
+- Uninstalling the app keeps the worker's data (pairing, settings, credentials) and the app's own folder with the installed worker versions and the log. Delete them by hand if you want nothing left: the worker data folder is the one `agentctl doctor` names, the app's folder is `io.agent-orchestration.worker` in the user's local application data.
+
+For servers and machines without a desktop, use one of the two ways below.
+
 **One click (from the dashboard).** Open **Workers** (or **Getting started**), copy the install command for your OS and run it on the machine that has your code and agents. It downloads the signed worker release from your control plane, verifies it, installs it for your user, starts it at login, and opens the approval page in your browser; click **Approve** and the worker connects. Requires Node.js 20+, and an administrator who has published a release and set `WORKER_RELEASE_TRUSTED_KEYS` ([setup](../self-hosting/README.md#one-click-worker-install)). Re-running the command on an installed worker updates it and keeps its pairing.
 
 **From a repository checkout.** Build the package once from a repository checkout (Node 20+ required):
@@ -85,6 +106,11 @@ version lives in its own folder (`app/<version>/`, with `state.json` saying whic
   previous version and never retries that version automatically. Re-running the installer with that
   version clears the mark.
 - The current and the previous version are kept; older ones are removed.
+
+Credentials after an update: worker packages up to v0.2.14 carried the OS credential store's library for
+Linux only, so a Windows or macOS worker installed or updated from one kept its credentials in the
+encrypted file. Later packages carry it for every system; such a worker copies its credentials to the OS
+store once, on its first start with the new version, and stays connected.
 
 Without an update source, update by re-running the installer: it installs the new version next to the old
 one and makes it current. Configuration and credentials are kept.

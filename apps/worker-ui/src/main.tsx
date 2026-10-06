@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useState, type ReactNode } from 're
 import { createRoot } from 'react-dom/client';
 import './worker.css';
 import { Activity, ArrowDown, ArrowUp, Bot, Cable, Cpu, FolderGit2, ListChecks, Moon, Plug, RefreshCw, ScrollText, Settings as SettingsIcon, Stethoscope, Sun, type LucideIcon } from 'lucide-react';
+import { autostart, checkAppUpdate, isDesktop, openLogWindow, openOutsideLinksInBrowser, pickFolder } from './desktop';
 import { Alert, Badge, Button, Card, Check, EmptyState, Field, Input, KeyValue, Select, SlotMeter, Spinner, Stat, StatStrip, Textarea, cn, timeAgo, useTheme, type Tone } from '@ao/ui';
 
 /**
@@ -49,7 +50,13 @@ function useData<T>(path: string, intervalMs = 0) {
   return { data, error, reload: load };
 }
 
-type Section = 'dashboard' | 'connection' | 'tasks' | 'projects' | 'agents' | 'providers' | 'mcp' | 'logs' | 'diagnostics' | 'settings' | 'updates';
+/** Desktop app only: a button that opens the system's folder chooser. Renders nothing in a browser. */
+function BrowseButton({ title, start, onPick, children = 'Browse…' }: { title: string; start?: string; onPick: (folder: string) => void; children?: ReactNode }) {
+  if (!isDesktop) return null;
+  return <Button onClick={() => void pickFolder(title, start).then((folder) => folder && onPick(folder))}>{children}</Button>;
+}
+
+type Section ='dashboard' | 'connection' | 'tasks' | 'projects' | 'agents' | 'providers' | 'mcp' | 'logs' | 'diagnostics' | 'settings' | 'updates';
 const SECTIONS: Array<[Section, string, LucideIcon]> = [
   ['dashboard', 'Dashboard', Activity],
   ['connection', 'Connection', Cable],
@@ -252,6 +259,7 @@ function Connection({ s, reload }: { s: Status; reload: () => void }) {
           </div>
         </Card>
       )}
+      {isDesktop && !s.workerId && <DesktopSetup />}
       {s.pairing.status === 'denied' && <Alert tone="danger">Pairing was denied.</Alert>}
       {s.pairing.status === 'expired' && <Alert tone="warn">The pairing code expired. Start again.</Alert>}
       {s.workerId ? (
@@ -277,6 +285,34 @@ function Connection({ s, reload }: { s: Status; reload: () => void }) {
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * Desktop app only, before the worker is connected: the two choices that belong to this computer. Both are
+ * saved at once and can be changed later (Settings, Projects).
+ */
+function DesktopSetup() {
+  const d = useData<DiscoveryView>('/api/discovery');
+  const [err, setErr] = useState<string | null>(null);
+  const choose = (folder: string) => {
+    if (!d.data) return;
+    api('PUT', '/api/discovery/settings', { ...d.data.settings, projectsRoot: folder })
+      .then(() => (setErr(null), d.reload()))
+      .catch((e: Error) => setErr(e.message));
+  };
+  return (
+    <Card title="On this computer">
+      <div className="stack">
+        {err && <Alert tone="danger">{err}</Alert>}
+        <StartAtLogin />
+        <div className="flex flex-wrap items-center gap-3">
+          <BrowseButton title="Folder for new repositories" start={d.data?.projectsRoot ?? undefined} onPick={choose}>Choose the projects folder…</BrowseButton>
+          <span className="mono small">{d.data?.projectsRoot ?? 'No projects folder yet'}</span>
+        </div>
+        <p className="small muted">New repositories are cloned into the projects folder, one folder each. Repositories that are already on this computer are found without it.</p>
+      </div>
+    </Card>
   );
 }
 
@@ -360,6 +396,7 @@ function RepositoryDiscovery() {
         <Field label="Folders to scan" hint="One absolute path per line. Empty: every fixed drive (system, program and dependency folders are skipped).">
           {(id) => <Textarea id={id} rows={3} className="mono" value={form.roots} onChange={(e) => setForm({ ...form, roots: e.target.value })} />}
         </Field>
+        {isDesktop && <div><BrowseButton title="Folder to scan for repositories" onPick={(folder) => setForm({ ...form, roots: [...lines(form.roots), folder].join('\n') })}>Add a folder…</BrowseButton></div>}
         <Field label="Never scan" hint="Folder names (e.g. archive) or absolute paths, one per line.">
           {(id) => <Textarea id={id} rows={2} className="mono" value={form.exclude} onChange={(e) => setForm({ ...form, exclude: e.target.value })} />}
         </Field>
@@ -368,7 +405,12 @@ function RepositoryDiscovery() {
           <Field label="Folder depth">{(id) => <Input id={id} type="number" min={1} max={20} value={form.maxDepth} onChange={(e) => setForm({ ...form, maxDepth: Number(e.target.value) })} />}</Field>
         </div>
         <Field label="Projects folder" hint="New repositories (for example created from the dashboard) are cloned here, one folder each. Empty: don't clone to this computer.">
-          {(id) => <Input id={id} className="mono" value={form.projectsRoot} placeholder="E:\Projects" onChange={(e) => setForm({ ...form, projectsRoot: e.target.value })} />}
+          {(id) => (
+            <div className="flex gap-2">
+              <Input id={id} className="mono" value={form.projectsRoot} placeholder="E:\Projects" onChange={(e) => setForm({ ...form, projectsRoot: e.target.value })} />
+              <BrowseButton title="Folder for new repositories" start={form.projectsRoot} onPick={(folder) => setForm({ ...form, projectsRoot: folder })} />
+            </div>
+          )}
         </Field>
         {last ? (
           <>
@@ -430,7 +472,12 @@ function Projects() {
               <Field label="Project ID">{(id) => <Input id={id} className="mono" value={r.projectId} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, projectId: e.target.value.trim() } : x)))} />}</Field>
               <Field label="Repository ID (optional)">{(id) => <Input id={id} className="mono" value={r.repositoryId ?? ''} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, repositoryId: e.target.value.trim() } : x)))} />}</Field>
               <div style={{ flex: 1, minWidth: 260 }}>
-                <Field label="Local path" hint={info ? (info.exists ? (info.isGit ? 'Git repository' : 'Not a Git repository') : 'Path does not exist') : undefined}>{(id) => <Input id={id} value={r.localPath} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, localPath: e.target.value } : x)))} />}</Field>
+                <Field label="Local path" hint={info ? (info.exists ? (info.isGit ? 'Git repository' : 'Not a Git repository') : 'Path does not exist') : undefined}>{(id) => (
+                  <div className="flex gap-2">
+                    <Input id={id} value={r.localPath} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, localPath: e.target.value } : x)))} />
+                    <BrowseButton title="Folder of this project's repository" start={r.localPath} onPick={(folder) => setRows(rows.map((x, j) => (j === i ? { ...x, localPath: folder } : x)))} />
+                  </div>
+                )}</Field>
               </div>
               <Button variant="ghost" aria-label="Remove" onClick={() => setRows(rows.filter((_, j) => j !== i))}>Remove</Button>
             </div>
@@ -737,7 +784,7 @@ function Mcp() {
 function Logs() {
   const events = useData<Array<{ eventId: string; taskId: string; timestamp: string; type: string; payload: Record<string, unknown> }>>('/api/events/recent', 3000);
   return (
-    <Card title="Recent events" padded={false}>
+    <Card title="Recent events" padded={false} actions={isDesktop ? <Button size="sm" onClick={() => void openLogWindow()}>Open the worker log</Button> : undefined}>
       {events.data?.length ? (
         <pre className="log !max-h-[70vh] !rounded-t-none !border-0">
           {[...events.data].reverse().map((e) => `${new Date(e.timestamp).toLocaleTimeString()}  ${e.type.padEnd(24)} ${e.taskId.slice(-8)}  ${e.type === 'AgentOutput' ? ((e.payload.lines as string[]) ?? []).join(' ⏎ ').slice(0, 300) : JSON.stringify(e.payload).slice(0, 200)}`).join('\n')}
@@ -811,9 +858,24 @@ function Settings() {
         <Field label="Worker policy (JSON)" hint="Overrides organization/project policy on this worker, e.g. fallback chain or agent preferences.">{(id) => <Textarea id={id} rows={8} className="mono" value={form.policy} onChange={(e) => setForm({ ...form, policy: e.target.value })} />}</Field>
         <Check checked={form.telemetry} onChange={(e) => setForm({ ...form, telemetry: e.target.checked })}>Send anonymous health telemetry to my control plane (never code, prompts or secrets)</Check>
         <Check checked={form.plugins} onChange={(e) => setForm({ ...form, plugins: e.target.checked })}>Run approved plugin code on this machine (in a restricted process, when your organization has plugins turned on)</Check>
+        {isDesktop && <StartAtLogin />}
         <p className="small muted">Local UI: {settings.data.localHost}:{settings.data.localPort}. Change the bind address only if you understand the exposure.</p>
       </div>
     </Card>
+  );
+}
+
+/** Desktop app only. Applied at once (it is a setting of the app, not of the worker's configuration). */
+function StartAtLogin() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    void autostart.get().then(setEnabled);
+  }, []);
+  if (enabled === null) return null;
+  return (
+    <Check checked={enabled} onChange={(e) => void autostart.set(e.target.checked).then(() => autostart.get()).then(setEnabled)}>
+      Start the worker when I sign in to this computer (it stays in the tray)
+    </Check>
   );
 }
 
@@ -847,6 +909,11 @@ function Updates() {
   const d = u.data;
   return (
     <div className="stack">
+      {isDesktop && (
+        <Card title="Desktop app" actions={<Button size="sm" onClick={() => void checkAppUpdate()}>Check for app updates…</Button>}>
+          <p className="small muted">The app (its window, tray icon and bundled Node.js) updates separately from the worker and changes rarely. The worker below updates on its own.</p>
+        </Card>
+      )}
       <Card title="Updates">
         <div className="stack">
           {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
@@ -903,6 +970,7 @@ function Root(): ReactNode {
   return <App />;
 }
 
+openOutsideLinksInBrowser();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Root />

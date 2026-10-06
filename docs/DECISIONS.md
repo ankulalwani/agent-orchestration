@@ -139,3 +139,27 @@ other agent tools. Windows has no equivalent that works without administrator ri
 needs a native helper), so it reports none. The sandbox is off by default because it couldn't be
 exercised on real Linux or macOS here, and a wrong writable list would break agents; organizations
 turn it on with `preferred` or `required`, and workers that have one advertise `os-sandbox`.
+
+## D-021 · 2026-10-06 · Desktop app: a Tauri shell around the unchanged worker, with Node.js as a sidecar
+The desktop app (`apps/desktop`) does not reimplement the worker. It ships the official Node.js binary
+(pinned by checksum, as the sidecar `ao-node`) and the same worker package the releases publish, installs
+that package into the D-017 layout in its own data folder, and starts the worker's launcher. Its window
+shows the worker's own local UI from `http://127.0.0.1:<port>`; the shell adds a start screen, a tray icon,
+start at login, notifications, a folder chooser and a log window. Tauri rather than Electron for the small
+shell; the cost is a Rust toolchain for this one app, which is why the package has no `build` script and
+the normal CI does not touch it.
+- **Two update paths.** The worker inside keeps updating itself through signed releases (D-017), so the
+  dashboard's "update workers" covers desktop workers. The shell updates through `tauri-plugin-updater`
+  with its own key, and installs its bundled worker only when that is newer than the installed one.
+- **Access for the worker UI.** The page is served by the worker, so for Tauri it is a remote origin. The
+  app's commands are listed in `build.rs`, which turns on access control for them; the capability
+  `worker-ui` grants `http://127.0.0.1:*` six commands (folder chooser, start at login read and write,
+  log window, check for app updates, open a link in the browser). The window refuses to navigate anywhere else and hands such links to the browser.
+- **Stopping.** A process without a console cannot be sent a signal on Windows, so the worker has
+  `POST /api/shutdown`, present only when the app started it (`AO_DESKTOP=1`) and behind the local token.
+  The launcher also stops when the app's process is gone (`AO_SUPERVISOR_PID`), so a crashed app leaves
+  no worker holding the port.
+- **One worker package for every OS.** The package now carries the keyring binaries of all supported
+  systems (`scripts/package-worker.mjs`). Before, it had the build machine's only: a package built on
+  Linux made Windows and macOS workers fall back to the encrypted-file credential store. A worker that
+  did so copies its credentials to the OS store once, on its first start with a working OS store.

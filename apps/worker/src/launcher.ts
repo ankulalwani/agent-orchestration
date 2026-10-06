@@ -37,6 +37,7 @@ function run(version: string, args: string[]): Promise<number> {
   const c = spawn(process.execPath, [main, ...args], {
     cwd: path.dirname(path.dirname(main)),
     stdio: 'inherit',
+    windowsHide: true, // no console window when the launcher itself has none (the desktop app)
     env: { ...process.env, AO_INSTALL_DIR: installDir, AO_WORKER_VERSION: version, AO_LAUNCHER_PID: String(process.pid) },
   });
   child = c;
@@ -88,6 +89,21 @@ async function main() {
     const c = spawn(process.execPath, [cli, ...args.slice(1)], { stdio: 'inherit' });
     c.once('exit', (code) => process.exit(code ?? 1));
     return;
+  }
+  // Started by the desktop app: stop when it is gone (it may have crashed), or the worker would keep the
+  // local port and the next start of the app could not run its own.
+  const supervisorPid = Number(process.env.AO_SUPERVISOR_PID);
+  if (supervisorPid > 0) {
+    setInterval(() => {
+      try {
+        process.kill(supervisorPid, 0);
+      } catch {
+        log('the desktop app is gone; stopping');
+        stopping = true;
+        if (child) child.kill();
+        else process.exit(0);
+      }
+    }, 5000).unref();
   }
   let failures = 0;
   for (;;) {

@@ -1,0 +1,155 @@
+name: Release desktop app
+
+# Builds the worker's desktop app (apps/desktop: a Tauri shell with Node.js and the worker package inside) for
+# Windows, macOS and Linux, and attaches the installers to the GitHub Release of the tag:
+#
+#   agent-orchestration-worker-windows-x64-setup.exe
+#   agent-orchestration-worker-macos-arm64.dmg / -macos-x64.dmg
+#   agent-orchestration-worker-linux-x64.AppImage / .deb
+#   latest.json and the signed update files that installed apps read (tauri-plugin-updater)
+#
+# The names carry no version, so .../releases/latest/download/<name> always is the newest installer.
+#
+# Maintainers, one time: add the repository secret DESKTOP_UPDATER_PRIVATE_KEY (the minisign key whose public
+# half is `plugins.updater.pubkey` in apps/desktop/src-tauri/tauri.conf.json; `pnpm tauri signer generate`).
+# Without it the installers are still built, but no latest.json: installed apps do not update themselves.
+#
+# The installers are not signed for Windows SmartScreen or macOS Gatekeeper yet (docs/workers/README.md says
+# what users see). When certificates exist, set the variables Tauri reads (APPLE_CERTIFICATE,
+# APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID; for Windows a
+# `bundle.windows.signCommand`) in the build step.
+#
+# Tags pushed with GITHUB_TOKEN do not start other workflows, so auto-tag.yml starts this one explicitly.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-desktop-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - os: ubuntu-22.04 # the oldest supported image: the AppImage runs on systems with this glibc or newer
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    runs-on: ${{ matrix.os }}
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.DESKTOP_UPDATER_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.DESKTOP_UPDATER_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version from the tag
+        id: version
+        shell: bash
+        run: |
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$GITHUB_REF_NAME is not a version tag (vX.Y.Z). Run this workflow on a tag."; exit 1 ;;
+          esac
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The app and the worker inside it carry the tag's version.
+          for f in apps/worker/package.json apps/desktop/package.json; do
+            node -e "const f=process.argv[1];const p=JSON.parse(require('fs').readFileSync(f,'utf8'));p.version=process.argv[2];require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')" "$f" "$version"
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: ${{ matrix.target }}
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - name: Shell tests
+        # Not for the cross-built macOS target: its test binary would not run on this runner.
+        if: matrix.target != 'x86_64-apple-darwin'
+        working-directory: apps/desktop/src-tauri
+        shell: bash
+        run: |
+          node ../scripts/prepare.mjs --target "${{ matrix.target }}"
+          cargo test --target "${{ matrix.target }}"
+      - name: Build the installers
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          node scripts/prepare.mjs --target "${{ matrix.target }}" --if-missing
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            pnpm tauri build --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}"
+          else
+            echo "::notice::DESKTOP_UPDATER_PRIVATE_KEY is not set; building without update files (expected in forks)."
+            pnpm tauri build --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
+          node scripts/release-assets.mjs collect "src-tauri/target/${{ matrix.target }}/release/bundle" "${{ matrix.target }}" "$RUNNER_TEMP/assets"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: ${{ runner.temp }}/assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    # Publish what was built even if one system failed; its installer is then missing from this release.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: assets
+          merge-multiple: true
+      - name: Attach to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$GITHUB_REF_NAME is not a version tag (vX.Y.Z)."; exit 1 ;;
+          esac
+          version="${GITHUB_REF_NAME#v}"
+          ls -la assets
+          [ -n "$(ls -A assets)" ] || { echo "::error::No installer was built."; exit 1; }
+          node apps/desktop/scripts/release-assets.mjs latest assets "$version" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          # release-worker.yml creates the release for the same tag; wait for it instead of racing it.
+          for i in $(seq 1 30); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            sleep 10
+          done
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            flags=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            case "$version" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$GITHUB_REF_NAME" "${flags[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" assets/* --clobber

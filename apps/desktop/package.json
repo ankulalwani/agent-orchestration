@@ -1,0 +1,18 @@
+{
+  "name": "@ao/desktop",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Desktop app for the worker: a Tauri shell that runs the worker and shows its local UI.",
+  "scripts": {
+    "desktop:prepare": "node scripts/prepare.mjs",
+    "desktop:dev": "node scripts/prepare.mjs --if-missing && tauri dev",
+    "desktop:bundle": "node scripts/prepare.mjs && tauri build",
+    "desktop:icons": "tauri icon icon.svg",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
+    "tar": "^7.4.3"
+  }
+}

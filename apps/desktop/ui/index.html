@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Orchestration Worker</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <!-- Shown until the worker's own UI is ready, and when the worker cannot run. -->
+    <main class="center">
+      <section class="panel" aria-live="polite">
+        <div class="brand">
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="var(--accent)" />
+            <path d="M9 22l7-12 7 12" stroke="var(--on-accent)" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <div>
+            <h1>Agent Orchestration Worker</h1>
+            <p id="version"></p>
+          </div>
+        </div>
+
+        <div id="starting">
+          <div class="row">
+            <div class="spinner" role="img" aria-label="Working"></div>
+            <span id="starting-message" class="message">Starting the worker…</span>
+          </div>
+        </div>
+
+        <div id="external" hidden>
+          <h2>A worker is already running on this computer</h2>
+          <p>It was installed from the command line and starts by itself when you sign in.</p>
+          <p class="muted">The desktop app can take its place. The connection to your server, the settings and the stored credentials are kept. Tasks that are running now are interrupted and continue from their last checkpoint.</p>
+          <div class="actions">
+            <button id="take-over" class="primary" type="button">Use the desktop app instead</button>
+            <button id="use-existing" type="button">Keep it and open its UI</button>
+          </div>
+        </div>
+
+        <div id="error" hidden>
+          <h2>The worker is not running</h2>
+          <p id="error-message" class="message error"></p>
+          <div class="actions">
+            <button id="retry" class="primary" type="button">Start again</button>
+            <button id="logs" type="button">Open the log</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="index.js"></script>
+  </body>
+</html>

@@ -2,6 +2,29 @@
 
 Actual, current limitations. Updated as the implementation changes. Last updated: 2026-10-06.
 
+## Desktop app (added 2026-10-06)
+- **Not code-signed.** Windows SmartScreen and macOS Gatekeeper warn on the first start (how to continue:
+  [workers](workers/README.md#install)). The app's own updates are signed with the project's updater key
+  and refused when the signature does not match; that is independent of OS code signing.
+- **macOS was not built or run.** No Mac was available. The window, tray icon, Keychain access, the
+  `PATH` taken from the login shell, start at login and Gatekeeper behaviour are unverified until someone
+  runs the `.dmg`. The release workflow has not run yet either, so the macOS and MSVC Windows builds in CI
+  are untested.
+- **Windows was verified with a locally built installer** (Rust GNU toolchain, because the Visual Studio
+  build tools could not be installed here): install, start, connect to a control plane, takeover of a
+  command-line worker, close to tray, `--quit`, a killed app leaving no worker, update 0.2.0 → 0.2.1 from a
+  local server, a mismatching signature refused, uninstall. The tray menu itself and notifications were not
+  operated by a test, and starting at sign-in was checked only as the registry entry it writes.
+- **Linux was run in a container with a virtual display** (`.deb` and `.AppImage`, Ubuntu 22.04), not on a
+  real desktop session: the tray icon and notifications were not seen. The tray needs an AppIndicator host.
+  A `.deb` does not update itself. Stopping a command-line worker's systemd unit was not exercised.
+- **x64 only for Windows and Linux.** No arm64 installers are built (the scripts know those targets).
+- **One worker per user.** The app and a command-line worker use the same data folder and port, so they
+  cannot run side by side; the app offers to replace the other one.
+- **Uninstalling keeps data**: the worker's data folder and the app's folder with worker versions and log.
+- **Every push to `main` builds installers for all systems** (through the automatic tag). If that is too
+  much build time, start `release-desktop.yml` by hand instead of from `auto-tag.yml`.
+
 ## Own logins and add-on models (added 2026-09-28)
 - **Add-on providers were not called for real.** The gateway was tested with each real harness against a
   fake OpenAI-compatible model; OpenRouter, NVIDIA NIM, Groq, DeepSeek, OpenAI, Gemini, Ollama and LM Studio

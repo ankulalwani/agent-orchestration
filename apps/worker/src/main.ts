@@ -37,7 +37,7 @@ async function main() {
   const here = path.dirname(fileURLToPath(import.meta.url));
   // Packaged layout ships the UI next to the bundle (dist/ui); the monorepo dev layout uses apps/worker-ui/dist.
   const uiDir = process.env.AO_WORKER_UI_DIR ?? [path.resolve(here, 'ui'), path.resolve(here, '../../worker-ui/dist')].find((d) => fs.existsSync(path.join(d, 'index.html')));
-  const api = await buildLocalApi(rt, { uiDir }); // 3–4: local API + UI
+  const api = await buildLocalApi(rt, { uiDir, onShutdown: process.env.AO_DESKTOP === '1' ? () => void shutdown('desktop-app') : undefined }); // 3–4: local API + UI
   const cfg = rt.config.get();
   await api.listen({ port: cfg.localPort, host: cfg.localHost });
   const url = `http://${cfg.localHost === '0.0.0.0' ? '127.0.0.1' : cfg.localHost}:${cfg.localPort}/#token=${await rt.localUiToken()}`;

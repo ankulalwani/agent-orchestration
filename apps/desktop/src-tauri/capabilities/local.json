@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local-pages",
+  "description": "The app's own pages (start screen, log viewer).",
+  "windows": ["main", "logs"],
+  "permissions": [
+    "core:event:default",
+    "allow-app-state",
+    "allow-retry-start",
+    "allow-take-over",
+    "allow-use-existing",
+    "allow-open-logs",
+    "allow-open-external",
+    "allow-read-log",
+    "allow-open-log-folder",
+    "allow-diagnostics"
+  ]
+}

@@ -178,3 +178,17 @@ describe('installing a signed package', () => {
     expect(fs.existsSync(path.join(dir, 'app', '1.3.0'))).toBe(false);
   });
 });
+
+describe('launcher started by the desktop app', () => {
+  it('stops its worker and exits when the app is gone', async () => {
+    const dir = install({ current: '1.0.0' });
+    fakeVersion(dir, '1.0.0', ['hang']);
+    // The process id of a process that has ended stands in for a desktop app that crashed.
+    const gone = spawn(process.execPath, ['-e', '']);
+    await new Promise((resolve) => gone.on('exit', resolve));
+    const r = await runLauncher(dir, { AO_SUPERVISOR_PID: String(gone.pid) }, 30_000);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/the desktop app is gone/);
+    expect(runs(dir)).toEqual(['1.0.0 hang']); // not restarted
+  }, 40_000);
+});

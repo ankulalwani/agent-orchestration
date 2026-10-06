@@ -20,7 +20,7 @@ import { ProviderOAuth, supportsProviderOAuth } from './provider-oauth.js';
  *  - every /api call needs the per-worker local token (Authorization: Bearer …). Browsers cannot send
  *    that header cross-origin without a CORS preflight, and preflights are refused (no CORS).
  */
-export async function buildLocalApi(rt: WorkerRuntime, opts: { uiDir?: string; providerOAuth?: ProviderOAuth } = {}): Promise<FastifyInstance> {
+export async function buildLocalApi(rt: WorkerRuntime, opts: { uiDir?: string; providerOAuth?: ProviderOAuth; onShutdown?: () => void } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
   const token = await rt.localUiToken();
   const port = () => rt.config.get().localPort;
@@ -73,6 +73,13 @@ export async function buildLocalApi(rt: WorkerRuntime, opts: { uiDir?: string; p
     };
   });
   app.get('/api/events/recent', async () => rt.buffer.recent());
+  // The desktop app stops its worker through this (Windows has no signal a console-less process can receive).
+  if (opts.onShutdown) {
+    app.post('/api/shutdown', async () => {
+      setImmediate(opts.onShutdown!);
+      return { ok: true };
+    });
+  }
 
   // ── Connection (spec §13) ────────────────────────────────────────────────
   app.post('/api/connect', async (req) => {

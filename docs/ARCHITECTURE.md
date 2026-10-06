@@ -50,7 +50,8 @@ Consolidated relative to spec §69 (see DECISIONS D-002). Each spec package maps
 | `packages/ui` | shared web UI kit and design tokens (web dashboard, worker UI) |
 
 Apps: `apps/api`, `apps/worker`, `apps/web`, `apps/cli`, `apps/mobile`, `apps/worker-ui` (served by
-the worker), `apps/vscode`.
+the worker), `apps/vscode`, `apps/desktop` (a Tauri shell that runs the worker and shows the worker UI
+in a window; D-021).
 
 Dependency direction (checked in CI by `scripts/check-boundary.mjs`):
 

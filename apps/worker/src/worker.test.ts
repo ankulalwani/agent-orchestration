@@ -82,6 +82,40 @@ describe('credential store', () => {
     await s.delete('k');
     expect(await s.get('k')).toBeNull();
   });
+
+  it('copies credentials from the encrypted file to the OS store once it is available, one time', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-cred-'));
+    const file = await createCredentialStore(dir, { forceFile: true });
+    await file.set('worker-credential', 'paired-secret');
+    await file.set('provider:x', 'from-file');
+
+    // A stand-in OS store that already holds one of the names.
+    const os_ = new Map<string, string>([['provider:x', 'from-os']]);
+    const keyring = {
+      Entry: class {
+        constructor(_service: string, private account: string) {}
+        getPassword() {
+          return os_.get(this.account) ?? null;
+        }
+        setPassword(v: string) {
+          os_.set(this.account, v);
+        }
+        deletePassword() {
+          return os_.delete(this.account);
+        }
+      },
+    };
+    const first = await createCredentialStore(dir, { keyring });
+    expect(first.backend).toBe('os-keyring');
+    expect(await first.get('worker-credential')).toBe('paired-secret');
+    expect(await first.get('provider:x')).toBe('from-os'); // the OS store wins
+    expect(fs.existsSync(path.join(dir, 'credentials.enc'))).toBe(true); // kept for a rollback
+
+    // A credential removed afterwards does not come back from the file on the next start.
+    await first.delete('worker-credential');
+    const second = await createCredentialStore(dir, { keyring });
+    expect(await second.get('worker-credential')).toBeNull();
+  });
 });
 
 describe('event buffer (spec §107)', () => {

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Worker log</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="logs">
+      <div class="toolbar">
+        <span id="path" class="path"></span>
+        <label><input id="follow" type="checkbox" checked /> Follow</label>
+        <button id="folder" type="button">Open folder</button>
+        <button id="diagnostics" type="button">Copy diagnostics</button>
+      </div>
+      <pre id="log" tabindex="0" aria-label="Worker log"></pre>
+    </div>
+    <script src="logs.js"></script>
+  </body>
+</html>

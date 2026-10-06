@@ -58,3 +58,4 @@ jobs:
         run: |
           gh workflow run docker-publish.yml --ref "${{ steps.tag.outputs.tag }}"
           gh workflow run release-worker.yml --ref "${{ steps.tag.outputs.tag }}"
+          gh workflow run release-desktop.yml --ref "${{ steps.tag.outputs.tag }}"

@@ -44,7 +44,14 @@ pair the worker → map a project to a local checkout → create a task. With no
 agent can run tasks end to end; with Claude Code, Codex, Gemini CLI or another [supported agent](agents/README.md) installed and signed
 in, the worker detects them.
 
-## 4. Before opening a pull request
+## 4. The desktop app (optional)
+
+`apps/desktop` is the worker as a desktop app: a Tauri shell written in Rust. Nothing above needs it, and
+`pnpm build`, `pnpm typecheck` and `pnpm test` do not build it, so Rust is only required when you work on
+the shell itself. Its scripts and the worker's part of it (the shutdown call, the launcher's supervisor
+check) are covered by `pnpm test`. Tools, commands and rules: [apps/desktop/README.md](../apps/desktop/README.md).
+
+## 5. Before opening a pull request
 
 - `pnpm typecheck && pnpm test && node scripts/check-boundary.mjs`
 - New behaviour has tests; `docs/IMPLEMENTATION_STATUS.md` stays accurate.

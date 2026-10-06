@@ -26,6 +26,17 @@ fs.rmSync(out, { recursive: true, force: true });
 pnpm(['--config.node-linker=hoisted', '--filter', '@ao/worker', 'deploy', '--prod', path.relative(root, out)]);
 // pnpm deploy leaves a copy of its virtual-store path inside the target; it is not used at runtime.
 fs.rmSync(path.join(out, '.deploy'), { recursive: true, force: true });
+// One package serves every OS (updates, the one-click install, the desktop app), but pnpm installs native
+// add-ons for the build machine only: a package built on Linux had no Windows or macOS keyring binary, and
+// those workers fell back to the encrypted-file credential store. Install them for every supported platform,
+// in the packaged folder only (the repository's own install stays as it is).
+const NATIVE_TARGETS = ['win32-x64-msvc', 'win32-arm64-msvc', 'darwin-x64', 'darwin-arm64', 'linux-x64-gnu', 'linux-arm64-gnu', 'linux-x64-musl', 'linux-arm64-musl'];
+const deployWorkspace = path.join(out, 'pnpm-workspace.yaml');
+const deployConfig = fs.existsSync(deployWorkspace) ? fs.readFileSync(deployWorkspace, 'utf8').replace(/^(nodeLinker|supportedArchitectures):.*\n(?:[ \t]+.*\n)*/gm, '') : '';
+fs.writeFileSync(deployWorkspace, `${deployConfig.trimEnd()}\nnodeLinker: hoisted\nsupportedArchitectures:\n  os: [win32, darwin, linux]\n  cpu: [x64, arm64]\n  libc: [glibc, musl]\n`.trimStart());
+execFileSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['install', '--prod', '--frozen-lockfile'], { cwd: out, stdio: 'inherit', shell: process.platform === 'win32' });
+const missingNative = NATIVE_TARGETS.filter((t) => !fs.existsSync(path.join(out, 'node_modules', '@napi-rs', `keyring-${t}`, `keyring.${t}.node`)));
+if (missingNative.length) throw new Error(`The packaged worker has no credential-store binary for: ${missingNative.join(', ')}`);
 fs.cpSync(path.join(root, 'apps', 'worker-ui', 'dist'), path.join(out, 'dist', 'ui'), { recursive: true });
 // agentctl ships inside the worker package (it uses the worker's credential-store code).
 fs.copyFileSync(path.join(root, 'apps', 'cli', 'dist', 'main.js'), path.join(out, 'dist', 'agentctl.js'));

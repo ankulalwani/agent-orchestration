@@ -20,7 +20,7 @@ export interface CredentialStore {
 }
 
 type KeyringEntry = { getPassword(): string | null | undefined; setPassword(v: string): void; deletePassword(): boolean | void };
-type KeyringModule = { Entry: new (service: string, account: string) => KeyringEntry };
+export type KeyringModule = { Entry: new (service: string, account: string) => KeyringEntry };
 
 /** Names are tracked in an index file (names only, no values) because keyrings can't enumerate portably. */
 class Index {
@@ -107,17 +107,41 @@ class EncryptedFileStore implements CredentialStore {
   }
 }
 
-export async function createCredentialStore(dataDir: string, opts: { forceFile?: boolean } = {}): Promise<CredentialStore> {
+/**
+ * A worker that ran without the OS store (worker packages up to v0.2.14 carried the keyring binary of the build
+ * machine only) kept its credentials in the encrypted file. Once the OS store works, copy them over, one time:
+ * otherwise the worker would look unpaired. The file stays where it is, so a rollback to the older version
+ * still finds its credentials; the marker stops a credential deleted later from coming back.
+ */
+async function migrateFromFile(dataDir: string, store: OsKeyringStore) {
+  const marker = path.join(dataDir, 'credentials.migrated');
+  if (fs.existsSync(marker) || !fs.existsSync(path.join(dataDir, 'credentials.enc'))) return;
+  const file = new EncryptedFileStore(dataDir);
+  let moved = 0;
+  for (const name of await file.list()) {
+    const value = await file.get(name);
+    if (value !== null && (await store.get(name)) === null) {
+      await store.set(name, value);
+      moved++;
+    }
+  }
+  fs.writeFileSync(marker, new Date().toISOString() + '\n', { mode: 0o600 });
+  if (moved) log.info({ moved }, 'credentials copied from the encrypted file to the OS credential store');
+}
+
+export async function createCredentialStore(dataDir: string, opts: { forceFile?: boolean; keyring?: KeyringModule } = {}): Promise<CredentialStore> {
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const index = new Index(path.join(dataDir, 'credentials.index.json'));
-  if (!opts.forceFile && process.env.AO_CREDENTIAL_BACKEND !== 'file') {
+  if (opts.keyring || (!opts.forceFile && process.env.AO_CREDENTIAL_BACKEND !== 'file')) {
     try {
-      const mod = (await import('@napi-rs/keyring')) as unknown as KeyringModule;
+      const mod = opts.keyring ?? ((await import('@napi-rs/keyring')) as unknown as KeyringModule);
       // Probe: some Linux hosts have the library but no Secret Service running.
       const probe = new mod.Entry(SERVICE, '__probe__');
       probe.setPassword('ok');
       probe.deletePassword();
-      return new OsKeyringStore(mod, index);
+      const store = new OsKeyringStore(mod, index);
+      await migrateFromFile(dataDir, store);
+      return store;
     } catch (e) {
       log.warn({ err: String(e) }, 'OS credential store unavailable; using encrypted file store');
     }
