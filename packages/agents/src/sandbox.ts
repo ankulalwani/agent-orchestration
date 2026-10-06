@@ -33,7 +33,7 @@ export interface SandboxAvailability {
 const AGENT_STATE: Record<string, string[]> = {
   'claude-code': ['.claude', '.claude.json', '.claude.json.backup', '.config/claude'],
   codex: ['.codex'],
-  'gemini-cli': ['.gemini'],
+  gemini: ['.gemini'],
   opencode: ['.config/opencode', '.local/share/opencode', '.local/state/opencode', '.cache/opencode'],
   aider: ['.aider', '.aider.chat.history.md', '.aider.input.history'],
   cursor: ['.cursor', '.config/cursor', '.local/share/cursor-agent'],

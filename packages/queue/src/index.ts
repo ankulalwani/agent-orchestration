@@ -120,11 +120,32 @@ export async function createBullQueue(redisUrl: string, name = 'ao-dispatch'): P
   const connection = new Redis(redisUrl, { maxRetriesPerRequest: 1, enableOfflineQueue: false, enableReadyCheck: true });
   connection.on('error', () => undefined); // reconnects by itself; health is reported by healthy()
   await withTimeout(new Promise<void>((resolve) => (connection.status === 'ready' ? resolve() : connection.once('ready', () => resolve()))), 10_000, 'Redis connection').catch(() => undefined);
-  const queue = new Queue<DispatchJob>(name, {
-    connection,
-    defaultJobOptions: { removeOnComplete: 1000, removeOnFail: 5000, attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-  });
-  queue.on('error', () => undefined);
+  const makeQueue = () => {
+    const q = new Queue<DispatchJob>(name, {
+      connection,
+      defaultJobOptions: { removeOnComplete: 1000, removeOnFail: 5000, attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+    });
+    q.on('error', () => undefined);
+    return q;
+  };
+  let queue = makeQueue();
+  /**
+   * A BullMQ queue keeps the outcome of its own start-up. If Redis goes away while that is in flight,
+   * the queue rejects every later call with the same error, although the connection is ready again.
+   * So an operation that fails on a ready connection is retried once on a fresh queue object (same
+   * connection), which then stays in use.
+   */
+  const onQueue = async <T>(op: (q: typeof queue) => Promise<T>, what: string): Promise<T> => {
+    try {
+      return await withTimeout(op(queue), REDIS_OP_TIMEOUT_MS, what);
+    } catch (e) {
+      if (connection.status !== 'ready') throw e;
+      const broken = queue;
+      queue = makeQueue();
+      void broken.close().catch(() => undefined); // does not close the shared connection
+      return withTimeout(op(queue), REDIS_OP_TIMEOUT_MS, what);
+    }
+  };
   let worker: { close(): Promise<void> } | null = null;
   let workerConnection: InstanceType<typeof Redis> | null = null;
   return {
@@ -132,17 +153,14 @@ export async function createBullQueue(redisUrl: string, name = 'ao-dispatch'): P
     async enqueue(job, opts = {}) {
       if (connection.status !== 'ready') throw new Error('Redis unavailable: dispatch job not queued');
       // jobId dedupes pending jobs for the same task (spec §105 idempotency).
-      await withTimeout(
-        queue.add('dispatch', job, {
-          jobId: `dispatch-${job.taskId}-${opts.delayMs ? Math.floor((Date.now() + opts.delayMs) / 10_000) : 'now'}`,
-          // BullMQ priorities are fixed once added, so aging is applied as of enqueue time. Jobs wait
-          // briefly; a task that can't be dispatched is re-enqueued later with a fresh priority.
-          priority: agedBullPriority(opts.priority ?? 'NORMAL', opts.queuedAt ?? Date.now()),
-          delay: opts.delayMs,
-        }),
-        REDIS_OP_TIMEOUT_MS,
-        'enqueue',
-      );
+      const options = {
+        jobId: `dispatch-${job.taskId}-${opts.delayMs ? Math.floor((Date.now() + opts.delayMs) / 10_000) : 'now'}`,
+        // BullMQ priorities are fixed once added, so aging is applied as of enqueue time. Jobs wait
+        // briefly; a task that can't be dispatched is re-enqueued later with a fresh priority.
+        priority: agedBullPriority(opts.priority ?? 'NORMAL', opts.queuedAt ?? Date.now()),
+        delay: opts.delayMs,
+      };
+      await onQueue((q) => q.add('dispatch', job, options), 'enqueue');
     },
     process(handler, concurrency = 4) {
       // The consumer blocks on Redis and must retry forever (BullMQ requirement for workers).
@@ -154,7 +172,7 @@ export async function createBullQueue(redisUrl: string, name = 'ao-dispatch'): P
     },
     async depth() {
       if (connection.status !== 'ready') return 0;
-      const c = await withTimeout(queue.getJobCounts('waiting', 'delayed', 'prioritized'), REDIS_OP_TIMEOUT_MS, 'depth');
+      const c = await onQueue((q) => q.getJobCounts('waiting', 'delayed', 'prioritized'), 'depth');
       return (c.waiting ?? 0) + (c.delayed ?? 0) + (c.prioritized ?? 0);
     },
     async healthy() {

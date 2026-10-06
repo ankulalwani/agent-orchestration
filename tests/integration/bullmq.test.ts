@@ -85,4 +85,28 @@ describe.runIf(REDIS_BIN)('BullMQ dispatch queue (real Redis)', () => {
     }
     expect(await new Promise<string>((resolve) => q.process(async (j) => resolve(j.taskId), 1))).toBe('after');
   }, 60_000);
+
+  it('recovers when Redis dies while the queue is still starting up (BullMQ keeps that failure otherwise)', async () => {
+    // Found as a rare failure of the test above under load: the queue object stayed broken although the
+    // connection was ready again. Commands in flight at varying offsets around the crash provoke it.
+    for (let round = 0; round < 6; round++) {
+      const q = await queue();
+      const inflight = [0, 1, 2].map((i) => q.enqueue(job(`in-flight-${i}`)).catch(() => undefined));
+      if (round % 3) await new Promise((r) => setTimeout(r, round));
+      await redis.kill();
+      await Promise.all(inflight);
+      await q.enqueue(job('during-outage')).catch(() => undefined);
+      await redis.restart();
+      for (let i = 0; i < 50 && !(await q.healthy()); i++) await new Promise((r) => setTimeout(r, 200));
+      expect(await q.healthy(), `round ${round}`).toBe(true);
+      // One call may still fail right after the reconnect; a healthy queue must take the job within seconds.
+      let queued = false;
+      for (let i = 0; i < 12 && !queued; i++) {
+        queued = await q.enqueue(job('after')).then(() => true, () => false);
+        if (!queued) await new Promise((r) => setTimeout(r, 250));
+      }
+      expect(queued, `round ${round}`).toBe(true);
+      expect(await q.depth()).toBe(1);
+    }
+  }, 120_000);
 });

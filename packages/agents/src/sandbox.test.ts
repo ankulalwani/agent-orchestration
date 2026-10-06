@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { detectSandbox, seatbeltProfile, wrapInvocation } from './sandbox.js';
+import { defaultAgentManager } from './index.js';
+import { detectSandbox, sandboxPaths, seatbeltProfile, wrapInvocation } from './sandbox.js';
 
 function tree() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-sb-'));
@@ -42,6 +43,18 @@ describe('agent sandbox (SEC-014)', () => {
     const codex = wrapInvocation(inv, { backend: 'bubblewrap', executable: 'bwrap', reason: null }, 'codex', { projectDir: project, writable: [], hidden: [], network: true }, home, tmp);
     expect(codex.args.join(' ')).not.toContain('.claude');
     expect(codex.args).not.toContain('--unshare-net');
+  });
+
+  it('agent state folders are keyed by adapter id, so each agent can write its own login and settings', () => {
+    const { home, project, tmp } = tree();
+    for (const d of ['.gemini', '.codex', '.cursor', '.copilot']) fs.mkdirSync(path.join(home, d));
+    const spec = { projectDir: project, writable: [], hidden: [], network: true };
+    const ids = defaultAgentManager().list().map((a) => a.id);
+    for (const [id, dir] of [['gemini', '.gemini'], ['codex', '.codex'], ['cursor', '.cursor'], ['copilot', '.copilot']] as const) {
+      expect(ids).toContain(id);
+      expect(sandboxPaths(id, spec, home, tmp).writable, id).toContain(path.join(home, dir));
+    }
+    expect(sandboxPaths('codex', spec, home, tmp).writable).not.toContain(path.join(home, '.gemini'));
   });
 
   it('sandbox-exec: Seatbelt profile denies writes outside allowed paths and reads of hidden ones', () => {
