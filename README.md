@@ -1,4 +1,8 @@
+<a id="top"></a>
+
 <div align="center">
+
+<img src="docs/assets/logo.svg" alt="Agent Orchestration logo" width="84" height="84">
 
 # Agent Orchestration
 
@@ -6,39 +10,77 @@
 
 **Hand off the task. Get back a commit your own checks have proven.**
 
+[![CI](https://img.shields.io/github/actions/workflow/status/ankulalwani/agent-orchestration/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ankulalwani/agent-orchestration?style=flat-square&color=474fd6)](https://github.com/ankulalwani/agent-orchestration/releases/latest)
+[![Container image](https://img.shields.io/badge/ghcr.io-agent--orchestration-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/ankulalwani/agent-orchestration/pkgs/container/agent-orchestration)
+![Node](https://img.shields.io/badge/node-%E2%89%A520.11-339933?style=flat-square&logo=node.js&logoColor=white)
+![License](https://img.shields.io/badge/license-pending-orange?style=flat-square)
+[![Stars](https://img.shields.io/github/stars/ankulalwani/agent-orchestration?style=flat-square&color=474fd6)](https://github.com/ankulalwani/agent-orchestration)
+
+[**Get started**](#quick-start) &nbsp;·&nbsp; [**How it works**](#how-it-works) &nbsp;·&nbsp; [**Self-host**](#self-hosting) &nbsp;·&nbsp; [**Managed cloud**](#managed-cloud) &nbsp;·&nbsp; [**Documentation**](#documentation)
+
+</div>
+
+<br>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/task-detail-dark.webp">
+    <img src="docs/assets/task-detail-light.webp" alt="Dashboard task detail: completed and verified, with the activity timeline from agent start to commit, verification passed and Git committed" width="920">
+  </picture>
+</p>
+<p align="center">
+  <sub>A task in the dashboard: the agent ran, verification passed, and only then was the commit created. This run used the built-in mock agent.</sub>
+</p>
+
+<br>
+
 Agent Orchestration runs Claude Code, Codex, Gemini CLI, Cursor Agent, Copilot CLI and 18 other coding
 agents on **your own machines**, recovers them from usage limits and crashes, and only calls a task done
 once **your tests, type checks, lint and build pass**. Then it commits under your Git rules.
 
-[**Get started**](#quick-start) · [**How it works**](#how-it-works) · [**Self-host**](#self-hosting) · [**Managed cloud**](#managed-cloud) · [**Documentation**](#documentation)
+<table>
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <h3>23</h3>
+      <b>agent adapters</b><br>
+      <sub>Mixed freely, each on its own login, with add-on models as fallback</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <h3>Verified</h3>
+      <b>before every commit</b><br>
+      <sub>Tests, types, lint, build, browser checks and CI decide what "done" means</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <h3>Recovers</h3>
+      <b>without babysitting</b><br>
+      <sub>Usage limits, full context windows, crashes and lost workers resume from a checkpoint</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <h3>Yours</h3>
+      <b>machines, code and keys</b><br>
+      <sub>No license check, no telemetry and no usage limits when self-hosted</sub>
+    </td>
+  </tr>
+</table>
 
-[![CI](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml/badge.svg)](https://github.com/ankulalwani/agent-orchestration/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/ankulalwani/agent-orchestration)](https://github.com/ankulalwani/agent-orchestration/releases/latest)
-[![Container image](https://img.shields.io/badge/ghcr.io-agent--orchestration-2496ED?logo=docker&logoColor=white)](https://github.com/ankulalwani/agent-orchestration/pkgs/container/agent-orchestration)
-![Node](https://img.shields.io/badge/node-%E2%89%A520.11-339933?logo=node.js&logoColor=white)
-![License](https://img.shields.io/badge/license-pending-orange)
-[![Stars](https://img.shields.io/github/stars/ankulalwani/agent-orchestration?style=social)](https://github.com/ankulalwani/agent-orchestration)
-
-If this is the tool you were about to build yourself, [star the repository](https://github.com/ankulalwani/agent-orchestration) so you can find it again.
-
-</div>
+<p align="center">
+  If this is the tool you were about to build yourself, <a href="https://github.com/ankulalwani/agent-orchestration">star the repository</a> so you can find it again.
+</p>
 
 > [!IMPORTANT]
 > **The license has not been selected yet.** The complete source is public and the self-hosted product
 > has no paid tier, but [`LICENSE`](LICENSE) is a placeholder pending legal review, and it grants no
 > rights to use, modify or distribute the code yet. See [License](#license).
 
-<!-- TODO: Add screenshot: dashboard task detail (timeline, verification results, completion report) -->
-
----
-
 ## Contents
 
-[Why this exists](#why-this-exists) · [How it works](#how-it-works) · [What you get](#what-you-get) ·
-[Why choose it](#why-choose-it) · [Who it is for](#who-it-is-for) · [Quick start](#quick-start) ·
-[Self-hosting](#self-hosting) · [Architecture](#architecture) · [Built to extend](#built-to-extend) ·
-[Security](#security) · [Project status](#project-status) · [Managed cloud](#managed-cloud) ·
-[Roadmap](#roadmap) · [Contributing](#contributing) · [License](#license)
+| Understand | Run it | Trust it | The project |
+|---|---|---|---|
+| [Why this exists](#why-this-exists) | [Quick start](#quick-start) | [Security](#security) | [Roadmap](#roadmap) |
+| [How it works](#how-it-works) | [Self-hosting](#self-hosting) | [Project status](#project-status) | [Documentation](#documentation) |
+| [What you get](#what-you-get) | [Architecture](#architecture) | [Managed cloud](#managed-cloud) | [Contributing](#contributing) |
+| [Why choose it](#why-choose-it) · [Who it is for](#who-it-is-for) | [Built to extend](#built-to-extend) | | [License](#license) |
 
 ## Why this exists
 
@@ -182,15 +224,13 @@ stay on your workers.
 
 ## Who it is for
 
-- **Engineering teams** that already use coding agents and want a shared queue, budgets, approvals and
-  an audit trail instead of one terminal per developer.
-- **Developers and technical founders** who want agents to keep working overnight and find verified
-  commits in the morning, not half-finished branches.
-- **Platform and IT teams** that must keep code and credentials on infrastructure they control, with
-  single sign-on, provisioning and role-based access.
-- **Agencies and consultancies** that work across many client repositories: one organization per client,
-  with tenant isolation enforced in the data layer.
-- **Self-hosters** who want software that makes no outbound calls unless they turn them on.
+| If you are | You get |
+|---|---|
+| **An engineering team** that already uses coding agents | A shared queue, budgets, approvals and an audit trail instead of one terminal per developer |
+| **A developer or technical founder** | Agents that keep working overnight, and verified commits in the morning instead of half-finished branches |
+| **A platform or IT team** | Code and credentials on infrastructure you control, with single sign-on, provisioning and role-based access |
+| **An agency or consultancy** with many client repositories | One organization per client, with tenant isolation enforced in the data layer |
+| **A self-hoster** | Software that makes no outbound calls unless you turn them on |
 
 ## Quick start
 
@@ -406,6 +446,10 @@ and [versioning](docs/CORE_VERSIONING.md).
 A worker runs code-writing agents on a machine with your source, so the controls below are part of the
 core, not an add-on. Each one is implemented and tested. Details are in the [security model](docs/security/README.md).
 
+<table>
+<tr>
+<td valign="top" width="50%">
+
 **Control plane**
 
 - Passwords hashed with scrypt, account lockout, rotating refresh tokens with reuse detection
@@ -418,6 +462,9 @@ core, not an add-on. Each one is implemented and tested. Details are in the [sec
 - Secret-like values redacted from logs, events and verification output
 - Append-only audit log
 
+</td>
+<td valign="top" width="50%">
+
 **Worker**
 
 - Model provider keys stay on the worker, in the OS credential store
@@ -428,16 +475,22 @@ core, not an add-on. Each one is implemented and tested. Details are in the [sec
 - Worker updates are signed (Ed25519) and verified by the worker, with automatic rollback
 - The local UI listens on `127.0.0.1`, requires a token and rejects foreign `Host` headers
 
-**Known gaps, stated plainly**
+</td>
+</tr>
+</table>
 
-- The OS-level sandbox for agents (bubblewrap on Linux, `sandbox-exec` on macOS) is **off by default**
-  and has not been run on real Linux or macOS systems. Windows has no sandbox. Without it, agents run
-  with your user's permissions.
-- Plugin isolation uses the Node.js permission model. It is not an OS-level sandbox.
-- No third-party security audit or compliance certification exists.
+> [!WARNING]
+> **Known gaps, stated plainly**
+>
+> - The OS-level sandbox for agents (bubblewrap on Linux, `sandbox-exec` on macOS) is **off by default**
+>   and has not been run on real Linux or macOS systems. Windows has no sandbox. Without it, agents run
+>   with your user's permissions.
+> - Plugin isolation uses the Node.js permission model. It is not an OS-level sandbox.
+> - No third-party security audit or compliance certification exists.
 
-**Reporting a vulnerability:** please do not open a public issue. Report it privately to the
-maintainers through GitHub's private vulnerability reporting on this repository.
+> [!NOTE]
+> **Reporting a vulnerability:** please do not open a public issue. Report it privately to the
+> maintainers through GitHub's private vulnerability reporting on this repository.
 
 ## Project status
 
@@ -574,9 +627,13 @@ be notified when the license lands.
 
 <div align="center">
 
+<img src="docs/assets/logo.svg" alt="" width="40" height="40">
+
 **Your machines. Your agents. Your rules. Verified before it ships.**
 
 If Agent Orchestration saves you from reviewing one more "done" that was not done,
 [give it a star](https://github.com/ankulalwani/agent-orchestration). It helps other teams find it.
+
+[Back to top](#top)
 
 </div>
