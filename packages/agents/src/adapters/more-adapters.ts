@@ -15,14 +15,14 @@ import { CliAdapter, LIMITED, OpenCodeAdapter, classifyJsonExit, parseJson, reco
  * output is kept in `fixtures/`. Harnesses that accept another model endpoint were also run through the
  * worker's model gateway against a fake model (tests/e2e/gateway-agents.test.ts), which shows their
  * success-path events. For the others a successful run needs the vendor's account, so success-path
- * events follow the vendor's documentation and are parsed defensively. Kiro has no Windows build and was
- * written from its documentation only (`verification: 'documentation'`).
+ * events follow the vendor's documentation and are parsed defensively. Kiro has no Windows build: its
+ * binary was run in a Linux container (`--help`, a run with a rejected key, a run without a login).
  *
  * `resume` is claimed nowhere here: no resume command could be verified without an account.
  */
 
 /** How these CLIs say "sign in first"; `classifyText` only knows the provider-style wordings. */
-const AUTH_RE = /(authentication[_ ](required|failed)|no auth(entication)? (information|provided|type)|not (signed|logged) in|need to sign in|no api key found|no providers configured|no model configured|please (log|sign) in|starting login flow|setup cancelled)/i;
+const AUTH_RE = /(authentication[_ ](required|failed)|no auth(entication)? (information|provided|type)|not (signed|logged) in|need to sign in|no api key found|api key not valid|pass a valid api key|no providers configured|no model configured|please (log|sign) in|starting login flow|setup cancelled)/i;
 
 const classify = (text: string): AgentState | null => (AUTH_RE.test(text) ? 'AUTH_REQUIRED' : classifyText(text));
 
@@ -176,7 +176,8 @@ export class CursorAdapter extends ClaudeDialectAdapter {
 }
 
 /** Our provider kinds → Copilot CLI's custom-provider types (`copilot help providers`). */
-const COPILOT_PROVIDER_TYPE: Record<string, string> = { openai: 'openai', 'openai-compatible': 'openai', ollama: 'openai', anthropic: 'anthropic', 'azure-openai': 'azure' };
+// Its `azure` type is left out: it could not be run without an Azure resource.
+const COPILOT_PROVIDER_TYPE: Record<string, string> = { openai: 'openai', 'openai-compatible': 'openai', ollama: 'openai', anthropic: 'anthropic' };
 const COPILOT_DEFAULT_URL: Record<string, string> = { openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com' };
 
 /**
@@ -248,10 +249,14 @@ export class CopilotAdapter extends CliAdapter {
 }
 
 /**
- * Kiro CLI, from its documentation (kiro.dev/docs/cli/headless, read 2026-10-06; there is no Windows
- * build to run): `kiro-cli chat --no-interactive --trust-all-tools [--model M] <prompt>`. Headless runs
- * sign in with KIRO_API_KEY (from the project's environment) or the stored login. Output is treated as
- * text; exit 1 is its general failure, including authentication.
+ * Kiro CLI, verified with 2.27.1 in a Linux container (there is no Windows build): `kiro-cli chat
+ * --no-interactive --trust-all-tools --output-format stream-json [--model M] <prompt>`. `stream-json` is
+ * "the run's ACP events as JSON Lines". Headless runs sign in with KIRO_API_KEY (from the project's
+ * environment) or the stored login. Observed with a rejected key: runStarted, metadata{data.sessionId},
+ * runError{data.message:"… The bearer token included in the request is invalid."}, exit 1. Without a key
+ * or login it starts a browser login and waits ("Confirm the following code in the browser"), even with
+ * `--no-interactive`: that line is reported as AUTH_REQUIRED. The events of a successful run could not
+ * be observed without an account and are read as ACP session updates.
  */
 export class KiroAdapter extends CliAdapter {
   readonly id = 'kiro';
@@ -260,15 +265,41 @@ export class KiroAdapter extends CliAdapter {
   protected readonly providers: string[] = [];
 
   override capabilities(): AgentCapabilities {
-    return { ...super.capabilities(), ...ownAccountOnly, verification: 'documentation' };
+    return { ...super.capabilities(), ...ownAccountOnly, structuredOutput: true };
   }
 
   protected args(_f: string, pointer: string, req: AgentStartRequest) {
-    return ['chat', '--no-interactive', '--trust-all-tools', ...model(req), pointer];
+    return ['chat', '--no-interactive', '--trust-all-tools', '--output-format', 'stream-json', ...model(req), pointer];
   }
 
   override parseLine(line: string, stream: 'stdout' | 'stderr', ctx: ParseContext): AgentEvent[] {
-    return stream === 'stderr' ? parseTextLine(line, stream, ctx) : parsePlainLine(line, stream, ctx);
+    const msg = stream === 'stdout' ? parseJson(line) : null;
+    if (!msg) {
+      const events = parseTextLine(line, stream, ctx);
+      // The login flow waits for a browser: say so at once instead of leaving it to hang detection.
+      if (/confirm the following code in the browser/i.test(line)) {
+        record(ctx, 'AUTH_REQUIRED', line);
+        events.push({ type: 'state', state: 'AUTH_REQUIRED', detail: 'Kiro CLI is not signed in: run `kiro-cli login` on the worker or set KIRO_API_KEY' });
+      }
+      return events;
+    }
+    const out: AgentEvent[] = [];
+    const d = msg.data ?? {};
+    session(msg, ctx, out, d.sessionId);
+    if (msg.type === 'runError') {
+      const text = String(d.message ?? 'Kiro reported an error');
+      fail(ctx, text, /token included in the request is invalid/i.test(text) ? 'AUTH_REQUIRED' : classify(text));
+      out.push({ type: 'output', stream, text });
+      return out;
+    }
+    const u = d.update ?? d;
+    if (u.sessionUpdate === 'agent_message_chunk' && u.content?.type === 'text' && u.content.text) out.push({ type: 'output', stream, text: String(u.content.text) });
+    else if (u.sessionUpdate === 'tool_call') out.push({ type: 'tool', name: String(u.kind ?? 'tool'), summary: String(u.title ?? '').slice(0, 200) });
+    return out;
+  }
+
+  override classifyExit(code: number | null, signal: string | null, ctx: ParseContext) {
+    return classifyJsonExit(code, signal, ctx);
   }
 }
 
@@ -395,7 +426,11 @@ export class GrokAdapter extends CliAdapter {
 /** Our provider kinds → Trae Agent provider names (its configuration file's `provider`). */
 // Its `openai` provider speaks the Responses API without streaming; `openrouter` is its OpenAI chat
 // completions client with a base URL, which is what OpenAI-compatible endpoints and the gateway serve.
-const TRAE_PROVIDER: Record<string, string> = { openai: 'openai', 'openai-compatible': 'openrouter', anthropic: 'anthropic', google: 'google', openrouter: 'openrouter', ollama: 'ollama', [GATEWAY_KIND]: 'openrouter' };
+// Ollama is left to the gateway: Trae Agent's `ollama` provider speaks Ollama's native API, which could not be run.
+const TRAE_PROVIDER: Record<string, string> = { openai: 'openai', 'openai-compatible': 'openrouter', anthropic: 'anthropic', google: 'google', openrouter: 'openrouter', [GATEWAY_KIND]: 'openrouter' };
+
+/** The error row being read, per session (see `parseLine`). */
+const TRAE_ERROR = new WeakMap<ParseContext, string>();
 
 /**
  * Trae Agent (ByteDance, open source), verified with 0.1.0: `trae-cli run --file <prompt file>
@@ -409,7 +444,7 @@ export class TraeAdapter extends CliAdapter {
   readonly id = 'trae';
   readonly name = 'Trae Agent';
   readonly executables = ['trae-cli'];
-  protected readonly providers = ['openai', 'openai-compatible', 'anthropic', 'google', 'openrouter', 'ollama'];
+  protected readonly providers = ['openai', 'openai-compatible', 'anthropic', 'google', 'openrouter'];
 
   override capabilities(): AgentCapabilities {
     // No login of its own: it always needs a provider.
@@ -470,8 +505,18 @@ export class TraeAdapter extends CliAdapter {
     // It exits 0 whatever happened: its summary table ("Success │ ❌ No") and error rows decide.
     const events = parsePlainLine(line, stream, ctx);
     const error = /^[│|]\s*Error\s*[│|]\s*(?:❌\s*)?(.+?)\s*[│|]?$/.exec(line.trim()) ?? /^Error:\s*(.+)$/.exec(line.trim());
-    if (error) fail(ctx, error[1]!);
-    else if (/Success\s*[│|]\s*❌/.test(line)) ctx.resultIsError = true;
+    // A long error is wrapped over several table rows with an empty first column: read them as one text.
+    const more = error ? null : /^[│|]\s+[│|]\s*(.+?)\s*[│|]?$/.exec(line.trim());
+    if (error) {
+      TRAE_ERROR.set(ctx, error[1]!);
+      fail(ctx, error[1]!);
+    } else if (more && TRAE_ERROR.has(ctx)) {
+      const text = `${TRAE_ERROR.get(ctx)}${more[1]}`;
+      TRAE_ERROR.set(ctx, text);
+      fail(ctx, text);
+    } else if (!more) TRAE_ERROR.delete(ctx);
+    if (error || more) return events;
+    if (/Success\s*[│|]\s*❌/.test(line)) ctx.resultIsError = true;
     else if (/Success\s*[│|]\s*✅/.test(line)) {
       ctx.resultIsError = false;
       ctx.lastState = null;
@@ -571,6 +616,9 @@ export class AuggieAdapter extends ClaudeDialectAdapter {
   }
 }
 
+/** Our provider kinds → Crush provider ids. */
+const CRUSH_PROVIDER: Record<string, string> = { anthropic: 'anthropic', openai: 'openai', google: 'gemini', openrouter: 'openrouter' };
+
 /**
  * Crush (Charm), verified with 0.97.1: `crush run --quiet [-m M] <prompt>`. A non-interactive run
  * approves its own tool calls. It reads provider keys from the environment (ANTHROPIC_API_KEY,
@@ -591,6 +639,13 @@ export class CrushAdapter extends CliAdapter {
 
   override async buildInvocation(req: AgentStartRequest, inst: AgentInstallation): Promise<Invocation> {
     const inv = await super.buildInvocation(req, inst);
+    const direct = CRUSH_PROVIDER[req.provider.kind];
+    if (direct && req.provider.baseUrl) {
+      // Crush ignores ANTHROPIC_BASE_URL / OPENAI_BASE_URL (a real run went to the vendor's own endpoint):
+      // another endpoint for a known provider is a `base_url` in its configuration.
+      const file = await writeStateFile(req, path.join('crush', req.taskId), 'crush.json', JSON.stringify({ providers: { [direct]: { base_url: req.provider.baseUrl } } }));
+      return { ...inv, env: { ...inv.env, CRUSH_GLOBAL_CONFIG: path.dirname(file) } };
+    }
     if (req.provider.kind !== GATEWAY_KIND) return inv;
     const m = req.provider.modelId;
     const config = {
@@ -602,7 +657,9 @@ export class CrushAdapter extends CliAdapter {
   }
 
   protected args(_f: string, pointer: string, req: AgentStartRequest) {
-    const m = req.provider.modelId && req.provider.modelId !== 'default' ? ['--model', req.provider.kind === GATEWAY_KIND ? `ao_gateway/${req.provider.modelId}` : req.provider.modelId] : [];
+    // `provider/model` names the provider too, so a model several providers offer is not ambiguous.
+    const provider = req.provider.kind === GATEWAY_KIND ? 'ao_gateway' : CRUSH_PROVIDER[req.provider.kind];
+    const m = req.provider.modelId && req.provider.modelId !== 'default' ? ['--model', provider ? `${provider}/${req.provider.modelId}` : req.provider.modelId] : [];
     return ['run', '--quiet', ...m, pointer];
   }
 
@@ -679,7 +736,7 @@ export class KiloAdapter extends OpenCodeAdapter {
 }
 
 /** Our provider kinds → Pi provider names (`--provider`). */
-const PI_PROVIDER: Record<string, string> = { anthropic: 'anthropic', openai: 'openai', google: 'google', openrouter: 'openrouter', bedrock: 'amazon-bedrock' };
+const PI_PROVIDER: Record<string, string> = { anthropic: 'anthropic', openai: 'openai', google: 'google', openrouter: 'openrouter' };
 
 /**
  * Pi coding agent, verified with 0.73.1: `pi -p --mode json [--provider P] [--model M] <prompt>`. It has
@@ -700,6 +757,13 @@ export class PiAdapter extends CliAdapter {
 
   override async buildInvocation(req: AgentStartRequest, inst: AgentInstallation): Promise<Invocation> {
     const inv = await super.buildInvocation(req, inst);
+    const direct = PI_PROVIDER[req.provider.kind];
+    if (direct && req.provider.baseUrl) {
+      // Pi ignores ANTHROPIC_BASE_URL / OPENAI_BASE_URL (a real run went to the vendor's own endpoint):
+      // another endpoint for a built-in provider is an override in models.json.
+      const file = await writeStateFile(req, path.join('pi', req.taskId), 'models.json', JSON.stringify({ providers: { [direct]: { baseUrl: req.provider.baseUrl } } }));
+      return { ...inv, env: { ...inv.env, PI_CODING_AGENT_DIR: path.dirname(file), PI_SKIP_VERSION_CHECK: '1' } };
+    }
     if (req.provider.kind !== GATEWAY_KIND) return inv;
     const models = { providers: { ao_gateway: { baseUrl: `${(req.provider.baseUrl ?? '').replace(/\/+$/, '')}/openai/v1`, api: 'openai-completions', apiKey: 'AO_GATEWAY_KEY', compat: { supportsDeveloperRole: false, supportsReasoningEffort: false }, models: [{ id: req.provider.modelId }] } } };
     const file = await writeStateFile(req, path.join('pi', req.taskId), 'models.json', JSON.stringify(models));

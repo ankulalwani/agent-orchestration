@@ -1,0 +1,4 @@
+{"type":"runStarted","data":{"payloadSchema":"acp","acpProtocolVersion":1,"engine":"v2"}}
+{"type":"metadata","data":{"sessionId":"71deb4f1-f2f0-4045-ab03-c254c375656b","contextUsagePercentage":3.4170002937316895}}
+{"type":"metadata","data":{"sessionId":"71deb4f1-f2f0-4045-ab03-c254c375656b","turnDurationMs":952}}
+{"type":"runError","data":{"sessionId":"71deb4f1-f2f0-4045-ab03-c254c375656b","stage":"prompt","message":"Internal error (code -32603): Encountered an error in the response stream: The bearer token included in the request is invalid. (request_id: 00000000-0000-4000-8000-000000000000)"}}

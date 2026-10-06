@@ -50,7 +50,7 @@ const PATTERNS: Array<{ state: AgentState; re: RegExp }> = [
   { state: 'CONTEXT_EXHAUSTED', re: /(prompt is too long|context (length|window) (exceeded|limit)|maximum context length|exceeds? the (model'?s )?context|context_length_exceeded|token limit exceeded)/i },
   { state: 'RATE_LIMITED', re: /(rate[ _-]?limit(ed)?( exceeded| reached)?|usage limit (reached|exceeded)|quota (exceeded|exhausted)|too many requests|\b429\b|resource[_ ]exhausted|you'?ve (hit|reached) your (usage )?limit)/i },
   { state: 'CAPACITY_LIMITED', re: /(overloaded(_error)?|\b529\b|capacity (constraints|limit)|service unavailable|\b503\b)/i },
-  { state: 'AUTH_REQUIRED', re: /(invalid (x-)?api[ _-]?key|authentication[_ ]error|unauthori[sz]ed|\b401\b|please run \/login|not logged in|login required|invalid_api_key|credentials? (not found|missing|expired))/i },
+  { state: 'AUTH_REQUIRED', re: /(invalid (x-)?api[ _-]?key|api key not valid|authentication[_ ]error|unauthori[sz]ed|\b401\b|please run \/login|not logged in|login required|invalid_api_key|credentials? (not found|missing|expired))/i },
   { state: 'NETWORK_ERROR', re: /(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network (error|is unreachable)|socket hang up|fetch failed)/i },
 ];
 

@@ -57,6 +57,10 @@ async function run(adapter: AgentAdapter, provider: { providerId: string; kind: 
 describe.runIf(enabled)('real agent CLIs (invalid credentials)', () => {
   beforeAll(() => {
     process.env.PATH = [...bins, ...moreBins, process.env.PATH].join(path.delimiter);
+    // Detection runs `<cli> --version` in this process's environment, and several CLIs create their
+    // settings folder on any start: keep that out of the real user profile too.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-cli-detect-home-'));
+    Object.assign(process.env, { HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData'), LOCALAPPDATA: path.join(home, 'Local'), XDG_CONFIG_HOME: path.join(home, '.config'), XDG_DATA_HOME: path.join(home, '.data') });
   });
 
   it('Codex', async () => {

@@ -13,7 +13,7 @@ The platform is agent-neutral. The scheduler, task engine, database and UI conta
 | Aider | `aider` | **Verified** against 0.86.2 (see below) | No | Text: `litellm.<Name>Error` lines |
 | Cursor Agent | `cursor` | **Verified** against 2026.10.01: `cursor-agent -p --output-format stream-json --force --trust` | No | Yes: Claude-style stream JSON |
 | GitHub Copilot CLI | `copilot` | **Verified** against 1.0.92: `--allow-all-tools --no-ask-user --no-auto-update --output-format json -p`; run through the gateway | No | Yes: JSONL `assistant.message`, `tool.execution_start`, `result` |
-| Kiro CLI | `kiro` | **Documentation only** (no Windows build to run): `kiro-cli chat --no-interactive --trust-all-tools` | No | Text |
+| Kiro CLI | `kiro` | **Verified** against 2.27.1 in a Linux container (no Windows build): `kiro-cli chat --no-interactive --trust-all-tools --output-format stream-json` | No | Yes: JSON lines `runStarted`, `metadata` (session id), `runError` |
 | Qwen Code | `qwen` | **Verified** against 0.25.0: `--yolo --output-format stream-json --session-id <uuid>`; run through the gateway | No | Yes: Claude-style stream JSON |
 | Kimi Code | `kimi` | **Verified** against 2.1.1: `--output-format stream-json -p` | No | Yes: JSON lines with a role |
 | Grok CLI | `grok` | **Verified** against 1.0.46: `--prompt-file <file> --output-format streaming-json --always-approve --session-id <uuid>` | No | Yes: one ACP session update per line |
@@ -32,7 +32,7 @@ The platform is agent-neutral. The scheduler, task engine, database and UI conta
 | Mock | `mock` | In-tree test agent; enable per worker for testing | Yes | Yes |
 
 "Verified" means checked against the installed binary (the first five on 2026-09-27, the rest on
-2026-10-06): its `--help`, and real runs without valid credentials through the worker's session runtime
+2026-10-06; Kiro CLI in a Linux container, with a rejected key and without a login): its `--help`, and real runs without valid credentials through the worker's session runtime
 (`tests/e2e/agent-clis.test.ts`, opt-in with `AO_TEST_AGENT_CLIS=1`; captured output in
 `packages/agents/src/adapters/fixtures/`). A successful coding task needs your account, so success-path
 events follow each tool's documentation and are parsed defensively; the agents marked "run through the
@@ -45,16 +45,37 @@ recovery starts a fresh session from the checkpoint.
 | Agent | Its own login | Add-on models through the gateway | Providers it uses directly |
 |---|---|---|---|
 | Claude Code | Yes | Yes | Anthropic, Bedrock, Vertex |
-| Codex | Yes | Yes | OpenAI, Azure OpenAI, OpenAI-compatible, Ollama, OpenRouter |
+| Codex | Yes | Yes | OpenAI, Azure OpenAI |
 | Gemini CLI | Yes | Yes | Google, Vertex |
-| OpenCode, Kilo Code | Yes | Yes | Anthropic, OpenAI, Google, OpenRouter, Ollama, OpenAI-compatible, Azure OpenAI, Bedrock |
-| Aider | Yes | Yes | The same as OpenCode |
-| GitHub Copilot CLI | Yes (GitHub) | Yes | OpenAI, OpenAI-compatible, Ollama, Anthropic, Azure OpenAI (its custom-provider variables) |
+| OpenCode, Kilo Code | Yes | Yes | Anthropic, OpenAI, Google, OpenRouter, Azure OpenAI, Bedrock |
+| Aider | Yes | Yes | Anthropic, OpenAI, Google, OpenRouter, Ollama, OpenAI-compatible, Azure OpenAI, Bedrock |
+| GitHub Copilot CLI | Yes (GitHub) | Yes | OpenAI, OpenAI-compatible, Ollama, Anthropic (its custom-provider variables) |
 | Qwen Code | Yes (its settings) | Yes | OpenAI, OpenAI-compatible |
-| Trae Agent | No: it always needs a provider | Yes | OpenAI, OpenAI-compatible, Anthropic, Google, OpenRouter, Ollama |
+| Trae Agent | No: it always needs a provider | Yes | OpenAI, OpenAI-compatible, Anthropic, Google, OpenRouter |
 | Crush | Yes (its configuration or provider keys) | Yes | Anthropic, OpenAI, Google, OpenRouter |
-| Pi | Yes | Yes | Anthropic, OpenAI, Google, OpenRouter, Bedrock |
+| Pi | Yes | Yes | Anthropic, OpenAI, Google, OpenRouter |
 | Cursor Agent, Kiro CLI, Kimi Code, Grok CLI, Amp, Factory Droid, Auggie, Cline, Continue CLI, Qoder CLI, CodeBuddy Code, Mistral Vibe | Yes: only this | No | None |
+
+A provider that is not listed for an agent reaches it through the gateway, when the gateway serves that kind
+(for example Ollama for Codex, OpenCode and Trae Agent).
+
+The direct routes were run with the real CLIs (`tests/e2e/direct-providers.test.ts`, opt-in with
+`AO_TEST_AGENT_CLIS=1`): against a local endpoint where the CLI takes a base URL (Copilot CLI with OpenAI,
+OpenAI-compatible, Ollama and Anthropic; Qwen Code; Trae Agent and Aider with OpenAI-compatible; Pi, Crush,
+OpenCode and Kilo Code with Anthropic on another base URL), and against the vendor with a key it rejects
+(Crush, Pi, Trae Agent and Kilo Code with OpenAI, Anthropic, Google and OpenRouter). Not run, because they need
+an account or a server: Azure OpenAI, Bedrock, Vertex, and Aider with a real Ollama. What those runs showed:
+
+- **Codex** takes another endpoint only as a configured model provider: with `OPENAI_BASE_URL` it still
+  connected to api.openai.com, with the other provider's key. OpenAI-compatible providers, Ollama and
+  OpenRouter therefore reach Codex through the gateway.
+- **OpenCode and Kilo Code** have no provider for an arbitrary OpenAI-compatible endpoint or model ("Model not
+  found"), so those and Ollama reach them through the gateway. They read Google's key as
+  `GOOGLE_GENERATIVE_AI_API_KEY`.
+- **Aider** needs the `openai/` model prefix for an OpenAI-compatible endpoint.
+- **Pi and Crush** ignore `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`. A provider with its own base URL is
+  written into a configuration of their own for the run (`models.json`, `crush.json`).
+- **Google answers a wrong key with HTTP 400** ("API key not valid"); it is reported as sign-in required.
 
 The agents in the last row only talk to their vendor's service (or, for Cline, Continue and Mistral
 Vibe, to what their own configuration names). Sign in on the worker once, or put the vendor's key in the
@@ -93,6 +114,9 @@ What the real binaries showed, and what the adapters do about it:
 - **Amp** has no flag to switch command confirmations off: the worker passes a settings file with
   `amp.dangerouslyAllowAll`. Without a login it starts a browser login and waits; the worker reports
   that as "sign-in required" as soon as the line appears.
+- **Kiro CLI** without a key or login starts a browser login and waits, even with `--no-interactive`;
+  the worker reports that as "sign-in required" as soon as the line appears. A rejected key ends the
+  run with "The bearer token included in the request is invalid".
 - **Factory Droid** is read-only without `--auto`. The worker uses `medium` (edits, builds, local Git,
   no push); change it per worker with the adapter setting `autonomy` (`low`, `medium`, `high`).
 - **CodeBuddy Code** and **Mistral Vibe** exit with code 0 when nobody is signed in (Vibe after opening

@@ -86,16 +86,20 @@ Actual, current limitations. Updated as the implementation changes. Last updated
   system). Codex 0.157.1, Gemini CLI 0.61.0, OpenCode 1.18.32 and Aider 0.86.2 were run for real (flags,
   output formats, failure handling), but a successful task needs accounts for them. Success-path events of Codex, Gemini
   CLI and OpenCode follow their documentation. Resume is verified for Claude Code and Codex only.
-- **The agents added on 2026-10-06** (Cursor Agent, Copilot CLI, Qwen Code, Kimi Code, Grok CLI, Trae Agent,
-  Amp, Factory Droid, Auggie, Crush, Cline, Kilo Code, Pi, Continue CLI, Qoder CLI, CodeBuddy Code, Mistral
-  Vibe) were run for real without credentials (flags accepted, sign-in failure recognised). Copilot CLI, Qwen
-  Code, Kilo Code, Pi, Crush and Trae Agent also completed a task against a fake model through the gateway.
-  None has run with its vendor's account, so for the others success-path events follow the vendors'
-  documentation, and none claims resume. **Kiro CLI** has no Windows build and was written from its
-  documentation only; the dashboard marks it as not verified.
-- **Amp without a login** starts a browser login and waits. The worker reports sign-in as required when that
-  line appears, but the process itself ends only when the hang timeout stops it. Run `amp login` on the worker
-  first, or put `AMP_API_KEY` in the task's environment profile.
+- **The agents added on 2026-10-06** (Cursor Agent, Copilot CLI, Kiro CLI, Qwen Code, Kimi Code, Grok CLI,
+  Trae Agent, Amp, Factory Droid, Auggie, Crush, Cline, Kilo Code, Pi, Continue CLI, Qoder CLI, CodeBuddy
+  Code, Mistral Vibe) were run for real without credentials (flags accepted, sign-in failure recognised);
+  Kiro CLI in a Linux container, because it has no Windows build. Copilot CLI, Qwen Code, Kilo Code, Pi,
+  Crush and Trae Agent also completed a task against a fake model, through the gateway and through the
+  providers they use directly. **None has run with its vendor's account**, so for the agents that only talk
+  to their vendor's service a successful run has not been observed: their success-path events follow the
+  vendors' documentation. None claims resume.
+- **Direct providers that were not run:** Azure OpenAI, Bedrock and Vertex (they need an account), and
+  Aider with a real Ollama. See [Agents](agents/README.md#which-models-each-agent-can-use).
+- **Amp and Kiro CLI without a login** start a browser login and wait. The worker reports sign-in as
+  required when that line appears, but the process itself ends only when the hang timeout stops it. Sign in
+  on the worker first (`amp login`, `kiro-cli login`), or put `AMP_API_KEY` or `KIRO_API_KEY` in the task's
+  environment profile.
 - **Agents without a model flag** (Amp, Continue CLI, Mistral Vibe) run on the model their own
   configuration names; a task's model choice is not applied to them.
 - **Live provider APIs.** Providers were tested against a local HTTP fake, not the real services.

@@ -167,6 +167,7 @@ describe('Cursor, Copilot, Kiro, Qwen, Kimi, Grok, Trae and the other added CLIs
   it.each<[string, AgentAdapter, string, number, 'stdout' | 'stderr']>([
     ['Cursor Agent', new CursorAdapter(), 'cursor-2026.10.01-no-auth.stderr.txt', 1, 'stderr'],
     ['Copilot CLI', new CopilotAdapter(), 'copilot-1.0.92-no-auth.stderr.txt', 1, 'stderr'],
+    ['Kiro CLI (rejected key)', new KiroAdapter(), 'kiro-2.27.1-invalid-key.jsonl', 1, 'stdout'],
     ['Qwen Code', new QwenAdapter(), 'qwen-0.25.0-no-auth.jsonl', 1, 'stdout'],
     ['Kimi Code', new KimiAdapter(), 'kimi-2.1.1-no-model.stderr.txt', 1, 'stderr'],
     ['Grok', new GrokAdapter(), 'grok-1.0.46-no-auth.jsonl', 1, 'stdout'],
@@ -282,11 +283,66 @@ describe('Cursor, Copilot, Kiro, Qwen, Kimi, Grok, Trae and the other added CLIs
     expect(new CrushAdapter().capabilities().gitExcludes).toEqual(['.crush']);
   });
 
+  it('direct providers: only what a real run confirmed, each endpoint and key where that CLI reads it', async () => {
+    // Codex and OpenCode cannot be pointed at an OpenAI-compatible endpoint or Ollama by variables (Codex
+    // went to api.openai.com with the other provider's key; OpenCode said "Model not found"): gateway instead.
+    expect(new CodexAdapter().capabilities().supportedProviders).toEqual(['openai', 'azure-openai']);
+    for (const a of [new OpenCodeAdapter(), new KiloAdapter()]) {
+      expect(a.capabilities().supportedProviders, a.id).toEqual(['anthropic', 'openai', 'google', 'openrouter', 'azure-openai', 'bedrock']);
+      expect(a.capabilities().gateway).toBe(true);
+    }
+    expect(new TraeAdapter().capabilities().supportedProviders).not.toContain('ollama');
+    expect(new CopilotAdapter().capabilities().supportedProviders).toEqual(['openai', 'openai-compatible', 'ollama', 'anthropic']);
+    expect(new PiAdapter().capabilities().supportedProviders).toEqual(['anthropic', 'openai', 'google', 'openrouter']);
+
+    // Aider: litellm needs the `openai/` prefix to know an OpenAI-compatible endpoint's model.
+    const aider = await new AiderAdapter().buildInvocation(request({ providerId: 'c', kind: 'openai-compatible', modelId: 'm1', apiKey: 'k', baseUrl: 'https://llm.example/v1' }), inst('aider'));
+    expect(aider.args[aider.args.indexOf('--model') + 1]).toBe('openai/m1');
+    // OpenCode and Kilo Code read Google's key under the AI SDK's name.
+    expect(providerEnv('google', 'g-key')).toMatchObject({ GEMINI_API_KEY: 'g-key', GOOGLE_GENERATIVE_AI_API_KEY: 'g-key' });
+
+    // Pi and Crush ignore ANTHROPIC_BASE_URL / OPENAI_BASE_URL: another endpoint goes into their own configuration.
+    const proxy = { providerId: 'a', kind: 'anthropic', modelId: 'claude-haiku-4-5-20251001', apiKey: 'sk-ant', baseUrl: 'https://proxy.example' };
+    const pi = await new PiAdapter().buildInvocation(request(proxy), inst('pi'));
+    expect(JSON.parse(fs.readFileSync(path.join(pi.env.PI_CODING_AGENT_DIR!, 'models.json'), 'utf8'))).toEqual({ providers: { anthropic: { baseUrl: 'https://proxy.example' } } });
+    expect(pi.args).toEqual(expect.arrayContaining(['--provider', 'anthropic', '--model', 'claude-haiku-4-5-20251001']));
+    expect(pi.env.ANTHROPIC_API_KEY).toBe('sk-ant');
+    expect((await new PiAdapter().buildInvocation(request({ ...proxy, baseUrl: undefined }), inst('pi'))).env).not.toHaveProperty('PI_CODING_AGENT_DIR');
+    const crush = await new CrushAdapter().buildInvocation(request(proxy), inst('crush'));
+    expect(JSON.parse(fs.readFileSync(path.join(crush.env.CRUSH_GLOBAL_CONFIG!, 'crush.json'), 'utf8'))).toEqual({ providers: { anthropic: { base_url: 'https://proxy.example' } } });
+    expect(crush.args.slice(0, 4)).toEqual(['run', '--quiet', '--model', 'anthropic/claude-haiku-4-5-20251001']);
+    const gemini = await new CrushAdapter().buildInvocation(request({ providerId: 'g', kind: 'google', modelId: 'gemini-2.5-flash', apiKey: 'g' }), inst('crush'));
+    expect(gemini.args[3]).toBe('gemini/gemini-2.5-flash'); // Crush calls the provider `gemini`
+    expect(gemini.env).not.toHaveProperty('CRUSH_GLOBAL_CONFIG');
+  });
+
+  it('Google\'s "API key not valid" (HTTP 400) is a sign-in problem; Trae cuts long errors over several rows', () => {
+    expect(classifyText('APIError: API key not valid. Please pass a valid API key.')).toBe('AUTH_REQUIRED');
+    // Rows as Trae Agent 0.1.0 printed them for a rejected Google key: cut at the table width, not wrapped.
+    const rows = [
+      "│ Error       │ ❌ 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'AP",
+      "│             │ API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': ",
+      "│             │ 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_",
+      "│             │ Please pass a valid API key.'}]}}                              ",
+      '└─────────────┴────────────────────────────────────────────────────────────────',
+      '│ Success          │ ❌ No                                 │',
+    ];
+    expect(run(new TraeAdapter(), rows, 0).exit.state).toBe('AUTH_REQUIRED');
+    // An error row of an earlier step does not outlive a later success.
+    expect(run(new TraeAdapter(), [...rows.slice(0, 5), '│ Success          │ ✅ Yes                                │'], 0).exit.state).toBe('COMPLETED');
+  });
+
   it('command lines the CLIs accepted, and what each adapter claims', async () => {
     const args = async (a: AgentAdapter, exe: string, extra: { additionalDirs?: string[] } = {}) => (await a.buildInvocation({ ...request({ providerId: 'native:x', kind: 'native', modelId: 'm1' }), ...extra }, inst(exe))).args;
     const other = path.join(dir(), 'web');
     expect((await args(new CursorAdapter(), 'cursor-agent', { additionalDirs: [other] })).slice(0, -1)).toEqual(['-p', '--output-format', 'stream-json', '--force', '--trust', '--model', 'm1', '--add-dir', other]);
-    expect((await args(new KiroAdapter(), 'kiro-cli')).slice(0, -1)).toEqual(['chat', '--no-interactive', '--trust-all-tools', '--model', 'm1']);
+    expect((await args(new KiroAdapter(), 'kiro-cli')).slice(0, -1)).toEqual(['chat', '--no-interactive', '--trust-all-tools', '--output-format', 'stream-json', '--model', 'm1']);
+    // Kiro: its session id from the metadata event; without a login it waits for a browser, reported at once.
+    const kiro = run(new KiroAdapter(), fixture('kiro-2.27.1-invalid-key.jsonl'), 1);
+    expect(kiro.events).toContainEqual({ type: 'session', sessionId: '71deb4f1-f2f0-4045-ab03-c254c375656b' });
+    const login = run(new KiroAdapter(), fixture('kiro-2.27.1-login-flow.txt'), 1);
+    expect(login.events).toContainEqual(expect.objectContaining({ type: 'state', state: 'AUTH_REQUIRED' }));
+    expect(login.exit.state).toBe('AUTH_REQUIRED');
     // Kimi's prompt mode refuses --yolo and --auto.
     const kimi = await args(new KimiAdapter(), 'kimi');
     expect(kimi.slice(0, 4)).toEqual(['--output-format', 'stream-json', '--model', 'm1']);
@@ -305,7 +361,7 @@ describe('Cursor, Copilot, Kiro, Qwen, Kimi, Grok, Trae and the other added CLIs
     // No prompt on a command line: only the pointer to the prompt file, or the file itself.
     for (const a of defaultAgentManager().list().filter((x) => x.id !== 'claude-code' && x.id !== 'trae')) expect((await a.buildInvocation({ ...request(), prompt: 'do "things" & more' }, inst(a.executables[0]!))).args.join(' '), a.id).not.toContain('things');
 
-    expect(new KiroAdapter().capabilities().verification).toBe('documentation');
+    for (const a of defaultAgentManager().list()) expect(a.capabilities().verification, a.id).toBe('binary');
     for (const a of [new CursorAdapter(), new KiroAdapter(), new KimiAdapter(), new GrokAdapter(), new AmpAdapter(), new DroidAdapter(), new AuggieAdapter(), new ClineAdapter(), new ContinueAdapter(), new QoderAdapter(), new CodeBuddyAdapter(), new VibeAdapter()]) {
       expect(a.capabilities(), a.id).toMatchObject({ gateway: false, supportedProviders: [], resume: false });
     }

@@ -1,0 +1,3 @@
+Confirm the following code in the browser
+Code: ABCD-EFGH
+Open this URL: https://view.awsapps.com/start/#/device?user_code=ABCD-EFGH

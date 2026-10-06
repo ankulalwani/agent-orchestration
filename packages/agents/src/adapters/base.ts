@@ -155,6 +155,8 @@ export function providerEnv(kind: string, apiKey?: string | null, baseUrl?: stri
     case 'google':
       set('GEMINI_API_KEY', apiKey);
       set('GOOGLE_API_KEY', apiKey);
+      // The name OpenCode and Kilo Code read (the AI SDK's Google provider).
+      set('GOOGLE_GENERATIVE_AI_API_KEY', apiKey);
       break;
     case 'openrouter':
       set('OPENROUTER_API_KEY', apiKey);

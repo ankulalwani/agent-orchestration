@@ -56,7 +56,12 @@ export function scriptedModel(dir: string) {
   };
 }
 
-export async function runThroughGateway(agentId: string, opts: { timeoutMs?: number; keepDir?: boolean } = {}) {
+/**
+ * `direct`: instead of the gateway binding, give the harness a provider of that kind, the way the worker
+ * does for providers a harness supports itself. An OpenAI-style kind points at the fake model; `anthropic`
+ * points at the gateway's Anthropic endpoint, which then stands in for the Anthropic API.
+ */
+export async function runThroughGateway(agentId: string, opts: { timeoutMs?: number; keepDir?: boolean; direct?: string } = {}) {
   const agent = ADAPTERS[agentId]!;
   const exe = findExecutable(agent);
   if (!exe) return { skipped: `${agentId} is not installed` } as const;
@@ -68,9 +73,24 @@ export async function runThroughGateway(agentId: string, opts: { timeoutMs?: num
   await runCommand('git', ['init', '-q', '-b', 'main'], { cwd: dir });
   llm.handler = scriptedModel(dir);
   const session = await gateway.open({ chain: [{ providerId: 'fake', name: 'Fake', baseUrl: llm.url, apiKey: 'upstream-key', model: 'fake-model', kind: 'openai-compatible' }] });
+  // `<kind>@real`: the vendor's own endpoint with a key it will reject, and a model name it knows.
+  const REAL_MODELS: Record<string, string> = { openai: 'gpt-4o-mini', anthropic: 'claude-haiku-4-5-20251001', google: 'gemini-2.5-flash', openrouter: 'openai/gpt-4o-mini' };
+  const real = opts.direct?.endsWith('@real') ? opts.direct.slice(0, -5) : null;
+  const provider = real
+    ? { providerId: real, kind: real, modelId: REAL_MODELS[real] ?? 'default', apiKey: 'invalid-key-for-verification', baseUrl: null }
+    : opts.direct === 'anthropic@named'
+      ? // The gateway standing in for the Anthropic API under a model name the harness knows: shows whether the harness honours the base URL.
+        { providerId: 'fake', kind: 'anthropic', modelId: 'claude-haiku-4-5-20251001', apiKey: session.token, baseUrl: `${session.baseUrl}/anthropic` }
+      : opts.direct === 'anthropic'
+      ? { providerId: 'fake', kind: 'anthropic', modelId: session.alias, apiKey: session.token, baseUrl: `${session.baseUrl}/anthropic` }
+      : opts.direct === 'ollama'
+        ? { providerId: 'fake', kind: 'ollama', modelId: 'fake-model', apiKey: null, baseUrl: llm.url.replace(/\/v1$/, '') }
+        : opts.direct
+          ? { providerId: 'fake', kind: opts.direct, modelId: 'fake-model', apiKey: 'direct-key', baseUrl: llm.url }
+          : { providerId: 'fake', kind: GATEWAY_KIND, modelId: session.alias, apiKey: session.token, baseUrl: session.baseUrl };
   try {
     const inv = await agent.buildInvocation(
-      { taskId: 't1', cwd: dir, prompt: 'Create hello.txt in the current directory.', provider: { providerId: 'fake', kind: GATEWAY_KIND, modelId: session.alias, apiKey: session.token, baseUrl: session.baseUrl }, sessionId: randomUUID(), stateDir, settings: agentId === 'claude-code' ? { permissionMode: 'acceptEdits' } : {} },
+      { taskId: 't1', cwd: dir, prompt: 'Create hello.txt in the current directory.', provider, sessionId: randomUUID(), stateDir, settings: agentId === 'claude-code' ? { permissionMode: 'acceptEdits' } : {} },
       { installed: true, path: exe, version: null, authenticated: null, notes: [] },
     );
     // Isolated home for harnesses that keep settings there, so the run uses only the gateway.
@@ -92,18 +112,25 @@ export async function runThroughGateway(agentId: string, opts: { timeoutMs?: num
   }
 }
 
+/** What the adapter makes of a run's output: its events and the state it gives the exit. */
+export function interpret(agentId: string, r: { stdout: string; stderr: string; exitCode: number | null }) {
+  const agent = ADAPTERS[agentId]!;
+  const ctx = { sessionId: null, lastState: null, retryAt: null, detail: null, resultSeen: false, resultIsError: false, recentText: [] as string[] };
+  const parse = (text: string, stream: 'stdout' | 'stderr') => text.split(/\r?\n/).filter((l) => l.trim()).flatMap((l) => (ctx.recentText.push(l), agent.parseLine(l, stream, ctx)));
+  const events = [...parse(r.stdout, 'stdout'), ...parse(r.stderr, 'stderr')];
+  return { events, exit: agent.classifyExit(r.exitCode, null, ctx) };
+}
+
 if (process.argv[1]?.endsWith('gateway-harness.ts')) {
   const agentId = process.argv[2] ?? 'claude-code';
-  runThroughGateway(agentId, { keepDir: true }).then((r) => {
+  runThroughGateway(agentId, { keepDir: true, direct: process.argv[3] }).then((r) => {
     if ('skipped' in r) return console.log(r.skipped);
     console.log(JSON.stringify({ exitCode: r.exitCode, created: r.created, requests: r.requests.map((q) => ({ model: q.model, tools: (q.tools ?? []).map((t: any) => t.function?.name), last: q.messages.at(-1)?.role })), dir: r.dir }, null, 1));
     console.log('--- stdout tail ---\n' + r.stdout.slice(-1500) + '\n--- stderr tail ---\n' + r.stderr.slice(-1500));
     // What the adapter makes of that output.
-    const ctx = { sessionId: null, lastState: null, retryAt: null, detail: null, resultSeen: false, resultIsError: false, recentText: [] as string[] };
-    const parse = (text: string, stream: 'stdout' | 'stderr') => text.split(/\r?\n/).filter((l) => l.trim()).flatMap((l) => (ctx.recentText.push(l), ADAPTERS[agentId]!.parseLine(l, stream, ctx)));
-    const events = [...parse(r.stdout, 'stdout'), ...parse(r.stderr, 'stderr')];
+    const { events, exit } = interpret(agentId, r);
     console.log('--- events ---\n' + events.filter((e) => e.type !== 'output').map((e) => JSON.stringify(e).slice(0, 200)).join('\n'));
-    console.log('--- exit ---\n' + JSON.stringify(ADAPTERS[agentId]!.classifyExit(r.exitCode, null, ctx)));
+    console.log('--- exit ---\n' + JSON.stringify(exit));
     if (process.env.AO_HARNESS_SAVE) fs.writeFileSync(process.env.AO_HARNESS_SAVE, r.stdout);
   });
 }

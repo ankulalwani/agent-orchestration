@@ -126,7 +126,10 @@ export class CodexAdapter extends CliAdapter {
   readonly id = 'codex';
   readonly name = 'OpenAI Codex';
   readonly executables = ['codex'];
-  protected readonly providers = ['openai', 'azure-openai', 'openai-compatible', 'ollama', 'openrouter'];
+  // Codex only speaks the Responses API and takes another endpoint only as a configured model provider:
+  // run with OPENAI_BASE_URL for an OpenAI-compatible provider, 0.157.1 still connected to api.openai.com
+  // with that provider's key. Those providers (also Ollama and OpenRouter) reach it through the gateway.
+  protected readonly providers = ['openai', 'azure-openai'];
 
   override capabilities(): AgentCapabilities {
     return { ...super.capabilities(), resume: true, structuredOutput: true };
@@ -272,7 +275,9 @@ export class OpenCodeAdapter extends CliAdapter {
   readonly id: string = 'opencode';
   readonly name: string = 'OpenCode';
   readonly executables: string[] = ['opencode'];
-  protected readonly providers = ['anthropic', 'openai', 'google', 'openrouter', 'ollama', 'openai-compatible', 'azure-openai', 'bedrock'];
+  // No `ollama` or `openai-compatible`: OpenCode has no provider of that name with our endpoint and model
+  // ("Model not found" in a real run), so those reach it through the gateway, which configures one.
+  protected readonly providers = ['anthropic', 'openai', 'google', 'openrouter', 'azure-openai', 'bedrock'];
 
   override capabilities(): AgentCapabilities {
     return { ...super.capabilities(), structuredOutput: true };
@@ -371,7 +376,8 @@ export class AiderAdapter extends CliAdapter {
       '--input-history-file', history('input.txt'),
     ];
     if (req.provider.modelId && req.provider.modelId !== 'default') {
-      const prefix = req.provider.kind === 'openrouter' ? 'openrouter/' : req.provider.kind === 'ollama' ? 'ollama_chat/' : '';
+      // litellm picks the API from the prefix; without one it does not know an OpenAI-compatible endpoint's model.
+      const prefix = req.provider.kind === 'openrouter' ? 'openrouter/' : req.provider.kind === 'ollama' ? 'ollama_chat/' : req.provider.kind === 'openai-compatible' ? 'openai/' : '';
       a.push('--model', prefix + req.provider.modelId);
     }
     return a;
