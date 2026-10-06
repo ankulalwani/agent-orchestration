@@ -15,6 +15,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="index" options={{ title: 'Dashboard', tabBarLabel: 'Dashboard' }} />
       <Tabs.Screen name="tasks" options={{ title: 'Tasks' }} />
       <Tabs.Screen name="workers" options={{ title: 'Workers' }} />
+      <Tabs.Screen name="insights" options={{ title: 'Insights' }} />
       <Tabs.Screen name="activity" options={{ title: 'Activity', tabBarBadge: unread.data?.unread ? unread.data.unread : undefined }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
     </Tabs>

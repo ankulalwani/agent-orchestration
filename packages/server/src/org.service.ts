@@ -24,13 +24,15 @@ export class OrgService {
     requirePermission(actor, 'org.read');
     const org = await Organization.findById(oid(actor.organizationId)).lean();
     if (!org) throw new AppError('NOT_FOUND', 'Organization not found');
+    // The digest's recipients are for administrators (DigestService), not for every member.
+    const { digest: _digest, ...settings } = org.settings ?? {};
     return {
       id: String(org._id),
       name: org.name,
       slug: org.slug,
       policy: org.policy ?? {},
       knowledge: org.knowledge ?? '',
-      settings: org.settings,
+      settings,
       createdAt: org.createdAt.toISOString(),
     };
   }

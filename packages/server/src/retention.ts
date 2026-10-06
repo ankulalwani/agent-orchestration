@@ -1,5 +1,5 @@
 import { TERMINAL_TASK_STATUSES, createLogger } from '@ao/core';
-import { AuditLog, Organization, Task, TaskEvent } from '@ao/database';
+import { AuditLog, Organization, Task, TaskEvent, WorkerDailyStat } from '@ao/database';
 
 const log = createLogger('retention');
 
@@ -27,6 +27,8 @@ export async function purgeExpiredData(now = new Date()) {
     result.events += ev.deletedCount;
     result.audit += au.deletedCount;
   }
+  // Worker online time is only read for periods of up to a year.
+  await WorkerDailyStat.deleteMany({ date: { $lt: new Date(now.getTime() - 400 * 86_400_000).toISOString().slice(0, 10) } });
   if (result.outputEvents + result.events + result.audit) log.info(result, 'retention purge');
   return result;
 }

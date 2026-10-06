@@ -79,6 +79,7 @@ export function toTaskDto(t: AnyDoc): TaskDto {
     priority: t.priority,
     status: t.status,
     statusReason: t.statusReason ?? null,
+    failureCategory: t.failureCategory ?? null,
     workerId: str(t.workerId),
     agentId: t.agentId ?? null,
     providerId: t.providerId ?? null,

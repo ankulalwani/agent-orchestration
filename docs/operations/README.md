@@ -5,7 +5,7 @@ What helps a team run agents day to day:
 - [Spend budgets](#spend-budgets): limits on what agents spend, per task, project and organization.
 - [Scheduled tasks](#scheduled-tasks): tasks that are created again on a schedule.
 - [Chat channels](#chat-channels): notifications in Slack or Microsoft Teams, and approvals from Slack.
-- [Insights](#insights): success rate, cost and time, compared by agent, model and project.
+- [Insights](#insights): analytics of finished tasks, spend, workers, failures and times, and a weekly digest.
 - [Task templates](#task-templates): task text you reuse, with variables.
 - [Several agents on one task](#several-agents-on-one-task): the first attempt that passes verification wins.
 - [CI checks as verification](#ci-checks-as-verification): failed CI goes back to the agent.
@@ -125,16 +125,36 @@ must be public `https` URLs.
 
 ## Insights
 
-The **Insights** page (and `GET /orgs/:orgId/analytics?days=30&projectId=…`) shows the tasks that
-finished in the last 7, 30 or 90 days:
+The **Insights** page has five views over the last 7, 30, 90 or 365 days (whole days, UTC), for the
+organization or one project. Figures are compared with the period of the same length before.
 
-- **Success rate:** completed, of completed and failed. Cancelled tasks are left out.
-- **First-pass rate:** completed tasks whose first verification passed, without a fix.
-- **Fixes per task**, **cost**, **cost per completed task**, **agent time** and **created to completed**.
-- The same figures **by agent**, **by model** and **by project**, and tasks finished per day.
+| View | API | Shows |
+|---|---|---|
+| Overview | `GET /orgs/:orgId/analytics` | Success rate (completed, of completed and failed; cancelled tasks are left out), first-pass rate, fixes per task, cost, agent time, created to completed; by agent, model and project; tasks finished per day |
+| Cost | `…/analytics/cost` | Spend per day (by the day an agent session ended), by project, model and agent, the ten most expensive tasks, and each budget with a month-end forecast (the month's spend so far, continued at the same rate) |
+| Workers | `…/analytics/workers` | Per worker: finished tasks, success, agent time, time online, utilization (agent time against time online, for as many tasks as the worker runs at once), cost, stopped tasks |
+| Reliability | `…/analytics/reliability` | Why tasks stopped (failed or needed recovery), how many are still stopped or recovered, provider limits, fallbacks, context resets, restarts and fix rounds by agent, and the failure rate and duration of every verification step |
+| Flow | `…/analytics/flow` | Median, 90th percentile and average of waiting to start, agent time and created to completed; outcomes by creator, source, kind and priority |
+
+Every view takes `days` (1 to 365) and `projectId`, and `format=csv&table=<name>` returns one of its
+tables as a CSV file (the **CSV** button on each table). `agentctl insights [view]` prints the same.
 
 A task counts for the agent and model it finished on. Cost is what agents and providers report; for an
-agent that reports none, it is zero.
+agent that reports none, it is zero. A task waiting for recovery is neither completed nor failed: it is
+in the Reliability view, not in the success rate.
+
+Why a task stops is recorded when it stops (`failureCategory` on the task: `verification`,
+`agent_error`, `provider_limit`, `budget`, `worker_lost`, `worker_error`, `setup`, `timeout`, `other`),
+by the code path that stops it. Time online is added up from worker heartbeats, per UTC day. Both exist
+from the release that added them on: earlier stops are not counted, and earlier days show no time online.
+
+### Weekly digest
+
+**Settings → Chat and digest → Weekly digest** (permission `settings.manage`) sends a summary of the
+last seven full days once a week, on a weekday and hour in UTC, to email addresses (needs SMTP) and to
+chat channels. **Email it to me now** sends it to the caller only. A digest is sent up to 24 hours
+after its time; if the server was down for longer, that week is skipped. Several server instances send
+one digest. API: `GET`/`PUT /orgs/:orgId/analytics/digest`, `POST …/analytics/digest/send`.
 
 ## Task templates
 

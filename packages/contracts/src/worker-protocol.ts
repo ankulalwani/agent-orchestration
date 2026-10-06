@@ -4,7 +4,7 @@
  * authenticated, idempotent and retryable. WebSocket for push (offers, control) and heartbeats.
  */
 import { z } from 'zod';
-import { TASK_EVENT_TYPES, TASK_STATUSES } from '@ao/core/shared';
+import { FAILURE_CATEGORIES, TASK_EVENT_TYPES, TASK_STATUSES } from '@ao/core/shared';
 
 export const WORKER_PROTOCOL_VERSION = 1;
 
@@ -103,6 +103,8 @@ export const transitionRequest = z.object({
       incRemediation: z.boolean(),
       fallbackStep: z.number().int(),
       activeMsDelta: z.number().int().nonnegative(),
+      /** Why the task stops, with a transition to FAILED or RECOVERY_REQUIRED. */
+      failureCategory: z.enum(FAILURE_CATEGORIES),
     })
     .partial()
     .default({}),

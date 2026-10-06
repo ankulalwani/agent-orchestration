@@ -16,6 +16,7 @@ import { Integrations } from './Integrations';
 import { GitHubSettings } from './GitHubSettings';
 import { ResetMfaDialog } from '../components/ResetMfaDialog';
 import { BudgetCard } from '../components/BudgetCard';
+import { DigestCard } from '../components/DigestCard';
 import { ChatChannels, ChatIdentity } from './ChatChannels';
 
 type Tab = 'general' | 'members' | 'policy' | 'secrets' | 'github' | 'integrations' | 'chat' | 'account';
@@ -45,7 +46,7 @@ export function SettingsPage() {
           { id: 'members', label: 'Members' },
           ...(can('policy.manage') ? [{ id: 'policy' as const, label: 'Execution policy' }] : []),
           { id: 'github' as const, label: 'GitHub' },
-          ...(can('settings.manage') ? [{ id: 'secrets' as const, label: 'Secrets' }, { id: 'integrations' as const, label: 'Integrations' }, { id: 'chat' as const, label: 'Chat' }] : []),
+          ...(can('settings.manage') ? [{ id: 'secrets' as const, label: 'Secrets' }, { id: 'integrations' as const, label: 'Integrations' }, { id: 'chat' as const, label: 'Chat and digest' }] : []),
           { id: 'account', label: 'Your account' },
         ]}
       />
@@ -60,7 +61,12 @@ export function SettingsPage() {
       {tab === 'secrets' && <Secrets />}
       {tab === 'integrations' && <Integrations />}
       {tab === 'github' && <GitHubSettings />}
-      {tab === 'chat' && <ChatChannels />}
+      {tab === 'chat' && (
+        <>
+          <ChatChannels />
+          <DigestCard />
+        </>
+      )}
       {tab === 'account' && (
         <>
           <ConnectedAccounts />

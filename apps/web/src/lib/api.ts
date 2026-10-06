@@ -128,3 +128,16 @@ export const post = <T,>(p: string, b?: unknown) => api<T>('POST', p, b ?? {});
 export const patch = <T,>(p: string, b: unknown) => api<T>('PATCH', p, b);
 export const put = <T,>(p: string, b: unknown) => api<T>('PUT', p, b);
 export const del = <T,>(p: string) => api<T>('DELETE', p);
+
+/** Saves a file from the API (a link can't carry the access token). */
+export async function download(path: string, filename: string) {
+  let res = await raw('GET', path);
+  if (res.status === 401 && (await refreshSession())) res = await raw('GET', path);
+  if (!res.ok) await parse(res);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

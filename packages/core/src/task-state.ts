@@ -86,5 +86,41 @@ export function sourcesFor(to: TaskStatus): TaskStatus[] {
   return TASK_STATUSES.filter((s) => TASK_TRANSITIONS[s].includes(to));
 }
 
+/**
+ * Why a task stopped (FAILED or RECOVERY_REQUIRED), for analytics. Set by the code path that stops the
+ * task, never parsed from the reason text.
+ */
+export const FAILURE_CATEGORIES = [
+  'verification', // checks, CI, or a review/plan that was still not valid after the allowed fixes
+  'agent_error', // the agent crashed, kept failing the same way, or ran out of context resets
+  'provider_limit',
+  'budget',
+  'worker_lost',
+  'worker_error', // an unexpected error in the worker itself
+  'setup', // missing secrets, sign-in, sandbox, agent, repository or refs
+  'timeout',
+  'other',
+] as const;
+export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
+export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
+  verification: 'Checks still failing',
+  agent_error: 'Agent crashed or kept failing',
+  provider_limit: 'Provider limit',
+  budget: 'Budget reached',
+  worker_lost: 'Worker lost',
+  worker_error: 'Worker error',
+  setup: 'Setup missing (sign-in, secrets, agent, sandbox)',
+  timeout: 'Time limit',
+  other: 'Other',
+};
+
+/** Statuses a task stops in without having completed. */
+export const STOPPED_TASK_STATUSES: readonly TaskStatus[] = ['FAILED', 'RECOVERY_REQUIRED'];
+
+/** The category of a stop whose code path named none (an older worker): what the transition itself shows. */
+export function inferFailureCategory(verificationStatus: string | null | undefined): FailureCategory {
+  return verificationStatus === 'FAILED' ? 'verification' : 'other';
+}
+
 /** Statuses whose elapsed time counts toward hang/execution timeouts (spec §31: limit waits excluded). */
 export const TIMED_STATUSES: readonly TaskStatus[] = ['PREPARING', 'RUNNING', 'VERIFYING'];

@@ -373,7 +373,7 @@ export class TaskRun {
       captureError(e, { correlationId: this.task.correlationId ?? null, tags: { component: 'worker.executor', taskId: this.taskId, agentId: this.target?.agentId } });
       try {
         this.checkpoint = this.stateRoot ? buildCheckpoint(this.stateRoot, this.taskId, this.checkpoint, { reason: 'crash' }) : this.checkpoint;
-        await this.tr('RECOVERY_REQUIRED', { lastCheckpoint: this.checkpoint as never }, `Worker error: ${(e as Error).message}`);
+        await this.tr('RECOVERY_REQUIRED', { failureCategory: 'worker_error', lastCheckpoint: this.checkpoint as never }, `Worker error: ${(e as Error).message}`);
       } catch {
         /* lease expiry will recover it */
       }
@@ -452,7 +452,7 @@ export class TaskRun {
     // Environment profile (spec §78): every referenced secret must exist.
     const envProfile = this.claim.environment;
     if (envProfile?.missingSecrets.length) {
-      await this.tr('RECOVERY_REQUIRED', {}, `Environment "${envProfile.name}" references secrets that do not exist: ${envProfile.missingSecrets.join(', ')}. Add them under Settings → Secrets and retry.`);
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'setup' }, `Environment "${envProfile.name}" references secrets that do not exist: ${envProfile.missingSecrets.join(', ')}. Add them under Settings → Secrets and retry.`);
       throw new Aborted('cancelled');
     }
     const needsApproval = this.policy.requireApprovalFor.plan || Boolean(envProfile?.requiresApproval) || (this.task.environment === 'production' && this.policy.requireApprovalFor.production);
@@ -646,7 +646,7 @@ export class TaskRun {
     if (this.policy.sandbox.mode === 'required') {
       const sb = detectSandbox();
       if (!sb.backend) {
-        await this.tr('RECOVERY_REQUIRED', { lastCheckpoint: this.checkpoint as never }, `The task policy requires an OS sandbox for agents, but this worker has none: ${sb.reason} Run it on a worker with the os-sandbox tool, or change the sandbox policy.`);
+        await this.tr('RECOVERY_REQUIRED', { failureCategory: 'setup', lastCheckpoint: this.checkpoint as never }, `The task policy requires an OS sandbox for agents, but this worker has none: ${sb.reason} Run it on a worker with the os-sandbox tool, or change the sandbox policy.`);
         return 'stop';
       }
     }
@@ -663,11 +663,11 @@ export class TaskRun {
           this.target = await this.pickTarget();
           continue;
         }
-        await this.tr('RECOVERY_REQUIRED', { lastCheckpoint: this.checkpoint as never }, 'No compatible agent/provider/model is available on this worker for this task');
+        await this.tr('RECOVERY_REQUIRED', { failureCategory: 'setup', lastCheckpoint: this.checkpoint as never }, 'No compatible agent/provider/model is available on this worker for this task');
         return 'stop';
       }
       if (this.policy.maxExecutionMs > 0 && this.task.activeMs + this.pendingActiveMs > this.policy.maxExecutionMs) {
-        await this.tr('RECOVERY_REQUIRED', { lastCheckpoint: this.checkpoint as never }, `Execution time limit (${this.policy.maxExecutionMs} ms) exceeded`);
+        await this.tr('RECOVERY_REQUIRED', { failureCategory: 'timeout', lastCheckpoint: this.checkpoint as never }, `Execution time limit (${this.policy.maxExecutionMs} ms) exceeded`);
         return 'stop';
       }
 
@@ -799,7 +799,7 @@ export class TaskRun {
           this.ev('ContextExhausted', { resets });
           this.recovery(`Context exhausted (reset ${resets}); continuing in a new session from checkpoint`);
           if (resets > this.policy.maxContextResets) {
-            await this.tr('RECOVERY_REQUIRED', { ...cpPatch, incContextReset: true }, `Context reset limit (${this.policy.maxContextResets}) reached`);
+            await this.tr('RECOVERY_REQUIRED', { failureCategory: 'agent_error', ...cpPatch, incContextReset: true }, `Context reset limit (${this.policy.maxContextResets}) reached`);
             return 'stop';
           }
           resumeAllowed = false; // a resumed session would carry the same exhausted context
@@ -816,7 +816,7 @@ export class TaskRun {
             resumeAllowed = false;
             continue;
           }
-          await this.tr('RECOVERY_REQUIRED', cpPatch, outcome.state === 'AUTH_REQUIRED' ? `Agent ${this.target.agentId} needs authentication for ${this.target.providerId}. Sign in on the worker and retry.` : `Agent ${this.target.agentId} is not installed on this worker`);
+          await this.tr('RECOVERY_REQUIRED', { ...cpPatch, failureCategory: 'setup' }, outcome.state === 'AUTH_REQUIRED' ? `Agent ${this.target.agentId} needs authentication for ${this.target.providerId}. Sign in on the worker and retry.` : `Agent ${this.target.agentId} is not installed on this worker`);
           return 'stop';
         }
         case 'NETWORK_ERROR': {
@@ -843,7 +843,7 @@ export class TaskRun {
           if (restarts > this.policy.maxRestarts || deterministic) {
             await this.tr(
               'RECOVERY_REQUIRED',
-              { ...cpPatch, incRestart: true },
+              { ...cpPatch, incRestart: true, failureCategory: 'agent_error' },
               deterministic ? `The agent failed the same way 3 times in a row: ${outcome.detail ?? outcome.state}` : `Agent restart limit (${this.policy.maxRestarts}) reached: ${outcome.detail ?? outcome.state}`,
             );
             return 'stop';
@@ -923,14 +923,14 @@ export class TaskRun {
         const answer = await this.askUser('The AI provider limit was reached and the fallback policy asks for a decision. Reply "wait" to wait for the limit to reset, or "fail" to stop the task.', cpPatch);
         if (answer === null) return 'stop';
         if (/fail|stop|cancel/i.test(answer)) {
-          await this.tr('FAILED', {}, 'Stopped by user after provider limit');
+          await this.tr('FAILED', { failureCategory: 'provider_limit' }, 'Stopped by user after provider limit');
           return 'stop';
         }
         await this.tr('RUNNING', { pendingInteraction: null }, 'User chose to wait for the limit');
         return (await this.waitForLimit(retryAt, 'Waiting for provider limit (user chose to wait)')) ? 'continue' : 'stop';
       }
       case 'FAIL':
-        await this.tr('FAILED', cpPatch, 'Provider limit reached and fallback policy is FAIL');
+        await this.tr('FAILED', { ...cpPatch, failureCategory: 'provider_limit' }, 'Provider limit reached and fallback policy is FAIL');
         return 'stop';
     }
   }
@@ -1080,7 +1080,7 @@ export class TaskRun {
     const summary = failureSummary(run);
     this.ev('VerificationFailed', { attempt, failed: run.steps.filter((s) => s.status !== 'passed' && s.status !== 'skipped').map((s) => s.name) });
     if (this.task.remediationCount >= this.policy.maxRemediationAttempts) {
-      await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED', verificationRun: run as never }, `Verification still failing after ${this.policy.maxRemediationAttempts} remediation attempts`);
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', verificationStatus: 'FAILED', verificationRun: run as never }, `Verification still failing after ${this.policy.maxRemediationAttempts} remediation attempts`);
       return 'stop';
     }
     this.ev('RemediationStarted', { attempt: this.task.remediationCount + 1 });
@@ -1207,7 +1207,7 @@ export class TaskRun {
     const warn = (text: string) => void (gitResult.warnings as string[]).push(text);
     if (!commit) {
       if (this.local.ciFailedCommit) {
-        await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED' }, `CI checks failed on ${this.local.ciFailedCommit.slice(0, 7)} and the agent pushed no further change`);
+        await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', verificationStatus: 'FAILED' }, `CI checks failed on ${this.local.ciFailedCommit.slice(0, 7)} and the agent pushed no further change`);
         return 'stop';
       }
       warn('CI checks were not awaited: nothing was pushed');
@@ -1220,7 +1220,7 @@ export class TaskRun {
         gitResult.ci = { commit, state: 'unknown', checks: [] };
         return 'passed';
       }
-      await this.tr('RECOVERY_REQUIRED', { gitStatus: gitStatus as never, gitResult: gitResult as never }, `CI checks of ${short}: ${what}`);
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', gitStatus: gitStatus as never, gitResult: gitResult as never }, `CI checks of ${short}: ${what}`);
       return 'stop';
     };
     this.ev('CiChecksStarted', { commit });
@@ -1252,7 +1252,7 @@ export class TaskRun {
         this.persist();
         gitResult.ci = { commit, state: 'failure', checks: detailed.checks.map((c) => ({ name: c.name, state: c.state, url: c.url })) };
         if (this.task.remediationCount >= this.policy.maxRemediationAttempts) {
-          await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED', gitStatus: gitStatus as never, gitResult: gitResult as never }, `CI checks still failing after ${this.policy.maxRemediationAttempts} remediation attempts`);
+          await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', verificationStatus: 'FAILED', gitStatus: gitStatus as never, gitResult: gitResult as never }, `CI checks still failing after ${this.policy.maxRemediationAttempts} remediation attempts`);
           return 'stop';
         }
         this.ev('RemediationStarted', { attempt: this.task.remediationCount + 1, ci: true });
@@ -1278,7 +1278,7 @@ export class TaskRun {
   private async prepareReview() {
     const spec = this.task.review;
     const stop = async (reason: string) => {
-      await this.tr('RECOVERY_REQUIRED', {}, reason);
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'setup' }, reason);
       throw new Aborted('cancelled');
     };
     if (!spec) return stop('This review task has no base and head to compare');
@@ -1329,7 +1329,7 @@ export class TaskRun {
     }
     this.ev('VerificationFailed', { attempt: this.task.remediationCount + 1, failed: problems });
     if (this.task.remediationCount >= this.policy.maxRemediationAttempts) {
-      await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED' }, `The review is still not valid after ${this.policy.maxRemediationAttempts} attempts: ${problems.join(' ')}`.slice(0, 1000));
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', verificationStatus: 'FAILED' }, `The review is still not valid after ${this.policy.maxRemediationAttempts} attempts: ${problems.join(' ')}`.slice(0, 1000));
       return 'stop';
     }
     await this.tr('RUNNING', { verificationStatus: 'FAILED', incRemediation: true }, 'Review not accepted; the agent is fixing it');
@@ -1410,7 +1410,7 @@ export class TaskRun {
     }
     this.ev('VerificationFailed', { attempt: this.task.remediationCount + 1, failed: problems });
     if (this.task.remediationCount >= this.policy.maxRemediationAttempts) {
-      await this.tr('RECOVERY_REQUIRED', { verificationStatus: 'FAILED' }, `The plan is still not valid after ${this.policy.maxRemediationAttempts} attempts: ${problems.join(' ')}`.slice(0, 1000));
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', verificationStatus: 'FAILED' }, `The plan is still not valid after ${this.policy.maxRemediationAttempts} attempts: ${problems.join(' ')}`.slice(0, 1000));
       return 'stop';
     }
     await this.tr('RUNNING', { verificationStatus: 'FAILED', incRemediation: true }, 'Plan not accepted; the agent is fixing it');

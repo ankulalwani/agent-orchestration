@@ -1,5 +1,5 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from 'mongoose';
-import { PRIORITIES, ROLES, TASK_STATUSES, TASK_EVENT_TYPES, CAPABILITY_SCOPES, PACKAGE_SOURCES, PUBLISHER_KINDS, REVIEW_STATUSES, VERSION_STATUSES, VISIBILITIES } from '@ao/core';
+import { FAILURE_CATEGORIES, PRIORITIES, ROLES, TASK_STATUSES, TASK_EVENT_TYPES, CAPABILITY_SCOPES, PACKAGE_SOURCES, PUBLISHER_KINDS, REVIEW_STATUSES, VERSION_STATUSES, VISIBILITIES } from '@ao/core';
 
 /**
  * MongoDB models (spec §17). MongoDB is the durable source of truth.
@@ -60,6 +60,17 @@ const organizationSchema = new Schema(
     settings: {
       requireWorkerApproval: { type: Boolean, default: false },
       retentionDays: { events: { type: Number, default: 180 }, agentOutput: { type: Number, default: 30 }, audit: { type: Number, default: 730 } },
+      /** Weekly analytics digest by email and chat. `lastPeriod` is the date of the last one sent (the claim of a run). */
+      digest: {
+        enabled: { type: Boolean, default: false },
+        /** 0 (Sunday) to 6, and the hour of that day, in UTC. */
+        weekday: { type: Number, default: 1 },
+        hourUtc: { type: Number, default: 8 },
+        emails: { type: [String], default: [] },
+        chatChannelIds: { type: [Schema.Types.ObjectId], default: [] },
+        lastPeriod: { type: String, default: null },
+        lastSentAt: { type: Date, default: null },
+      },
     },
     /**
      * User provisioning from an identity provider (SCIM 2.0): the bearer token (hashed), the role new
@@ -304,6 +315,9 @@ const taskSchema = new Schema(
     priority: { type: String, enum: PRIORITIES, default: 'NORMAL' },
     status: { type: String, enum: TASK_STATUSES, default: 'QUEUED' },
     statusReason: { type: String, default: null },
+    /** Why and when the task last stopped (FAILED or RECOVERY_REQUIRED). Kept when it is retried, for analytics. */
+    failureCategory: { type: String, enum: [...FAILURE_CATEGORIES, null], default: null },
+    stoppedAt: { type: Date, default: null },
     workerId: { type: Schema.Types.ObjectId, default: null },
     agentId: { type: String, default: null },
     providerId: { type: String, default: null },
@@ -354,6 +368,8 @@ const taskSchema = new Schema(
 );
 taskSchema.index({ organizationId: 1, status: 1, createdAt: -1 });
 taskSchema.index({ organizationId: 1, projectId: 1, createdAt: -1 });
+taskSchema.index({ organizationId: 1, completedAt: -1 });
+taskSchema.index({ organizationId: 1, stoppedAt: -1 }, { partialFilterExpression: { stoppedAt: { $type: 'date' } } });
 taskSchema.index({ projectId: 1, status: 1 });
 taskSchema.index({ workerId: 1, status: 1 });
 taskSchema.index({ status: 1, leaseExpiresAt: 1 });
@@ -651,6 +667,21 @@ const usageRecordSchema = new Schema(
 );
 usageRecordSchema.index({ organizationId: 1, createdAt: -1 });
 usageRecordSchema.index({ organizationId: 1, projectId: 1, createdAt: -1 });
+usageRecordSchema.index({ organizationId: 1, workerId: 1, createdAt: -1 });
+
+/** Time a worker was online on one UTC day, added up from its heartbeats (for analytics). */
+const workerDailyStatSchema = new Schema(
+  {
+    organizationId: { type: Schema.Types.ObjectId, required: true },
+    workerId: { type: Schema.Types.ObjectId, required: true },
+    /** `YYYY-MM-DD` (UTC). */
+    date: { type: String, required: true },
+    onlineMs: { type: Number, default: 0 },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+);
+workerDailyStatSchema.index({ workerId: 1, date: 1 }, { unique: true });
+workerDailyStatSchema.index({ organizationId: 1, date: 1 });
 
 /** One document per budget notice sent, so a limit warns once per month (the unique index is the guard). */
 const budgetAlertSchema = new Schema(
@@ -985,6 +1016,7 @@ export const ProviderConfig = model('ProviderConfig', providerConfigSchema);
 export const Secret = model('Secret', secretSchema);
 export const UsageRecord = model('UsageRecord', usageRecordSchema);
 export const BudgetAlert = model('BudgetAlert', budgetAlertSchema);
+export const WorkerDailyStat = model('WorkerDailyStat', workerDailyStatSchema);
 export const Schedule = model('Schedule', scheduleSchema);
 export const ChatChannel = model('ChatChannel', chatChannelSchema);
 export const TaskTemplate = model('TaskTemplate', taskTemplateSchema);
@@ -1006,7 +1038,7 @@ export const ALL_MODELS = [
   TaskEvent, AuditLog, Notification, PushToken, Capability, CapabilityInstallation, ProviderConfig, Secret,
   UsageRecord, Setting, ConcurrencySlot, Invitation, OAuthState, OAuthTicket, ApiToken, Integration, DeviceLogin,
   GitHubApp, GitHubInstallation, GitHubUserToken, GitHubState, DiscoveredRepository, Publisher, CapabilityPackage,
-  BudgetAlert, Schedule, ChatChannel, TaskTemplate, PendingClone, CapabilityStack,
+  BudgetAlert, Schedule, ChatChannel, TaskTemplate, PendingClone, CapabilityStack, WorkerDailyStat,
 ];
 
 export type TaskDoc = InferSchemaType<typeof taskSchema> & { _id: mongoose.Types.ObjectId; createdAt: Date; updatedAt: Date };

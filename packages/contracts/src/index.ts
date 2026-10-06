@@ -431,6 +431,8 @@ export const taskDto = z.object({
   priority: z.enum(PRIORITIES),
   status: z.enum(TASK_STATUSES),
   statusReason: z.string().nullable(),
+  /** Why the task last stopped (failed or needed recovery); kept after a retry. */
+  failureCategory: z.string().nullable().optional(),
   workerId: z.string().nullable(),
   agentId: z.string().nullable(),
   providerId: z.string().nullable(),
@@ -570,10 +572,14 @@ const analyticsFigures = z.object({
   avgLeadMs: z.number().nullable(),
 });
 export const analyticsQuery = z.object({ days: z.coerce.number().int().min(1).max(365).default(30), projectId: z.string().optional() });
+/** `format=csv&table=<name>` returns one table of the view as a CSV file. */
+export const analyticsExportQuery = analyticsQuery.extend({ format: z.enum(['json', 'csv']).default('json'), table: z.string().max(40).optional() });
 export const analyticsDto = z.object({
   since: z.string(),
   days: z.number(),
   totals: analyticsFigures.extend({ created: z.number() }),
+  /** The same figures for the period of the same length just before this one. */
+  previous: analyticsFigures.extend({ created: z.number() }),
   /** One entry per UTC day of the period, oldest first. */
   daily: z.array(z.object({ date: z.string(), completed: z.number(), failed: z.number(), costUsd: z.number() })),
   /** By the agent, provider and model a task finished on. */
@@ -582,6 +588,128 @@ export const analyticsDto = z.object({
   byProject: z.array(analyticsFigures.extend({ projectId: z.string(), name: z.string() })),
 });
 export type AnalyticsDto = z.infer<typeof analyticsDto>;
+
+/** Spend of agent sessions, as agents and providers reported it. */
+const spendFigures = z.object({ costUsd: z.number(), inputTokens: z.number(), outputTokens: z.number(), sessions: z.number() });
+const budgetForecastLine = z.object({
+  scope: z.enum(['organization', 'project']),
+  projectId: z.string().nullable(),
+  name: z.string(),
+  limitUsd: z.number().nullable(),
+  spentUsd: z.number(),
+  /** Spend at the end of the month if the rest of it goes like the days so far. */
+  forecastUsd: z.number(),
+  state: z.enum(['ok', 'warning', 'exceeded']),
+  /** The forecast is above the limit. */
+  forecastExceeds: z.boolean(),
+});
+/** Spend in the period, by the day the agent session ended, and this month's budgets. */
+export const analyticsCostDto = z.object({
+  since: z.string(),
+  days: z.number(),
+  totals: spendFigures,
+  previous: spendFigures,
+  daily: z.array(z.object({ date: z.string(), costUsd: z.number(), inputTokens: z.number(), outputTokens: z.number() })),
+  byProject: z.array(spendFigures.extend({ projectId: z.string(), name: z.string() })),
+  byModel: z.array(spendFigures.extend({ providerId: z.string(), modelId: z.string() })),
+  byAgent: z.array(spendFigures.extend({ agentId: z.string() })),
+  /** Usage events: `execution` (an agent session ended), `limit` (a provider limit was hit), `fallback` (a switch to another agent or model). */
+  byKind: z.array(z.object({ kind: z.string(), count: z.number(), costUsd: z.number(), inputTokens: z.number(), outputTokens: z.number(), durationMs: z.number() })),
+  topTasks: z.array(z.object({ taskId: z.string(), title: z.string(), projectId: z.string(), status: z.string(), costUsd: z.number(), inputTokens: z.number(), outputTokens: z.number() })),
+  /** The current calendar month (UTC), whatever the period. */
+  budgets: z.array(budgetForecastLine),
+});
+export type AnalyticsCostDto = z.infer<typeof analyticsCostDto>;
+
+export const analyticsWorkersDto = z.object({
+  since: z.string(),
+  days: z.number(),
+  workers: z.array(
+    z.object({
+      workerId: z.string(),
+      name: z.string(),
+      status: z.string(),
+      os: z.string(),
+      finished: z.number(),
+      completed: z.number(),
+      failed: z.number(),
+      successRate: z.number().nullable(),
+      firstPassRate: z.number().nullable(),
+      avgActiveMs: z.number().nullable(),
+      costUsd: z.number(),
+      sessions: z.number(),
+      /** Time agents ran on the worker. */
+      sessionMs: z.number(),
+      /** Time online in the period; null when no heartbeat was counted (before the upgrade that added it). */
+      onlineMs: z.number().nullable(),
+      /** Online time / period, 0–1. */
+      onlineShare: z.number().nullable(),
+      /** Agent time / (online time × tasks the worker runs at once), 0–1. */
+      utilization: z.number().nullable(),
+      /** Tasks that stopped (failed or need recovery) on this worker. */
+      stops: z.number(),
+      /** Of those, stopped because the worker was lost. */
+      workerLost: z.number(),
+    }),
+  ),
+});
+export type AnalyticsWorkersDto = z.infer<typeof analyticsWorkersDto>;
+
+const recoveryCounters = z.object({ limitHits: z.number(), fallbacks: z.number(), contextResets: z.number(), restarts: z.number(), remediations: z.number() });
+/**
+ * What went wrong. Stops are tasks that failed or need recovery, by the day they stopped; they are counted
+ * since the release that added the category. The counters are of the tasks that finished in the period.
+ */
+export const analyticsReliabilityDto = z.object({
+  since: z.string(),
+  days: z.number(),
+  totals: recoveryCounters.extend({ finished: z.number(), stops: z.number(), previousStops: z.number(), stillStopped: z.number(), recovered: z.number() }),
+  daily: z.array(z.object({ date: z.string(), stops: z.number() })),
+  /** `recovered`: retried and completed since; `stillStopped`: failed or waiting for recovery now. */
+  byCategory: z.array(z.object({ category: z.string(), stops: z.number(), stillStopped: z.number(), recovered: z.number() })),
+  byAgent: z.array(recoveryCounters.extend({ agentId: z.string(), finished: z.number() })),
+  /** Verification steps of the tasks that finished or stopped in the period, every run counted. */
+  verificationSteps: z.array(z.object({ name: z.string(), kind: z.string(), runs: z.number(), failed: z.number(), failureRate: z.number().nullable(), avgDurationMs: z.number().nullable() })),
+});
+export type AnalyticsReliabilityDto = z.infer<typeof analyticsReliabilityDto>;
+
+const durationStats = z.object({ avgMs: z.number().nullable(), p50Ms: z.number().nullable(), p90Ms: z.number().nullable() });
+/** How long completed tasks took, and where finished tasks came from. */
+export const analyticsFlowDto = z.object({
+  since: z.string(),
+  days: z.number(),
+  /** Completed tasks the times are of; `capped` when only the most recent ones were used. */
+  samples: z.number(),
+  capped: z.boolean(),
+  times: z.object({
+    /** Creation to the first agent start. */
+    startWait: durationStats,
+    /** Agent and verification time. */
+    active: durationStats,
+    /** Creation to completion. */
+    lead: durationStats,
+  }),
+  byCreator: z.array(analyticsFigures.extend({ userId: z.string(), name: z.string() })),
+  /** `manual`, `schedule`, or the kind of the integration that created the task. */
+  bySource: z.array(analyticsFigures.extend({ source: z.string() })),
+  byKind: z.array(analyticsFigures.extend({ kind: z.string() })),
+  byPriority: z.array(analyticsFigures.extend({ priority: z.string() })),
+});
+export type AnalyticsFlowDto = z.infer<typeof analyticsFlowDto>;
+
+// ── Weekly digest ─────────────────────────────────────────────────────────────
+/** A weekly summary of the analytics, sent by email and to chat channels. Times are UTC. */
+export const digestSettingsRequest = z.object({
+  enabled: z.boolean(),
+  /** 0 (Sunday) to 6 (Saturday). */
+  weekday: z.number().int().min(0).max(6),
+  hourUtc: z.number().int().min(0).max(23),
+  emails: z.array(z.string().trim().toLowerCase().email().max(254)).max(20),
+  chatChannelIds: z.array(id).max(20),
+});
+export const digestSettingsDto = digestSettingsRequest.extend({ lastSentAt: z.string().nullable() });
+export type DigestSettingsDto = z.infer<typeof digestSettingsDto>;
+export const digestPreviewDto = z.object({ subject: z.string(), text: z.string(), sentTo: z.string().nullable() });
 
 // ── Chat channels (Slack, Microsoft Teams) ────────────────────────────────────
 export const CHAT_KINDS = ['slack', 'teams'] as const;

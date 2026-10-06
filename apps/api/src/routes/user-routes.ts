@@ -6,6 +6,9 @@ import {
   addMemberRequest,
   acceptDiscoveredRequest,
   discoveredSuggestionDto,
+  digestPreviewDto,
+  digestSettingsDto,
+  digestSettingsRequest,
   dismissDiscoveredRequest,
   addRepositoryRequest,
   addMemberResponse,
@@ -13,8 +16,12 @@ import {
   invitationPreviewDto,
   approvePairingRequest,
   authResponse,
+  analyticsCostDto,
   analyticsDto,
-  analyticsQuery,
+  analyticsExportQuery,
+  analyticsFlowDto,
+  analyticsReliabilityDto,
+  analyticsWorkersDto,
   budgetStatusDto,
   chatChannelDto,
   chatIdentityRequest,
@@ -95,7 +102,7 @@ import {
   workerDto,
 } from '@ao/contracts';
 import { AppError, ROLES } from '@ao/core';
-import { publicCatalogEnabled, requirePermission, requirePlatformAdmin, serverOverview, type Services } from '@ao/server';
+import { analyticsCsv, publicCatalogEnabled, requirePermission, requirePlatformAdmin, serverOverview, type Actor, type AnalyticsQuery, type Services } from '@ao/server';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { createRouter } from '../http.js';
 
@@ -703,9 +710,25 @@ export function userRoutes(route: Route, s: Services) {
   route({ method: 'GET', path: '/orgs/:orgId/usage', summary: 'AI usage aggregates', tag: 'usage', auth: 'org', query: z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }) }, ({ actor, query }) =>
     s.queries.usage(actor, query.days),
   );
-  route({ method: 'GET', path: '/orgs/:orgId/analytics', summary: 'Outcomes of finished tasks: success rate, cost and time, by agent, model and project', tag: 'usage', auth: 'org', query: analyticsQuery, response: analyticsDto }, ({ actor, query }) =>
-    s.queries.analytics(actor, query),
+  // Analytics views. `format=csv&table=<name>` downloads one table of a view.
+  const analyticsView = <T extends object>(path: string, summary: string, response: z.ZodType<T>, view: (actor: Actor, q: AnalyticsQuery) => Promise<T>) =>
+    route({ method: 'GET', path: `/orgs/:orgId/analytics${path}`, summary, tag: 'usage', auth: 'org', query: analyticsExportQuery, response }, async ({ actor, query, reply }) => {
+      const data = await view(actor, { days: query.days, projectId: query.projectId });
+      if (query.format !== 'csv') return data;
+      const csv = analyticsCsv(data, query.table);
+      reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', `attachment; filename="analytics${path.replace('/', '-')}-${query.table}-${query.days}d.csv"`).header('x-content-type-options', 'nosniff');
+      return reply.send(csv);
+    });
+  analyticsView('', 'Outcomes of finished tasks: success rate, cost and time, by agent, model and project, against the previous period', analyticsDto, (a, q) => s.analytics.overview(a, q));
+  analyticsView('/cost', 'Spend per day and by project, model and agent, the most expensive tasks, and a month-end forecast against the budgets', analyticsCostDto, (a, q) => s.analytics.cost(a, q));
+  analyticsView('/workers', 'Per worker: finished tasks, agent time, cost, time online and utilization', analyticsWorkersDto, (a, q) => s.analytics.workers(a, q));
+  analyticsView('/reliability', 'Why tasks stopped, recoveries by agent, and failure rates of verification steps', analyticsReliabilityDto, (a, q) => s.analytics.reliability(a, q));
+  analyticsView('/flow', 'Waiting, agent and lead times of completed tasks, and finished tasks by creator, source, kind and priority', analyticsFlowDto, (a, q) => s.analytics.flow(a, q));
+  route({ method: 'GET', path: '/orgs/:orgId/analytics/digest', summary: 'Settings of the weekly analytics digest', tag: 'usage', auth: 'org', permission: 'settings.manage', response: digestSettingsDto }, ({ actor }) => s.digests.get(actor));
+  route({ method: 'PUT', path: '/orgs/:orgId/analytics/digest', summary: 'Send a weekly analytics digest by email and to chat channels', tag: 'usage', auth: 'org', permission: 'settings.manage', body: digestSettingsRequest, response: digestSettingsDto }, ({ actor, body }) =>
+    s.digests.update(actor, body),
   );
+  route({ method: 'POST', path: '/orgs/:orgId/analytics/digest/send', summary: 'Email the digest as it is now to yourself', tag: 'usage', auth: 'org', permission: 'settings.manage', response: digestPreviewDto }, ({ actor }) => s.digests.sendToMe(actor));
   route({ method: 'GET', path: '/orgs/:orgId/budget', summary: "This month's spend against the budget limits of the execution policy", tag: 'usage', auth: 'org', response: budgetStatusDto }, ({ actor }) => s.budgets.status(actor));
   route({ method: 'GET', path: '/orgs/:orgId/providers', summary: 'Organization provider configs', tag: 'providers', auth: 'org' }, ({ actor }) => s.queries.listProviders(actor));
   route(

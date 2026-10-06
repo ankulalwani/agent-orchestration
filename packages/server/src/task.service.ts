@@ -8,11 +8,13 @@ import {
   EPHEMERAL_EVENT_TYPES,
   captureError,
   LEASED_TASK_STATUSES,
+  STOPPED_TASK_STATUSES,
   TERMINAL_TASK_STATUSES,
   assertTransition,
   canTransition,
   createLogger,
   dependencyReadiness,
+  inferFailureCategory,
   newCorrelationId,
   newId,
   redact,
@@ -135,7 +137,7 @@ export class TaskService {
     const workerId = task.workerId ? String(task.workerId) : null;
     let updated: TaskLean;
     try {
-      updated = await this.applyServerTransition(task, 'RECOVERY_REQUIRED', block.message, { $set: { workerId: null, pendingInteraction: null } });
+      updated = await this.applyServerTransition(task, 'RECOVERY_REQUIRED', block.message, { $set: { workerId: null, pendingInteraction: null, failureCategory: 'budget' } });
     } catch (e) {
       if (e instanceof AppError && e.code === 'CONFLICT') return false; // the task moved on; the next check catches it
       throw e;
@@ -477,6 +479,7 @@ export class TaskService {
     if (releasing) Object.assign(set, { leaseExpiresAt: null, waitingUntil: null, offeredTo: null });
     if (to === 'QUEUED') Object.assign(set, { workerId: null, queuedAt: new Date() });
     if (TERMINAL_TASK_STATUSES.includes(to)) set.completedAt = new Date();
+    if (STOPPED_TASK_STATUSES.includes(to)) Object.assign(set, { failureCategory: set.failureCategory ?? inferFailureCategory(task.verificationStatus), stoppedAt: new Date() });
     const updated = await Task.findOneAndUpdate({ _id: task._id, status: task.status }, { $set: set, ...(extra.$inc ? { $inc: extra.$inc } : {}) }, { new: true }).lean();
     if (!updated) throw new AppError('CONFLICT', 'Task changed concurrently; reload and try again', { retryable: true });
     if (releasing) await this.releaseTaskSlots(updated as TaskLean);
@@ -727,6 +730,9 @@ export class TaskService {
     if (p.progress) for (const [k, v] of Object.entries(p.progress)) set[`progress.${k}`] = v;
     if (req.to === 'RUNNING' && !current.startedAt) set.startedAt = new Date();
     if (TERMINAL_TASK_STATUSES.includes(req.to)) set.completedAt = new Date();
+    if (!same && STOPPED_TASK_STATUSES.includes(req.to)) {
+      Object.assign(set, { failureCategory: p.failureCategory ?? inferFailureCategory(p.verificationStatus ?? current.verificationStatus), stoppedAt: new Date() });
+    }
     if (releasing) Object.assign(set, { leaseExpiresAt: null });
     else set.leaseExpiresAt = new Date(Date.now() + policy.leaseMs);
     if (req.to === 'QUEUED') Object.assign(set, { workerId: null, queuedAt: new Date() });
@@ -970,6 +976,7 @@ export class TaskService {
             : 'Worker lost; policy requires manual recovery';
       const set: Record<string, unknown> = { status: to, statusReason: reason, leaseExpiresAt: null, offeredTo: null, pendingInteraction: null };
       if (to === 'QUEUED') Object.assign(set, { workerId: null, queuedAt: new Date() });
+      else Object.assign(set, { failureCategory: 'worker_lost', stoppedAt: now });
       // Precondition on the expired lease: a concurrent heartbeat renewal wins (no double execution).
       const updated = (await Task.findOneAndUpdate(
         { _id: t._id, status: t.status, leaseExpiresAt: { $lt: now } },

@@ -1,5 +1,5 @@
 import { AppError, LEASED_TASK_STATUSES, createLogger, newCorrelationId, newDeviceCode, newSecretToken, sha256, safeEqual } from '@ao/core';
-import { Organization, Project, Task, Worker, WorkerPairing, isDuplicateKeyError, oid } from '@ao/database';
+import { Organization, Project, Task, Worker, WorkerDailyStat, WorkerPairing, isDuplicateKeyError, oid } from '@ao/database';
 import type { HeartbeatPayload } from '@ao/contracts';
 import type { z } from 'zod';
 import type { pairingStartRequest, updateWorkerRequest } from '@ao/contracts';
@@ -189,8 +189,7 @@ export class WorkerService {
   }
 
   // ── Heartbeat (spec §14, §23) ──────────────────────────────────────────────
-  async heartbeat(worker: WorkerActor, payload: HeartbeatPayload) {
-    const now = new Date();
+  async heartbeat(worker: WorkerActor, payload: HeartbeatPayload, now = new Date()) {
     const w = await Worker.findById(oid(worker.workerId)).lean();
     if (!w) throw new AppError('UNAUTHENTICATED', 'Unknown worker');
     const set: Record<string, unknown> = {
@@ -206,6 +205,16 @@ export class WorkerService {
       await this.syncProjectPaths(worker, payload.inventory.projects);
     }
     await Worker.updateOne({ _id: w._id }, { $set: set });
+    // Online time for analytics: the time since the last heartbeat, when the worker was online then. A
+    // longer gap than the offline threshold is not counted (it was offline for part of it).
+    if (w.status === 'ONLINE' && set.status === 'ONLINE' && w.lastHeartbeatAt) {
+      const gap = now.getTime() - w.lastHeartbeatAt.getTime();
+      if (gap > 0 && gap <= this.timing.offlineThresholdMs) {
+        await WorkerDailyStat.updateOne({ workerId: w._id, date: now.toISOString().slice(0, 10) }, { $inc: { onlineMs: gap }, $setOnInsert: { organizationId: w.organizationId } }, { upsert: true }).catch((e) => {
+          if (!isDuplicateKeyError(e)) throw e; // two heartbeats creating the day's row at once: one interval is lost
+        });
+      }
+    }
 
     // Renew leases only for tasks this worker still owns.
     const reported = payload.activeTasks.map((t) => t.taskId).filter((id) => /^[a-f0-9]{24}$/i.test(id));

@@ -1,6 +1,6 @@
 # Known Limitations
 
-Actual, current limitations. Updated as the implementation changes. Last updated: 2026-10-05.
+Actual, current limitations. Updated as the implementation changes. Last updated: 2026-10-06.
 
 ## Own logins and add-on models (added 2026-09-28)
 - **Add-on providers were not called for real.** The gateway was tested with each real harness against a
@@ -37,6 +37,27 @@ Actual, current limitations. Updated as the implementation changes. Last updated
   search is used; the Atlas path has not been run.
 - **Scheduled tasks** start within one sweep interval of their time, and runs missed while the server was
   down are made up once, not one by one.
+
+## Insights and the weekly digest (added 2026-10-06)
+- **Counted from the update on.** Why a task stopped and the time a worker was online are recorded from
+  the release that added them. Tasks that stopped earlier are not in the Reliability view, and earlier
+  days show no time online. Nothing is backfilled.
+- **Workers that are not updated** stop tasks without naming a reason: those count as "checks still
+  failing" when verification had failed, and as "other" otherwise.
+- **Success rate leaves out tasks waiting for recovery** (they are neither completed nor failed). The
+  Reliability view counts them as stopped.
+- **Cost is zero for agents that report none**, in every view and in the budget forecast. The forecast
+  is the month's spend so far continued at the same rate; in the first days of a month it rests on little.
+- **Worker utilization** is agent session time against time online. Sessions are counted on the day they
+  end, and a session ended by a provider limit is not counted, so a worker can look less busy than it was.
+- **Worker-lost stops per worker** count tasks that went to manual recovery. A task that was requeued
+  after its worker was lost is not attributed to that worker.
+- **Time percentiles** are computed from the most recent 50,000 completed tasks of the period.
+- **Analytics are aggregated on request** from tasks and usage records, with no precomputed rollups. This
+  was run with a few hundred tasks, not with millions.
+- **The weekly digest** was sent through the test mailer and a local fake of a chat webhook, not through a
+  hosted mail provider, Slack or Teams. Times are UTC only. A digest missed by more than 24 hours is skipped.
+- **The mobile Insights tab** is type-checked only, like the rest of the mobile app.
 
 ## Projects, repositories and GitHub (added 2026-09-28)
 - **GitHub App against real GitHub.** The manifest flow, installations, sync, webhooks, member authorization,

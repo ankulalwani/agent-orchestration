@@ -188,6 +188,15 @@ export class ChatService {
     }
   }
 
+  /** Sends a message to the given channels of the organization, whatever notification types they take. */
+  async sendTo(organizationId: string, channelIds: string[], n: OutboundNotification) {
+    if (!channelIds.length) return [];
+    const channels = (await ChatChannel.find({ _id: { $in: channelIds.map((c) => oid(c, 'Chat channel')) }, organizationId: oid(organizationId), enabled: true }).select('+webhookUrlEnc').lean()) as ChannelLean[];
+    const results: string[] = [];
+    for (const c of channels) results.push(await this.post(c, n, null));
+    return results;
+  }
+
   private async post(c: ChannelLean, n: OutboundNotification, taskId: string | null) {
     const message = c.kind === 'slack' ? this.slackMessage(n, taskId, Boolean(c.interactive)) : this.teamsMessage(n, taskId);
     let result: string;

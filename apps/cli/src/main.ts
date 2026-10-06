@@ -32,6 +32,9 @@ Control plane:
   task cancel|retry|pause|resume <id>
   task input <id> --text "answer"
   logs <taskId> [--output]                 Task timeline
+  insights [overview|cost|workers|reliability|flow] [--days 30] [--project ID]
+                                           Analytics of finished tasks, spend, workers, failures and times
+           [--csv TABLE]                   One table of the view as CSV (an unknown name lists the tables)
   agent list                               Agents reported by workers
   provider list                            Providers reported by workers
 
@@ -105,7 +108,8 @@ async function api<T>(method: string, p: string, body?: unknown, retry = true): 
     fail('Session expired. Run agentctl login again.');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  // Everything is JSON, except a CSV export.
+  const data = !text ? undefined : (res.headers.get('content-type') ?? '').includes('json') ? JSON.parse(text) : text;
   if (!res.ok) fail(`${data?.error?.message ?? `HTTP ${res.status}`}${data?.error?.correlationId ? ` (ref ${data.error.correlationId})` : ''}`);
   return data as T;
 }
@@ -161,6 +165,85 @@ async function local<T>(method: string, p: string, body?: unknown): Promise<T> {
 const pad = (s: unknown, n: number) => String(s ?? '').slice(0, n).padEnd(n);
 const ICON: Record<string, string> = { ok: '✔', warn: '!', fail: '✖', info: '·' };
 
+// ── Insights as text ───────────────────────────────────────────────────────
+const pct = (v: number | null) => (v == null ? '-' : `${Math.round(v * 100)}%`);
+const usd = (v: number | null) => (v == null ? '-' : `$${v.toFixed(2)}`);
+function dur(ms: number | null) {
+  if (ms == null) return '-';
+  const m = Math.round(ms / 60_000);
+  return m < 1 ? `${Math.round(ms / 1000)}s` : m < 60 ? `${m}m` : m < 2880 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
+}
+/** Rows as aligned columns under a header. */
+function columns(header: string[], rows: Array<Array<string | number>>) {
+  if (!rows.length) return '  (none)';
+  const all = [header, ...rows.map((r) => r.map(String))];
+  const width = header.map((_, i) => Math.max(...all.map((r) => r[i]!.length)));
+  return all.map((r) => '  ' + r.map((c, i) => c.padEnd(width[i]!)).join('  ').trimEnd()).join('\n');
+}
+const outcome = (title: string, label: string, rows: any[], name: (r: any) => string) =>
+  `${title}\n` + columns([label, 'Finished', 'Failed', 'Success', 'First pass', 'Cost/completed', 'Agent time'], rows.map((r) => [name(r), r.finished, r.failed, pct(r.successRate), pct(r.firstPassRate), usd(r.costPerCompletedUsd), dur(r.avgActiveMs)]));
+
+function insights(view: string, d: any): string {
+  const head = `Last ${d.days} days (since ${String(d.since).slice(0, 10)}, UTC)`;
+  switch (view) {
+    case 'cost':
+      return [
+        head,
+        `Spend ${usd(d.totals.costUsd)} (period before: ${usd(d.previous.costUsd)})  Sessions ${d.totals.sessions}  Tokens in ${d.totals.inputTokens} out ${d.totals.outputTokens}`,
+        'Budgets this month',
+        columns(['Budget', 'Spent', 'Limit', 'Forecast', ''], d.budgets.map((b: any) => [b.name, usd(b.spentUsd), b.limitUsd == null ? 'none' : usd(b.limitUsd), usd(b.forecastUsd), b.state === 'exceeded' ? 'limit reached' : b.forecastExceeds ? 'over the limit at this rate' : ''])),
+        'By project',
+        columns(['Project', 'Cost', 'Sessions'], d.byProject.map((r: any) => [r.name, usd(r.costUsd), r.sessions])),
+        'By model',
+        columns(['Model', 'Cost', 'Sessions'], d.byModel.map((r: any) => [`${r.providerId}/${r.modelId}`, usd(r.costUsd), r.sessions])),
+        'Most expensive tasks',
+        columns(['Task', 'Cost', 'Title'], d.topTasks.map((t: any) => [t.taskId, usd(t.costUsd), t.title])),
+      ].join('\n');
+    case 'workers':
+      return [
+        head,
+        columns(
+          ['Worker', 'Status', 'Finished', 'Success', 'Agent time', 'Online', 'Utilization', 'Cost', 'Stopped'],
+          d.workers.map((w: any) => [w.name, w.status, w.finished, pct(w.successRate), dur(w.sessionMs), w.onlineMs == null ? '-' : `${dur(w.onlineMs)} (${pct(w.onlineShare)})`, pct(w.utilization), usd(w.costUsd), w.stops]),
+        ),
+      ].join('\n');
+    case 'reliability':
+      return [
+        head,
+        `Stopped ${d.totals.stops} (period before: ${d.totals.previousStops})  Still stopped ${d.totals.stillStopped}  Recovered ${d.totals.recovered}`,
+        `Limits hit ${d.totals.limitHits}  Fell back ${d.totals.fallbacks}  Context resets ${d.totals.contextResets}  Restarts ${d.totals.restarts}  Fix rounds ${d.totals.remediations}`,
+        'Why tasks stopped',
+        columns(['Reason', 'Stopped', 'Still stopped', 'Recovered'], d.byCategory.map((c: any) => [c.category, c.stops, c.stillStopped, c.recovered])),
+        'Verification steps',
+        columns(['Step', 'Runs', 'Failed', 'Failure rate', 'Average time'], d.verificationSteps.map((s: any) => [s.name, s.runs, s.failed, pct(s.failureRate), dur(s.avgDurationMs)])),
+      ].join('\n');
+    case 'flow':
+      return [
+        head,
+        `Times of ${d.samples} completed tasks${d.capped ? ' (the most recent)' : ''}`,
+        columns(
+          ['Time', 'Median', '90th percentile', 'Average'],
+          ([['Waiting to start', d.times.startWait], ['Agent and verification', d.times.active], ['Created to completed', d.times.lead]] as Array<[string, any]>).map(([l, s]) => [l, dur(s.p50Ms), dur(s.p90Ms), dur(s.avgMs)]),
+        ),
+        outcome('By creator', 'Creator', d.byCreator, (r) => r.name),
+        outcome('By source', 'Source', d.bySource, (r) => r.source),
+        outcome('By kind', 'Kind', d.byKind, (r) => r.kind),
+        outcome('By priority', 'Priority', d.byPriority, (r) => r.priority),
+      ].join('\n');
+    default: {
+      const t = d.totals;
+      return [
+        head,
+        `Finished ${t.finished} (period before: ${d.previous.finished})  Completed ${t.completed}  Failed ${t.failed}  Created ${t.created}`,
+        `Success ${pct(t.successRate)}  First pass ${pct(t.firstPassRate)}  Cost ${usd(t.costUsd)}  Cost/completed ${usd(t.costPerCompletedUsd)}  Agent time ${dur(t.avgActiveMs)}  Lead time ${dur(t.avgLeadMs)}`,
+        outcome('By agent', 'Agent', d.byAgent, (r) => r.agentId),
+        outcome('By model', 'Model', d.byModel, (r) => `${r.providerId}/${r.modelId}`),
+        outcome('By project', 'Project', d.byProject, (r) => r.name),
+      ].join('\n');
+    }
+  }
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -182,6 +265,8 @@ async function main() {
       hosted: { type: 'boolean' },
       name: { type: 'string' },
       output: { type: 'boolean' },
+      days: { type: 'string' },
+      csv: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       'no-browser': { type: 'boolean' },
     },
@@ -253,6 +338,14 @@ async function main() {
         ].join('\n'),
         o,
       );
+    }
+    case 'insights': {
+      const view = sub ?? 'overview';
+      if (!['overview', 'cost', 'workers', 'reliability', 'flow'].includes(view)) fail('insights takes one of: overview, cost, workers, reliability, flow');
+      const qs = new URLSearchParams({ days: values.days ?? '30', ...(values.project ? { projectId: values.project } : {}), ...(values.csv ? { format: 'csv', table: values.csv } : {}) });
+      const data = await api<any>('GET', `/orgs/${orgId(values.org)}/analytics${view === 'overview' ? '' : `/${view}`}?${qs}`);
+      if (values.csv) return void process.stdout.write(data);
+      return out(insights(view, data), data);
     }
     case 'project':
       if (sub === 'list') {
