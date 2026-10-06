@@ -93,6 +93,15 @@ describe.runIf(hasBuild)('web dashboard (browser)', () => {
 
     await page.goto(pairing.verificationUrl!);
     await page.getByText(/You are approving/).waitFor();
+
+    // The install card on this page: desktop app downloads from the project's releases, or the one-line command.
+    await page.getByRole('tab', { name: 'Windows' }).click();
+    const download = page.getByRole('link', { name: /Windows 10\/11, x64/ });
+    expect(await download.getAttribute('href')).toBe(`https://github.com/${s.config.UPDATE_CHECK_REPO}/releases/latest/download/agent-orchestration-worker-windows-x64-setup.exe`);
+    await page.getByRole('tab', { name: 'macOS' }).click();
+    expect(await page.getByRole('link', { name: /\.dmg/ }).count()).toBe(2);
+    await page.getByRole('tab', { name: 'Command line' }).click();
+    await page.getByText(/install\/worker\.sh \| sh/).waitFor();
     await page.getByRole('button', { name: 'Approve worker' }).click();
     await page.getByRole('heading', { name: 'web-worker' }).waitFor({ timeout: 20_000 });
     await page.getByText('Online').first().waitFor({ timeout: 20_000 });

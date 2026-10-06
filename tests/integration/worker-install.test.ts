@@ -128,6 +128,25 @@ describe('one-click worker install', () => {
     expect(Object.keys(cfg.trustedKeys).sort()).toEqual(['ao-release-1', 'release-2026']); // the project key is always listed
   });
 
+  it('config links the desktop app installers of the newest release, under the names the release workflow writes', async () => {
+    const { ASSET_PREFIX, TARGETS } = (await import('../../apps/desktop/scripts/release-assets.mjs')) as { ASSET_PREFIX: string; TARGETS: Record<string, { name: string }> };
+    const cfg = (await (await fetch(`${base}${API_PREFIX}/install/config`)).json()) as { desktop: Record<string, Array<{ label: string; url: string }>> };
+    expect(Object.keys(cfg.desktop).sort()).toEqual(['linux', 'macos', 'windows']);
+    const names = Object.values(TARGETS).map((t) => `${ASSET_PREFIX}-${t.name}`);
+    const files = Object.values(cfg.desktop).flat().map((d) => {
+      expect(d.url.startsWith(`https://github.com/${s.config.UPDATE_CHECK_REPO}/releases/latest/download/`)).toBe(true);
+      return d.url.split('/').pop()!;
+    });
+    expect(files).toEqual([
+      'agent-orchestration-worker-windows-x64-setup.exe',
+      'agent-orchestration-worker-macos-arm64.dmg',
+      'agent-orchestration-worker-macos-x64.dmg',
+      'agent-orchestration-worker-linux-x64.AppImage',
+      'agent-orchestration-worker-linux-x64.deb',
+    ]);
+    for (const f of files) expect(names.some((n) => f.startsWith(n)), f).toBe(true);
+  });
+
   it('says what is missing when nothing is published', async () => {
     const r = await runBootstrap([]);
     expect(r.code).toBe(1);

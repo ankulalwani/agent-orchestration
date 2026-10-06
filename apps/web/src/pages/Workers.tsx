@@ -82,7 +82,7 @@ export function WorkersPage() {
             </table>
           </div>
         ) : (
-          <EmptyState icon={Server} title="No workers yet">Install the worker on a machine with your code and AI agents (command below), then approve it here.</EmptyState>
+          <EmptyState icon={Server} title="No workers yet">Install the worker on a machine with your code and AI agents (desktop app or command, below), then approve it here.</EmptyState>
         )}
       </Card>
       {!workers.isLoading && <InstallWorkerCard />}
@@ -244,7 +244,7 @@ export function PairPage() {
 
   return (
     <div className="flex max-w-[620px] flex-col gap-4">
-      <PageHeader crumb={<Link to="/workers">Workers</Link>} title="Pair a worker" description="The install command opens this page with the code filled in. You can also enter a code by hand." />
+      <PageHeader crumb={<Link to="/workers">Workers</Link>} title="Pair a worker" description="The desktop app and the install command open this page with the code filled in. You can also enter a code by hand." />
       <Card>
         <div className="stack">
           <Field label="Pairing code" hint="Shown by the worker, e.g. ABCD-1234">{(id) => <Input id={id} className="code-block" value={code} maxLength={9} autoComplete="off" spellCheck={false} onChange={(e) => setCode(e.target.value.toUpperCase())} />}</Field>

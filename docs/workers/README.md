@@ -8,7 +8,7 @@ A worker is a native Node.js process on a machine with your code and AI agents. 
 
 ## Install
 
-**Desktop app.** For a developer's own computer this is the shortest way: download the installer, start the app, connect it. Nothing else has to be installed; the app brings its own Node.js.
+**Desktop app.** For a developer's own computer this is the shortest way: download the installer, start the app, connect it. Nothing else has to be installed; the app brings its own Node.js. The dashboard offers the same downloads on **Workers**, **Getting started** and the pairing page, with the server's address to paste into the app. A fork sets `UPDATE_CHECK_REPO` to link its own releases.
 
 | OS | Download (always the newest release) | Verified |
 |---|---|---|

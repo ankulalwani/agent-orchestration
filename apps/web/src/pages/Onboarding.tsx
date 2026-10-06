@@ -105,7 +105,7 @@ export function OnboardingPage() {
             <p>Connected: {online.map((w) => w.name).join(', ')}.</p>
           ) : (
             <>
-              <p>Run the install command below on the machine that has your code and AI agents. It opens a page where you click <strong>Approve</strong>. Already installed it by hand? <Link to="/pair">Enter a pairing code</Link>.</p>
+              <p>Install the worker on the machine that has your code and AI agents: the desktop app or one command, both below. It opens a page where you click <strong>Approve</strong>. Already installed it by hand? <Link to="/pair">Enter a pairing code</Link>.</p>
               <InstallWorkerCard />
             </>
           )}

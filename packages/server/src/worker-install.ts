@@ -283,7 +283,27 @@ export interface InstallConfigResponse {
   latest: string | null;
   /** Release public keys the install script trusts (set by the operator, WORKER_RELEASE_TRUSTED_KEYS). */
   trustedKeys: Record<string, string>;
+  /** Installers of the desktop app (apps/desktop), newest release, on GitHub (UPDATE_CHECK_REPO). */
+  desktop: Record<'windows' | 'macos' | 'linux', DesktopDownload[]>;
 }
+
+export interface DesktopDownload {
+  label: string;
+  url: string;
+}
+
+/** File names as apps/desktop/scripts/release-assets.mjs writes them: no version, so `latest/download` is the newest. */
+const DESKTOP_INSTALLERS: Record<'windows' | 'macos' | 'linux', Array<{ label: string; file: string }>> = {
+  windows: [{ label: 'Windows 10/11, x64 (.exe)', file: 'agent-orchestration-worker-windows-x64-setup.exe' }],
+  macos: [
+    { label: 'Apple silicon (.dmg)', file: 'agent-orchestration-worker-macos-arm64.dmg' },
+    { label: 'Intel (.dmg)', file: 'agent-orchestration-worker-macos-x64.dmg' },
+  ],
+  linux: [
+    { label: 'x64 (.AppImage)', file: 'agent-orchestration-worker-linux-x64.AppImage' },
+    { label: 'x64 (.deb)', file: 'agent-orchestration-worker-linux-x64.deb' },
+  ],
+};
 
 /** Serves the one-click install scripts and the settings they read. All public: nothing here is secret. */
 export class WorkerInstallService {
@@ -310,7 +330,14 @@ export class WorkerInstallService {
 
   async settings(): Promise<InstallConfigResponse> {
     const stable = (await this.releases.list()).find((c) => c.channel === 'stable');
-    return { server: serverUrl(this.config), channel: 'stable', latest: stable?.latest ?? null, trustedKeys: await this.releases.trustedKeys() };
+    return { server: serverUrl(this.config), channel: 'stable', latest: stable?.latest ?? null, trustedKeys: await this.releases.trustedKeys(), desktop: this.desktopDownloads() };
+  }
+
+  /** Links only: the browser downloads from GitHub, this server does not contact it. */
+  private desktopDownloads(): InstallConfigResponse['desktop'] {
+    const base = `https://github.com/${this.config.UPDATE_CHECK_REPO}/releases/latest/download`;
+    const links = (os: keyof typeof DESKTOP_INSTALLERS) => DESKTOP_INSTALLERS[os].map((i) => ({ label: i.label, url: `${base}/${i.file}` }));
+    return { windows: links('windows'), macos: links('macos'), linux: links('linux') };
   }
 
   /** The commands the dashboard shows. */
