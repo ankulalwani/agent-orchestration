@@ -40,6 +40,7 @@ Vitest for unit/integration. Integration tests use `mongodb-memory-server`, poin
 
 ## D-008 · 2026-09-27 · Placeholder license
 No license text is invented. `LICENSE` is a clearly marked placeholder until a license is selected.
+Superseded by D-022.
 
 ## D-009 · 2026-09-27 · Agent adapters are capability-detected, conservative
 Adapters only use CLI flags verified against the installed binary's `--help` output or official docs.
@@ -163,3 +164,16 @@ the normal CI does not touch it.
   systems (`scripts/package-worker.mjs`). Before, it had the build machine's only: a package built on
   Linux made Windows and macOS workers fall back to the encrypted-file credential store. A worker that
   did so copies its credentials to the OS store once, on its first start with a working OS store.
+
+## D-022 · 2026-10-07 · License: Apache 2.0 with additional conditions
+`LICENSE` is the Agent Orchestration License: the Apache License 2.0 plus conditions set by the owner.
+- **Free:** use inside an organization (commercial use included), self-hosting, client work where clients
+  receive only deliverables, and publishing a fork's source under the same license.
+- **Commercial license needed:** offering the software to outside parties as a hosted or managed service,
+  letting outside parties sign in to or work with an instance, and selling or distributing a product that
+  includes the software.
+- **No branding condition.** Only the notice rules of Apache 2.0 apply.
+- **Contributions** come in under Apache 2.0, and the owner may also license them commercially.
+- **Wording:** the conditions restrict fields of use, so the project is "source-available", not "open
+  source".
+- **No enforcement in code.** There is still no license key, license server or usage limit.

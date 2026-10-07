@@ -14,7 +14,7 @@
 [![Release](https://img.shields.io/github/v/release/ankulalwani/agent-orchestration?style=flat-square&color=474fd6)](https://github.com/ankulalwani/agent-orchestration/releases/latest)
 [![Container image](https://img.shields.io/badge/ghcr.io-agent--orchestration-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/ankulalwani/agent-orchestration/pkgs/container/agent-orchestration)
 ![Node](https://img.shields.io/badge/node-%E2%89%A520.11-339933?style=flat-square&logo=node.js&logoColor=white)
-![License](https://img.shields.io/badge/license-pending-orange?style=flat-square)
+[![License](https://img.shields.io/badge/license-Apache%202.0%20%2B%20conditions-474fd6?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/ankulalwani/agent-orchestration?style=flat-square&color=474fd6)](https://github.com/ankulalwani/agent-orchestration)
 
 [**Get started**](#quick-start) &nbsp;·&nbsp; [**How it works**](#how-it-works) &nbsp;·&nbsp; [**Self-host**](#self-hosting) &nbsp;·&nbsp; [**Managed cloud**](#managed-cloud) &nbsp;·&nbsp; [**Documentation**](#documentation)
@@ -68,10 +68,10 @@ once **your tests, type checks, lint and build pass**. Then it commits under you
   If this is the tool you were about to build yourself, <a href="https://github.com/ankulalwani/agent-orchestration">star the repository</a> so you can find it again.
 </p>
 
-> [!IMPORTANT]
-> **The license has not been selected yet.** The complete source is public and the self-hosted product
-> has no paid tier, but [`LICENSE`](LICENSE) is a placeholder pending legal review, and it grants no
-> rights to use, modify or distribute the code yet. See [License](#license).
+> [!NOTE]
+> **Free to use and self-host inside your organization.** The code is under Apache 2.0 with additional
+> conditions: offering it to people outside your organization, as a hosted service or inside a product you
+> sell, needs a commercial license. See [License](#license).
 
 ## Contents
 
@@ -555,7 +555,6 @@ Pricing has not been published, and there is no public sign-up link yet.
   Run on Windows and in a Linux container. Installers are not code-signed, and macOS has not been built
   or run yet.
 - **Real-world verification** of the remaining agents, providers and integrations with vendor accounts.
-- **License selection.**
 - **Mobile app** on real devices.
 
 **Not built yet**
@@ -606,22 +605,42 @@ git push origin fix/short-description
 Then open a pull request against `main`. The full setup, including optional test tools, is in
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-Contribution terms will be set together with the license. Until then, please open an issue before
-starting a large change.
+Contributions are accepted under the terms in section 3 of the [`LICENSE`](LICENSE): your contribution is
+licensed under Apache 2.0, and the project may also license it under other terms, including commercial
+licenses. Please open an issue before starting a large change.
 
 ## License
 
-**No license has been selected yet.** [`LICENSE`](LICENSE) is a placeholder, and until it is replaced
-no rights to use, modify or distribute this code are granted. The choice is waiting for legal review.
+Agent Orchestration is under the **Agent Orchestration License**: the Apache License 2.0 with additional
+conditions. The source is public, but the conditions restrict some uses, so this is a source-available
+license and not an open source one. The [`LICENSE`](LICENSE) file is the binding text; this is a summary.
 
-What will not change:
+**Free, without asking**
 
-- The complete, self-hostable product stays in this public repository.
-- Self-hosted installations have no usage limits, no license server and no mandatory outbound calls.
-- The managed cloud is a paid convenience around this core. It does not hold core features back.
+- Use inside your organization, commercial use included, with any number of installations, projects,
+  users, workers and tasks.
+- Self-hosting on infrastructure you own or rent.
+- Client work, when your clients receive only the finished deliverables and do not use the software
+  themselves.
+- Modifying the code and publishing the source of your fork under the same license.
 
-Watch the repository or its [releases](https://github.com/ankulalwani/agent-orchestration/releases) to
-be notified when the license lands.
+**Needs a commercial license**
+
+- Offering the software to people outside your organization as a hosted or managed service, which
+  includes running instances for clients on your infrastructure.
+- Letting people outside your organization sign in to your instance or work with it through the
+  dashboard, the API, the command-line tools, a chat integration or a public website.
+- Selling or distributing a product or service that includes the software as a component.
+
+There is no branding condition: you may change the name and logo in your own installation. The notice
+rules of Apache 2.0 still apply when you redistribute the code.
+
+The software does not check any of this. A self-hosted installation has no license key, no license
+server, no usage limits and no mandatory outbound calls, with or without a commercial license.
+
+To ask for a commercial license, or to check whether your setup needs one, use the form at
+[agentorchestration.in/licensing](https://agentorchestration.in/licensing) or write to
+[support@agentorchestration.in](mailto:support@agentorchestration.in).
 
 ---
 

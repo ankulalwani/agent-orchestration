@@ -15,6 +15,9 @@
      `.github/workflows/release-worker.yml` (secret `WORKER_RELEASE_SIGNING_KEY`; its public half is in
      `packages/core/src/release-keys.ts`). Self-hosted servers fetch it with **Server → Worker releases →
      Update workers**; nothing is uploaded by hand.
+   - desktop app: installers and `latest.json`, attached by `.github/workflows/release-desktop.yml`. The
+     release is a draft until this workflow has attached them and then publishes it (over 10 minutes after
+     the tag), so `releases/latest/download/<installer>` never points at a release without installers.
    - VS Code extension: `pnpm --filter agent-orchestration-vscode package`.
 
 ## Downstream: distributions built on the core

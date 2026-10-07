@@ -9,6 +9,7 @@ name: Release desktop app
 #   latest.json and the signed update files that installed apps read (tauri-plugin-updater)
 #
 # The names carry no version, so .../releases/latest/download/<name> always is the newest installer.
+# The release is a draft until the publish job has attached the installers; that job then publishes it.
 #
 # Maintainers, one time: add the repository secret DESKTOP_UPDATER_PRIVATE_KEY (the minisign key whose public
 # half is `plugins.updater.pubkey` in apps/desktop/src-tauri/tauri.conf.json; `pnpm tauri signer generate`).
@@ -140,16 +141,21 @@ jobs:
           esac
           version="${GITHUB_REF_NAME#v}"
           ls -la assets
-          [ -n "$(ls -A assets)" ] || { echo "::error::No installer was built."; exit 1; }
+          [ -n "$(ls -A assets)" ] || { echo "::error::No installer was built. The release stays a draft; run this workflow again, or publish without installers: gh release edit $GITHUB_REF_NAME --draft=false"; exit 1; }
           node apps/desktop/scripts/release-assets.mjs latest assets "$version" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
-          # release-worker.yml creates the release for the same tag; wait for it instead of racing it.
+          # release-worker.yml creates the release for the same tag as a draft; wait for it instead of racing it.
           for i in $(seq 1 30); do
             gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
             sleep 10
           done
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            flags=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            flags=(--draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME")
             case "$version" in *-*) flags+=(--prerelease) ;; esac
             gh release create "$GITHUB_REF_NAME" "${flags[@]}"
           fi
           gh release upload "$GITHUB_REF_NAME" assets/* --clobber
+          # Publish only now: the release becomes "latest" with the installers and latest.json already on it,
+          # so .../releases/latest/download/<name> never answers 404 between the tag and this job.
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true ]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false
+          fi

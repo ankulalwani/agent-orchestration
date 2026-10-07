@@ -189,12 +189,11 @@ None of these were tried against the real external services; each names what sto
 | TEST-004 | Browser E2E | 14 | COMPLETE | Dashboard and worker UI |
 | DOC-001,002 | Tracking docs; docs tree | 91,92 | COMPLETE | Reflects the implementation, with verification status stated |
 | LEGAL-001 | License decision document | 3 | COMPLETE | |
-| LEGAL-002 | Final license | 3 | BLOCKED | Reason: legal decision. Action: counsel selects a license. Workaround: placeholder. Impact: cannot be distributed as licensed software. |
+| LEGAL-002 | Final license | 3 | COMPLETE | Apache 2.0 with additional conditions, chosen by the owner (D-022). Not reviewed by legal counsel. |
 
 ## Blocked items (spec §102)
 | Item | Reason | Required action | Workaround | Impact |
 |---|---|---|---|---|
-| LEGAL-002 | Legal decision | Counsel selects a license | Placeholder LICENSE | No distribution rights granted |
 | Successful agent runs (AGENT-006..009) | Needs accounts for Codex, Gemini CLI, OpenCode, Aider | Run one small real task per agent you use (`claude-code-live.test.ts` shows how) | Failure paths verified with the real CLIs; Claude Code verified live | Success-path event parsing of Codex/Gemini/OpenCode is documentation-based |
 
 ## Next exact actions

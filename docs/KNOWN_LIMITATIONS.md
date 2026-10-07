@@ -23,7 +23,9 @@ Actual, current limitations. Updated as the implementation changes. Last updated
   cannot run side by side; the app offers to replace the other one.
 - **Uninstalling keeps data**: the worker's data folder and the app's folder with worker versions and log.
 - **Every push to `main` builds installers for all systems** (through the automatic tag). If that is too
-  much build time, start `release-desktop.yml` by hand instead of from `auto-tag.yml`.
+  much build time, start `release-desktop.yml` by hand instead of from `auto-tag.yml`. The GitHub Release
+  of a tag stays a draft until that workflow has attached the installers, so a tag without a desktop run
+  needs `gh release edit vX.Y.Z --draft=false` before servers see its worker package.
 
 ## Own logins and add-on models (added 2026-09-28)
 - **Add-on providers were not called for real.** The gateway was tested with each real harness against a

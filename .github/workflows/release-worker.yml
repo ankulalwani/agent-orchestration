@@ -11,6 +11,9 @@ name: Release worker
 # server's custom upload (docs/workers/README.md).
 #
 # A tag with a suffix (v0.3.0-beta.1) is published as a pre-release on the beta channel; other tags are stable.
+# A new release is created as a draft. release-desktop.yml publishes it when the installers are attached, so
+# servers and download links see the release only when it is complete. If that workflow does not run for a
+# tag, publish the draft by hand: gh release edit vX.Y.Z --draft=false
 # Tags pushed with GITHUB_TOKEN do not start other workflows, so auto-tag.yml starts this one explicitly.
 
 on:
@@ -88,7 +91,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
-            flags=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            # A draft: release-desktop.yml publishes it after the installers are on it. A published release
+            # without them would be "latest", and .../releases/latest/download/<installer> would answer 404.
+            flags=(--draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME")
             [ "$CHANNEL" = beta ] && flags+=(--prerelease)
             gh release create "$GITHUB_REF_NAME" "${files[@]}" "${flags[@]}"
           fi
