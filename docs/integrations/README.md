@@ -64,7 +64,7 @@ POSTed there when the task completes, fails or needs attention:
 
 - One external item is one task. Redeliveries, and an issue that is opened with the label and then
   labeled again, return the existing task (`{"status":"duplicate"}`).
-- Answers: `201 {"status":"created","taskId"}`, `200 {"status":"duplicate"|"ignored"|"pong"}`, `401`
+- Answers: `201 {"status":"created","taskId"}`, `200 {"status":"duplicate"|"ignored"|"approved"|"pong"}`, `401`
   for a bad signature. An integration that is turned off acknowledges deliveries and ignores them.
 - The task shows where it came from (with a link), and the integration list shows the last delivery and
   its result. Creating a task is recorded in the audit log.
@@ -92,6 +92,68 @@ carry a valid `Linear-Signature`.
 - **Issues** become tasks when they are created with the configured label, or when the label is added.
 - **Comments** starting with the command create a task. Comments by integrations are ignored.
 - **Replies (optional):** *Token secret for replies* names an organization secret with a Linear API key.
+
+## Pull requests and issues, taken to a merge
+
+GitHub and GitLab. Three settings on the integration, all off by default:
+
+- **Make pull/merge requests mergeable.** A request that someone opens becomes a task that works on the
+  request's own branch (*When opened*, or also on every push by someone else). The worker merges the base
+  branch into it, and the agent resolves the conflicts, if there are any, and fixes what keeps the
+  project's checks from passing. The task's commit is pushed to the request. Add the webhook event *Pull
+  requests* (GitLab: *Merge request events*).
+- **Merge verified pull requests.** When the task is verified and the request's CI checks pass, the
+  worker merges the request: *After a person approves*, or *Automatically*. This applies to requests the
+  integration took over, and to the requests its issue tasks open (those carry `Closes #n`, so the issue
+  closes with the merge).
+- **Issues: reproduce first, then fix.** The agent is told to find the combination that fails (inputs,
+  options, configuration, platform, versions), to cover it with a test, to fix the cause, and to name the
+  combination in its report.
+
+How a request is worked on:
+
+- **Nothing is rewritten.** The base branch is merged in, never rebased onto, and nothing is force-pushed:
+  the author's commits stay as they are, with the task's commits after them.
+- **Conflicts** are left in the files with the merge in progress, and the agent is given the list. A
+  commit with conflict markers left in is refused: the agent is sent back, as after a failed check.
+- **CI checks** of the pushed commit are awaited (see
+  [CI checks as verification](../operations/README.md#ci-checks-as-verification)); a failed check goes back to the agent with the
+  end of its log. A request that needed no change is judged by the checks of its head.
+- **Forks.** If the author allows maintainers to push, the task pushes to the fork's branch. If not, or
+  if the fork refuses, the same commits go to a branch of the repository (`ao/pr-<number>`) in a new
+  request that replaces the first one; the task's comment on the first one says so.
+- **The host decides too.** Before merging, the worker asks the host. A draft, a conflict, branch
+  protection (a required review or check), unresolved discussions (GitLab) or a reviewer who requested
+  changes and has not looked again all block the merge; the task completes and reports the reason. The
+  merge is made only at the commit that was verified: if the branch moved in the meantime, it is not made.
+- **Merge method:** squash, merge commit or rebase. On GitHub, if the repository does not allow the one
+  chosen, one that it allows is used. On GitLab, squashing is the choice; the rest is the project's setting.
+- **Approval:** the task waits (`WAITING_FOR_APPROVAL`). Approve or deny it in the dashboard, the CLI or
+  chat, or comment `/agent merge` on the request. The worker running the task must be connected.
+
+### Who can start tasks
+
+With either of the first two settings on, only people with write access start tasks:
+
+- Issues and requests by others are ignored until someone with write access adds the integration's label
+  or writes the comment command. Labels that the author's own issue form sets do not count.
+- Comment commands and review feedback by people without write access are ignored.
+- A request written by someone without write access is never merged without an approval, whatever the
+  setting says.
+
+GitHub states a person's access in each delivery. GitLab does not: it is asked (Developer or higher), which
+needs the *Token secret for replies*; without it nobody counts as a member.
+
+A task's own pushes and the requests that tasks open do not start further tasks, and a request has at
+most one task working on it at a time.
+
+### What it needs
+
+- The worker merges with its Git hosting token for the host, or with the organization's GitHub App.
+- A comment command on a GitHub pull request needs the *Token secret for replies* (the comment's delivery
+  does not carry the branches).
+- The same two fields can be set on any code task through the API: `pullRequest` (`url`, `number`, `base`,
+  `head`, optionally `fetchHead` and `fork`) and `merge` (`mode`: `approval` or `automatic`, `method`).
 
 ## Follow-ups on review feedback
 

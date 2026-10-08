@@ -85,6 +85,14 @@ export interface LocalTaskState {
   pullRequests?: Record<string, string>;
   committedFiles?: Array<{ path: string; status: string }>;
   ciFailedCommit?: string | null;
+  /**
+   * Tasks on a pull request: how its branch was brought up to date with the base branch (the files that
+   * conflicted stay listed until the task ends), the last commit pushed, and whether pushing to the
+   * fork failed, so that the task's own branch and a replacing pull request are used.
+   */
+  update?: { base: string; state: 'up_to_date' | 'merged' | 'conflicts'; conflicts: string[] } | null;
+  pushedCommit?: string | null;
+  forkPushFailed?: boolean;
   consecutiveFailures: Array<string>;
   updatedAt: string;
 }

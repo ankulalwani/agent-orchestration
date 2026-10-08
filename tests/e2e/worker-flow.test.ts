@@ -94,7 +94,7 @@ beforeAll(async () => {
     maxConcurrentTasks: 1,
     projects: [{ projectId, localPath: repo }],
     providers: [
-      { id: 'mocka', kind: 'mock', name: 'Mock A', baseUrl: null, credentialRef: null, useAgentLogin: false, enabled: true, extra: {}, models: ['success', 'rate_limit', 'limit_once', 'context_once', 'flaky', 'crash', 'input', 'slow', 'key_expires', 'review', 'review_dirty', 'plan', 'plan_cycle'].map((sc) => ({ id: `scenario:${sc}` })) },
+      { id: 'mocka', kind: 'mock', name: 'Mock A', baseUrl: null, credentialRef: null, useAgentLogin: false, enabled: true, extra: {}, models: ['success', 'rate_limit', 'limit_once', 'context_once', 'flaky', 'crash', 'input', 'slow', 'key_expires', 'review', 'review_dirty', 'plan', 'plan_cycle', 'resolve'].map((sc) => ({ id: `scenario:${sc}` })) },
       { id: 'mockb', kind: 'mock', name: 'Mock B', baseUrl: null, credentialRef: null, useAgentLogin: false, enabled: true, extra: {}, models: [{ id: 'scenario:success' }] },
     ],
     agents: { mock: { enabled: true, settings: { retryAtOffsetMs: 300 } } },
@@ -718,6 +718,237 @@ describe('worker end-to-end', () => {
       worker.config.update((c) => ({ ...c, git: { ...c.git, hosting: [] } }));
     }
   }, 180_000);
+
+  it('pull requests: the task works on the request’s branch, merges the base into it, resolves conflicts, and merges the request', async () => {
+    const http = await import('node:http');
+    const g = (...a: string[]) => runCommand('git', a, { cwd: repo });
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-e2e-pr-remote-'));
+    const forkBare = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-e2e-pr-fork-'));
+    await runCommand('git', ['init', '-q', '--bare', bare]);
+    await runCommand('git', ['init', '-q', '--bare', forkBare]);
+    const inBare = async (...a: string[]) => (await runCommand('git', a, { cwd: bare })).stdout.trim();
+    // The host: pull requests by number (their head is the branch on the remote), reviews, checks, and merging.
+    const prs: Record<number, { branch: string; in?: string; reviews?: unknown[]; open?: boolean }> = {};
+    const calls: Array<{ method: string; url: string; body: any }> = [];
+    const api = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => (raw += c));
+      req.on('end', async () => {
+        const body = raw ? JSON.parse(raw) : null;
+        calls.push({ method: req.method!, url: req.url!, body });
+        const json = (b: unknown, code = 200) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(b));
+        const pull = /^\/repos\/acme\/site\/pulls\/(\d+)(\/reviews|\/merge)?(?:\?.*)?$/.exec(req.url!);
+        if (req.method === 'POST' && req.url === '/repos/acme/site/pulls') {
+          const number = 91 + Object.keys(prs).filter((n) => Number(n) > 90).length;
+          prs[number] = { branch: body.head, reviews: number === 91 ? [{ user: { login: 'maria' }, state: 'APPROVED' }, { user: { login: 'maria' }, state: 'CHANGES_REQUESTED' }] : [] };
+          return json({ html_url: `https://github.com/acme/site/pull/${number}`, number }, 201);
+        }
+        if (pull && prs[Number(pull[1])]) {
+          const p = prs[Number(pull[1])]!;
+          if (pull[2] === '/reviews') return json(p.reviews ?? []);
+          if (pull[2] === '/merge') {
+            // Like GitHub: only the head that was asked for is merged; this repository does not allow squashing.
+            if (body.sha !== (await inBare('rev-parse', p.branch))) return json({ message: 'Head branch was modified' }, 409);
+            if (body.merge_method === 'squash') return json({ message: 'Squash merges are not allowed on this repository.' }, 405);
+            p.open = false;
+            return json({ merged: true, sha: 'f00dfeed00000000000000000000000000000000' });
+          }
+          return json({ number: Number(pull[1]), state: p.open === false ? 'closed' : 'open', merged: p.open === false, draft: false, mergeable: true, mergeable_state: 'clean', base: { ref: 'main' }, head: { sha: (await runCommand('git', ['rev-parse', p.branch], { cwd: p.in ?? bare })).stdout.trim() } });
+        }
+        if (/\/commits\/[a-f0-9]+\/check-runs/.test(req.url!)) return json({ check_runs: [{ id: 1, name: 'build', status: 'completed', conclusion: 'success', html_url: 'https://github.com/acme/site/runs/1', output: {} }] });
+        if (/\/commits\/[a-f0-9]+\/status$/.test(req.url!)) return json({ statuses: [] });
+        return json({ message: 'Not Found' }, 404);
+      });
+    });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    // A contributor's clone: a branch from main with one commit, pushed to the remote (or to the fork).
+    const contributor = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-e2e-pr-contributor-'));
+    const c = async (...a: string[]) => {
+      const r = await runCommand('git', ['-c', 'user.email=c@example.com', '-c', 'user.name=C', '-c', 'commit.gpgsign=false', ...a], { cwd: contributor });
+      if (r.exitCode !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const branchWith = async (branch: string, file: string, text: string, pushTo = 'origin') => {
+      await c('checkout', '-q', '-B', branch, 'origin/main');
+      fs.writeFileSync(path.join(contributor, file), text);
+      await c('add', '.');
+      await c('commit', '-qm', `${branch}: ${file}`);
+      await c('push', '-q', pushTo, `${branch}:${branch}`);
+      return c('rev-parse', 'HEAD');
+    };
+    const mainGets = async (file: string, text: string) => {
+      await c('checkout', '-q', '-B', 'main', 'origin/main');
+      fs.writeFileSync(path.join(contributor, file), text);
+      await c('add', '.');
+      await c('commit', '-qm', `main: ${file}`);
+      await c('push', '-q', 'origin', 'main');
+      await c('fetch', '-q', 'origin');
+    };
+    const ci = { enabled: true, timeoutMs: 10 * 60_000, pollMs: 5000, startGraceMs: 60_000, required: true };
+    const policy = (model: string) => ({ models: { preferred: [{ providerId: 'mocka', modelId: `scenario:${model}` }] }, verification: { enabled: true, autoDetect: false, steps: [{ kind: 'test' as const, name: 'check', command: [process.execPath, 'check.js'], required: true, timeoutMs: 20_000 }], ci }, git: { policy: 'PULL_REQUEST' as const, workOnBranch: true } });
+    const onRequest = (title: string, model: string, pullRequest: object, merge?: object) =>
+      s.tasks.create(owner, { projectId, title, prompt: 'Make it mergeable', priority: 'NORMAL', dependencies: [], requirements: {}, capabilityIds: [], policy: policy(model), pullRequest: pullRequest as never, ...(merge ? { merge: merge as never } : {}) });
+    try {
+      await resetRepo();
+      fs.writeFileSync(path.join(repo, 'shared.txt'), 'line one\n');
+      await g('add', '-A');
+      await g('commit', '-qm', 'shared file');
+      await g('remote', 'add', 'origin', 'https://github.com/acme/site.git');
+      for (const line of (await g('config', '--get-regexp', '^url\\..*\\.insteadof$')).stdout.split('\n').filter(Boolean)) await g('config', '--unset-all', line.split(' ')[0]!);
+      await g('config', `url.${bare.split(path.sep).join('/')}.insteadOf`, 'https://github.com/acme/site.git');
+      await g('config', `url.${forkBare.split(path.sep).join('/')}.insteadOf`, 'https://github.com/stranger/site.git');
+      await g('push', '-q', 'origin', 'main');
+      await runCommand('git', ['clone', '-q', bare, contributor]);
+      await c('remote', 'add', 'fork', forkBare);
+      await worker.credentials.set('git-hosting:github.com', 'ghp_e2e_token');
+      worker.config.update((cfg) => ({ ...cfg, git: { ...cfg.git, hosting: [{ host: 'github.com', kind: 'github', apiBaseUrl: `http://127.0.0.1:${(api.address() as { port: number }).port}` }] } }));
+
+      // 1. Behind main, no conflict: main is merged in, the result verified and pushed, and the request merged at once.
+      const cleanHead = await branchWith('feat-clean', 'feature.txt', 'a feature\n');
+      await mainGets('other.txt', 'main moved on\n');
+      prs[50] = { branch: 'feat-clean' };
+      const clean = await onRequest('PR #50: clean', 'success', { url: 'https://github.com/acme/site/pull/50', number: 50, base: 'main', head: 'feat-clean', fetchHead: 'pull/50/head' }, { mode: 'automatic', method: 'squash' });
+      const cleanDone = await waitFor(() => getTask(clean.id), settled, 90_000, 'clean pull request task');
+      expect(cleanDone.status, cleanDone.statusReason ?? '').toBe('COMPLETED');
+      expect(cleanDone.gitStatus).toBe('MERGED');
+      expect(cleanDone.gitResult).toMatchObject({ branch: 'feat-clean', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/50', update: { base: 'main', state: 'merged', conflicts: [] }, ci: { state: 'success' }, merge: { state: 'merged', method: 'merge', commit: 'f00dfeed00000000000000000000000000000000' } });
+      // On the remote branch: the task's commit, on a merge of main into the contributor's commit.
+      expect(await inBare('rev-parse', 'feat-clean')).toBe(cleanDone.gitResult!.commit);
+      expect((await inBare('log', '--format=%P', '-1', 'feat-clean~1')).split(' ')).toHaveLength(2);
+      expect(await inBare('merge-base', '--is-ancestor', cleanHead, 'feat-clean').then(() => 'yes')).toBe('yes');
+      expect(await inBare('ls-tree', '--name-only', 'feat-clean')).toContain('other.txt');
+      // Squash is not allowed there: the next method was used, at the commit that was verified. No new request.
+      expect(calls.filter((x) => x.method === 'PUT').map((x) => x.body)).toEqual([{ merge_method: 'squash', sha: cleanDone.gitResult!.commit }, { merge_method: 'merge', sha: cleanDone.gitResult!.commit }]);
+      expect(calls.some((x) => x.method === 'POST')).toBe(false);
+      expect(fs.readFileSync(path.join(repo, 'mock-output.txt'), 'utf8')).not.toContain('prompt-has-failures:true');
+
+      // 2. A conflict with main: the agent is given the files; markers left in are refused; a person approves the merge.
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      await g('pull', '-q', '--no-rebase', 'origin', 'main');
+      await g('push', '-q', 'origin', 'main');
+      await c('fetch', '-q', 'origin');
+      await branchWith('feat-conflict', 'shared.txt', 'line one, by the contributor\n');
+      await mainGets('shared.txt', 'line one, changed on main\n');
+      prs[51] = { branch: 'feat-conflict' };
+      const conflict = await onRequest('PR #51: conflict', 'resolve', { url: 'https://github.com/acme/site/pull/51', number: 51, base: 'main', head: 'feat-conflict' }, { mode: 'approval', method: 'merge' });
+      const asked = await waitFor(() => getTask(conflict.id), (x) => settled(x) || x.status === 'WAITING_FOR_APPROVAL', 90_000, 'merge approval');
+      expect(asked.status, asked.statusReason ?? '').toBe('WAITING_FOR_APPROVAL');
+      expect(asked.pendingInteraction).toMatchObject({ kind: 'approval', subject: 'merge' });
+      expect(asked.pendingInteraction!.question).toContain('Merge pull request #51');
+      expect(asked.remediationCount).toBe(1);
+      expect(prs[51]!.open).toBeUndefined(); // nothing is merged before the approval
+      // Approved with a comment on the pull request, through a GitHub integration of the project.
+      const integration = await s.integrations.create(owner, { name: 'e2e merge', kind: 'github', projectId, enabled: true, settings: { merge: 'approval' } as never });
+      const { createHmac } = await import('node:crypto');
+      const payload = Buffer.from(JSON.stringify({ action: 'created', comment: { id: 1, body: '/agent merge', author_association: 'OWNER', user: { login: 'maria' } }, issue: { number: 51, title: 'conflict', html_url: 'https://github.com/acme/site/pull/51', pull_request: { html_url: 'https://github.com/acme/site/pull/51' }, user: { login: 'dev' } }, sender: { type: 'User' }, repository: { full_name: 'acme/site' } }));
+      expect(await s.integrations.deliver(integration.id, { 'x-github-event': 'issue_comment', 'x-hub-signature-256': `sha256=${createHmac('sha256', integration.secret).update(payload).digest('hex')}` }, payload)).toEqual({ status: 'approved', taskId: conflict.id });
+      const conflictDone = await waitFor(() => getTask(conflict.id), settled, 60_000, 'conflict pull request task');
+      expect(conflictDone.status, conflictDone.statusReason ?? '').toBe('COMPLETED');
+      expect(conflictDone.gitStatus).toBe('MERGED');
+      expect(conflictDone.gitResult).toMatchObject({ branch: 'feat-conflict', update: { base: 'main', state: 'conflicts_resolved', conflicts: ['shared.txt'] }, merge: { state: 'merged', method: 'merge' } });
+      const resolved = await inBare('show', 'feat-conflict:shared.txt');
+      expect(resolved).toBe('line one, by the contributor\nline one, changed on main');
+      // One commit concludes the merge: its parents are the contributor's commit and main.
+      expect((await inBare('log', '--format=%P', '-1', 'feat-conflict')).split(' ')).toHaveLength(2);
+      expect(fs.readFileSync(path.join(repo, 'mock-output.txt'), 'utf8')).toContain('prompt-has-failures:true');
+      expect(conflictDone.completionReport?.summary).toContain('MARKER-CONFLICTS-LISTED');
+      await worker.flush();
+      const types = (await s.tasks.events(owner, conflict.id, { limit: 500 })).items.map((e) => e.type);
+      expect(types).toEqual(expect.arrayContaining(['PullRequestUpdated', 'VerificationFailed', 'RemediationStarted', 'CiChecksPassed', 'ApprovalRequested', 'PullRequestMerged']));
+
+      // 3. From a fork that maintainers may push to: the fix goes to the fork's branch. Without `merge`, the task says whether it is ready.
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      await g('pull', '-q', '--no-rebase', 'origin', 'main');
+      await g('push', '-q', 'origin', 'main');
+      await c('fetch', '-q', 'origin');
+      const forkHead = await branchWith('patch-1', 'fork.txt', 'from the fork\n', 'fork');
+      await inBare('fetch', '-q', forkBare, 'patch-1');
+      await inBare('update-ref', 'refs/pull/52/head', forkHead);
+      const posts = () => calls.filter((x) => x.method === 'POST').length;
+      const fork = { url: 'https://github.com/acme/site/pull/52', number: 52, base: 'main', head: 'patch-1', fetchHead: 'pull/52/head', fork: { url: 'https://github.com/stranger/site.git', canPush: true } };
+      // The host shows the fork's branch as the request's head.
+      const forkSha = async () => (await runCommand('git', ['rev-parse', 'patch-1'], { cwd: forkBare })).stdout.trim();
+      prs[52] = { branch: 'patch-1', in: forkBare };
+      const pushed = await onRequest('PR #52: fork', 'success', fork);
+      const pushedDone = await waitFor(() => getTask(pushed.id), settled, 90_000, 'fork pull request task');
+      expect(pushedDone.status, pushedDone.statusReason ?? '').toBe('COMPLETED');
+      expect(pushedDone.gitResult).toMatchObject({ branch: 'ao/pr-52', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/52', update: { state: 'up_to_date' }, merge: { state: 'ready' } });
+      expect(pushedDone.gitResult!.supersedes ?? null).toBeNull();
+      expect(await forkSha()).toBe(pushedDone.gitResult!.commit);
+      expect(posts()).toBe(0);
+      expect(pushedDone.gitStatus).toBe('PR_OPENED');
+
+      // 4. A fork that cannot be pushed to: a branch and a request of this repository replace it. A reviewer who asked for changes blocks the merge.
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      await g('pull', '-q', '--no-rebase', 'origin', 'main');
+      await g('push', '-q', 'origin', 'main');
+      await c('fetch', '-q', 'origin');
+      const lockedHead = await branchWith('patch-2', 'locked.txt', 'from a locked fork\n', 'fork');
+      await inBare('fetch', '-q', forkBare, 'patch-2');
+      await inBare('update-ref', 'refs/pull/53/head', lockedHead);
+      prs[53] = { branch: 'refs/pull/53/head' };
+      const locked = await onRequest('PR #53: locked fork', 'success', { ...fork, url: 'https://github.com/acme/site/pull/53', number: 53, head: 'patch-2', fetchHead: 'pull/53/head', fork: { url: 'https://github.com/stranger/site.git', canPush: false } }, { mode: 'automatic', method: 'merge' });
+      const lockedDone = await waitFor(() => getTask(locked.id), settled, 90_000, 'locked fork task');
+      expect(lockedDone.status, lockedDone.statusReason ?? '').toBe('COMPLETED');
+      expect(lockedDone.gitStatus).toBe('PR_OPENED');
+      expect(lockedDone.gitResult).toMatchObject({ branch: 'ao/pr-53', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/91', supersedes: 'https://github.com/acme/site/pull/53', merge: { state: 'blocked', reason: 'maria requested changes' } });
+      const opened = calls.find((x) => x.method === 'POST')!;
+      expect(opened.body).toMatchObject({ head: 'ao/pr-53', base: 'main', title: 'PR #53: locked fork' });
+      expect(opened.body.body).toMatch(/^Replaces https:\/\/github\.com\/acme\/site\/pull\/53/);
+      expect(await inBare('merge-base', '--is-ancestor', lockedHead, 'ao/pr-53').then(() => 'yes')).toBe('yes');
+      expect((await runCommand('git', ['rev-parse', 'patch-2'], { cwd: forkBare })).stdout.trim()).toBe(lockedHead); // the fork is untouched
+      expect(lockedDone.completionReport?.warnings.join(' ')).toContain('The pull request was not merged: maria requested changes');
+      expect(prs[91]!.open).toBeUndefined();
+
+      // 5. A fork that says it can be pushed to and then refuses: the same replacement, and this one is merged.
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      await g('pull', '-q', '--no-rebase', 'origin', 'main');
+      await g('push', '-q', 'origin', 'main');
+      await c('fetch', '-q', 'origin');
+      const refusedHead = await branchWith('patch-3', 'refused.txt', 'from a fork that refuses\n', 'fork');
+      await inBare('fetch', '-q', forkBare, 'patch-3');
+      await inBare('update-ref', 'refs/pull/54/head', refusedHead);
+      await g('config', `url.${path.join(os.tmpdir(), 'ao-e2e-no-such-repository').split(path.sep).join('/')}.insteadOf`, 'https://github.com/gone/site.git');
+      prs[54] = { branch: 'refs/pull/54/head' };
+      const refused = await onRequest('PR #54: fork refuses', 'success', { ...fork, url: 'https://github.com/acme/site/pull/54', number: 54, head: 'patch-3', fetchHead: 'pull/54/head', fork: { url: 'https://github.com/gone/site.git', canPush: true } }, { mode: 'automatic', method: 'merge' });
+      const refusedDone = await waitFor(() => getTask(refused.id), settled, 90_000, 'refusing fork task');
+      expect(refusedDone.status, refusedDone.statusReason ?? '').toBe('COMPLETED');
+      expect(refusedDone.gitResult).toMatchObject({ branch: 'ao/pr-54', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/92', supersedes: 'https://github.com/acme/site/pull/54', merge: { state: 'merged', method: 'merge' } });
+      expect(refusedDone.gitResult!.warnings!.join(' ')).toContain('The fork did not accept the push');
+      expect(refusedDone.gitResult!.filesChanged.map((f) => f.path)).toContain('mock-output.txt');
+      expect(await inBare('rev-parse', 'ao/pr-54')).toBe(refusedDone.gitResult!.commit);
+      expect(refusedDone.gitStatus).toBe('MERGED');
+
+      // 6. An issue's task: it opens its own pull request, which closes the issue, and merges it when the checks pass.
+      await g('checkout', '-q', 'main');
+      await resetRepo();
+      await g('pull', '-q', '--no-rebase', 'origin', 'main');
+      await g('push', '-q', 'origin', 'main');
+      const forIssue = await s.tasks.create(
+        owner,
+        { projectId, title: 'Totals are wrong for empty carts', prompt: 'Fix it', priority: 'NORMAL', dependencies: [], requirements: {}, capabilityIds: [], policy: policy('success'), merge: { mode: 'automatic', method: 'merge' } },
+        { source: { kind: 'github', name: 'e2e', url: 'https://github.com/acme/site/issues/7', ref: 'acme/site#7', refType: 'issue' } },
+      );
+      const issueDone = await waitFor(() => getTask(forIssue.id), settled, 90_000, 'issue task');
+      expect(issueDone.status, issueDone.statusReason ?? '').toBe('COMPLETED');
+      expect(issueDone.gitStatus).toBe('MERGED');
+      expect(issueDone.gitResult).toMatchObject({ pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/93', ci: { state: 'success' }, merge: { state: 'merged' } });
+      expect(issueDone.gitResult!.update).toBeUndefined();
+      const forIssuePr = calls.filter((x) => x.method === 'POST').at(-1)!;
+      expect(forIssuePr.body).toMatchObject({ base: 'main', head: issueDone.gitResult!.branch });
+      expect(forIssuePr.body.body).toMatch(/\n\nCloses #7$/);
+    } finally {
+      api.close();
+      await g('merge', '--abort');
+      await g('checkout', '-q', 'main');
+      await g('remote', 'remove', 'origin');
+      worker.config.update((cfg) => ({ ...cfg, git: { ...cfg.git, hosting: [] } }));
+    }
+  }, 420_000);
 
   it('OS sandbox policy: required without a sandbox stops the task; with one, the agent runs inside it (SEC-014)', async () => {
     await resetRepo();

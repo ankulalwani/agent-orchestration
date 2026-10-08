@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { AppError, createLogger, safeEqual, type Role } from '@ao/core';
 import { Integration, Membership, Project, Secret, Task, oid } from '@ao/database';
-import { integrationSettings, type IntegrationSettings, type TaskDto, type createIntegrationRequest, type updateIntegrationRequest } from '@ao/contracts';
+import { integrationIsGated, integrationSettings, type IntegrationSettings, type PullRequestSpec, type TaskDto, type createIntegrationRequest, type updateIntegrationRequest } from '@ao/contracts';
 import type { z } from 'zod';
 import { requirePublicCallbackUrls, type ServerConfig } from './config.js';
 import type { SecretBox } from './crypto.js';
@@ -33,8 +33,32 @@ export interface Trigger {
   followUp?: { pullRequestUrl: string; number: number; required: boolean; reviewId?: number };
   /** The item's id in the other system, when replies need it instead of `ref` (Linear). */
   externalId?: string;
+  /**
+   * A pull/merge request an agent takes over (`pullRequestFixes`): the task works on its branch. Without
+   * `spec` (a comment on a GitHub pull request does not carry its branches) it is read from the host.
+   * `headSha`: a push that a task made itself starts nothing.
+   */
+  pullRequest?: { number: number; url: string; spec?: PullRequestSpec; headSha?: string };
+  /** An issue (not a comment or a request): `reproduceIssues` applies. */
+  issue?: boolean;
+  /**
+   * Who is behind the delivery, for integrations where only people with write access start tasks.
+   * `actor` started it (opened the item, added the label, wrote the command); `author` wrote the issue
+   * or the request's code. `trusted` when the payload says so; else GitLab is asked about `gitlabUserId`.
+   */
+  actor?: Principal;
+  author?: Principal;
+  /** `/agent merge` on a pull request: approves the merge a task waits for, and creates nothing. */
+  approveMerge?: { pullRequestUrl: string };
+  /** A second task from the same delivery (a review next to a takeover). */
+  and?: Trigger;
 }
-export type DeliveryResult = { status: 'created' | 'duplicate'; taskId: string } | { status: 'ignored'; reason: string } | { status: 'pong' };
+export interface Principal {
+  trusted?: boolean;
+  gitlabUserId?: number;
+  gitlabProject?: string | number;
+}
+export type DeliveryResult = { status: 'created' | 'duplicate'; taskId: string } | { status: 'ignored'; reason: string } | { status: 'approved'; taskId: string } | { status: 'pong' };
 
 type IntegrationLean = { _id: unknown; organizationId: unknown; projectId: unknown; name: string; kind: 'github' | 'gitlab' | 'jira' | 'linear' | 'generic'; enabled: boolean; settings: unknown; createdBy: unknown; secretEnc?: string; lastDeliveryAt?: Date | null; lastDeliveryResult?: string | null; deliveries?: number; createdAt: Date };
 
@@ -220,28 +244,78 @@ export class IntegrationService {
       await record(`ignored: ${parsed.ignore}`);
       return { status: 'ignored', reason: parsed.ignore };
     }
+    if (parsed.approveMerge) {
+      const r = await this.approveMerge(i, settings, parsed);
+      await record(r.status === 'approved' ? `approved the merge of task ${r.taskId}` : `ignored: ${r.reason}`);
+      return r;
+    }
+    // A delivery can ask for two tasks (a takeover and a review). The first one that is created is the answer.
+    let first: DeliveryResult | null = null;
+    const results: string[] = [];
+    for (const trigger of [parsed, ...(parsed.and ? [parsed.and] : [])]) {
+      const r = await this.createFor(i, settings, trigger);
+      results.push(r.status === 'ignored' ? `ignored: ${r.reason}` : r.status === 'duplicate' ? `duplicate of task ${r.taskId}` : `created task ${r.taskId}`);
+      if (!first || (first.status === 'ignored' && r.status !== 'ignored')) first = r;
+    }
+    await record(results.join('; '));
+    return first!;
+  }
+
+  /** One task for one trigger, or the reason there is none. */
+  private async createFor(i: IntegrationLean, settings: IntegrationSettings, parsed: Trigger): Promise<Extract<DeliveryResult, { status: 'created' | 'duplicate' | 'ignored' }>> {
+    const ignored = (reason: string) => ({ status: 'ignored' as const, reason });
+    // Only people with write access start tasks, when tasks fix or merge pull requests.
+    let outsider = false;
+    if (integrationIsGated(settings) && (parsed.actor || parsed.author)) {
+      const actorTrusted = await this.isTrusted(i, settings, parsed.actor);
+      if (!actorTrusted) return ignored(`waiting for someone with write access${settings.label ? ` to add the "${settings.label}" label` : ''}${settings.command ? `${settings.label ? ' or' : ' to'} comment ${settings.command}` : ''}`);
+      outsider = parsed.author && parsed.author !== parsed.actor ? !(await this.isTrusted(i, settings, parsed.author)) : false;
+    }
     // Feedback on a pull request that one of this project's tasks opened: follow up on that task's branch.
     let continuesTaskId: string | undefined;
     if (parsed.followUp) {
       const opened = await Task.findOne({ organizationId: i.organizationId, projectId: i.projectId, 'gitResult.pullRequestUrl': parsed.followUp.pullRequestUrl, kind: { $in: ['code', null] } }, { _id: 1 }).sort({ createdAt: -1 }).lean();
       if (opened) continuesTaskId = String(opened._id);
-      else if (parsed.followUp.required) {
-        await record('ignored: the pull request was not opened by a task of this project');
-        return { status: 'ignored', reason: 'The pull request was not opened by a task of this project' };
-      }
+      else if (parsed.followUp.required) return ignored('The pull request was not opened by a task of this project');
     }
     const actor = await this.actorFor(i);
     const key = `int:${String(i._id)}:${createHash('sha256').update(parsed.idempotencyKey).digest('hex').slice(0, 40)}`;
     const before = await this.tasks.findByIdempotencyKey(String(i.organizationId), key);
+    // A pull request that no task opened is taken over; one that a task opened is followed up on, as before.
+    let pullRequest: PullRequestSpec | undefined;
+    if (parsed.pullRequest && !continuesTaskId && !before) {
+      const pr = parsed.pullRequest;
+      const mine = { organizationId: i.organizationId, projectId: i.projectId };
+      // The task's own push comes back as a delivery: it must not start the next task.
+      if (pr.headSha && (await Task.exists({ ...mine, $or: [{ 'gitResult.commit': pr.headSha }, { 'gitResult.merge.commit': pr.headSha }] }))) return ignored('the push was made by a task');
+      const active = { $nin: ['COMPLETED', 'FAILED', 'CANCELLED', 'RECOVERY_REQUIRED'] };
+      if (await Task.exists({ ...mine, status: active, $or: [{ 'pullRequest.url': pr.url }, { 'continues.pullRequestUrl': pr.url }] })) return ignored('a task is already working on this pull request');
+      // A request that a task opened is that task's work: feedback on it becomes a follow-up, not a takeover.
+      if (pr.spec) {
+        if (await Task.exists({ ...mine, pullRequest: null, 'gitResult.pullRequestUrl': pr.url })) return ignored('the pull request was opened by a task');
+        // The task that opened it may not have reported that yet: its branch ends with the end of its id.
+        const suffix = /-([a-f0-9]{6})$/.exec(pr.spec.head)?.[1];
+        if (suffix && ((await Task.find({ ...mine, status: active }, { _id: 1 }).limit(500).lean()) as Array<{ _id: unknown }>).some((t) => String(t._id).endsWith(suffix))) return ignored('the pull request was opened by a task');
+      }
+      pullRequest = pr.spec ?? (await this.readPullRequest(i, settings, parsed.ref, pr.number)) ?? undefined;
+      if (!pullRequest) return ignored('the pull request could not be read: a comment command on a pull request needs the reply token');
+    }
+    const worksOnRequest = Boolean(pullRequest || continuesTaskId);
+    // Tasks that end in a pull request of this integration merge it, when merging is on. An outsider's code waits for a person.
+    const merge = settings.merge !== 'off' && !parsed.review ? { mode: outsider ? ('approval' as const) : settings.merge, method: settings.mergeMethod } : undefined;
     const lineComments = continuesTaskId && parsed.followUp?.reviewId && !before ? await this.reviewComments(i, settings, parsed.ref, parsed.followUp.reviewId) : '';
+    const reproduce = parsed.issue && settings.reproduceIssues ? `\n\n${REPRODUCE_FIRST}` : '';
     const task = await this.tasks.create(
       actor,
       {
         projectId: String(i.projectId),
         title: clip(parsed.title.trim() || `${i.name} delivery`, 200),
-        prompt: clip(`${parsed.prompt.trim() || parsed.title}${lineComments}`, 100_000),
-        // The earlier task opened a pull request, so this one pushes to it.
-        ...(continuesTaskId ? { continuesTaskId, policy: { git: { policy: 'PULL_REQUEST' as const } } } : {}),
+        prompt: clip(`${parsed.prompt.trim() || parsed.title}${lineComments}${reproduce}`, 100_000),
+        // The earlier task opened a pull request, so this one pushes to it. A merge waits for the request's CI checks.
+        ...(worksOnRequest || merge ? { policy: { git: { policy: 'PULL_REQUEST' as const }, ...(pullRequest || merge ? { verification: { ci: { enabled: true } } } : {}) } } : {}),
+        ...(continuesTaskId ? { continuesTaskId } : {}),
+        ...(pullRequest ? { pullRequest } : {}),
+        ...(merge ? { merge } : {}),
         priority: settings.priority,
         dependencies: [],
         requirements: {},
@@ -253,12 +327,68 @@ export class IntegrationService {
       { source: { integrationId: String(i._id), kind: i.kind, name: i.name, url: parsed.url, ref: parsed.ref, refType: parsed.refType ?? 'issue', ...(parsed.externalId ? { externalId: parsed.externalId } : {}) } },
     );
     const duplicate = Boolean(before);
-    await record(duplicate ? `duplicate of task ${task.id}` : `created task ${task.id}`);
     if (!duplicate) {
       await audit(actor, 'integration.task_created', { type: 'task', id: task.id }, { integrationId: String(i._id), ref: parsed.ref });
-      void this.reply(i, settings, parsed.externalId ?? parsed.ref, parsed.refType ?? 'issue', parsed.review ? `An agent is reviewing this: ${this.taskUrl(String(i.organizationId), task.id)}` : `Task created in Agent Orchestration: ${this.taskUrl(String(i.organizationId), task.id)}`).catch((e) => log.warn({ err: String(e) }, 'could not reply to the issue'));
+      const said = parsed.review ? 'An agent is reviewing this' : pullRequest ? 'An agent is checking whether this can be merged, and fixes what stands in the way' : 'Task created in Agent Orchestration';
+      void this.reply(i, settings, parsed.externalId ?? parsed.ref, parsed.refType ?? 'issue', `${said}: ${this.taskUrl(String(i.organizationId), task.id)}`).catch((e) => log.warn({ err: String(e) }, 'could not reply to the issue'));
     }
     return { status: duplicate ? 'duplicate' : 'created', taskId: task.id };
+  }
+
+  /** `/agent merge` by someone with write access approves the merge that a task of this pull request waits for. */
+  private async approveMerge(i: IntegrationLean, settings: IntegrationSettings, parsed: Trigger): Promise<Extract<DeliveryResult, { status: 'approved' | 'ignored' }>> {
+    if (settings.merge === 'off') return { status: 'ignored', reason: 'merging is off' };
+    if (!(await this.isTrusted(i, settings, parsed.actor))) return { status: 'ignored', reason: 'only people with write access approve a merge' };
+    const url = parsed.approveMerge!.pullRequestUrl;
+    const waiting = await Task.findOne({ organizationId: i.organizationId, projectId: i.projectId, status: 'WAITING_FOR_APPROVAL', 'pendingInteraction.subject': 'merge', $or: [{ 'gitResult.pullRequestUrl': url }, { 'gitResult.supersedes': url }] }, { _id: 1 }).sort({ createdAt: -1 }).lean();
+    if (!waiting) return { status: 'ignored', reason: 'no task waits for an approval to merge this pull request' };
+    const actor = await this.actorFor(i);
+    try {
+      await this.tasks.action(actor, String(waiting._id), { action: 'approve', reason: `Approved with a comment on ${parsed.url ?? url}` });
+    } catch (e) {
+      // The worker that holds the task is away: the approval is not lost silently.
+      return { status: 'ignored', reason: `the merge could not be approved: ${(e as Error).message}` };
+    }
+    await audit(actor, 'integration.merge_approved', { type: 'task', id: String(waiting._id) }, { integrationId: String(i._id), ref: parsed.ref });
+    return { status: 'approved', taskId: String(waiting._id) };
+  }
+
+  /**
+   * Whether a person has write access. GitHub says so in the delivery; GitLab is asked (Developer or
+   * higher), which needs the reply token: without it nobody counts as a member.
+   */
+  private async isTrusted(i: IntegrationLean, settings: IntegrationSettings, p: Principal | undefined): Promise<boolean> {
+    if (!p) return false;
+    if (p.trusted !== undefined) return p.trusted;
+    if (i.kind !== 'gitlab' || !p.gitlabUserId || p.gitlabProject === undefined) return false;
+    const token = await this.token(i, settings);
+    if (!token) return false;
+    const api = (settings.apiBaseUrl || 'https://gitlab.com').replace(/\/+$/, '');
+    try {
+      const res = await this.fetchImpl(`${api}/api/v4/projects/${encodeURIComponent(String(p.gitlabProject))}/members/all/${p.gitlabUserId}`, { headers: { 'private-token': token }, signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) return false;
+      const m = (await res.json()) as { access_level?: number; state?: string };
+      return (m.access_level ?? 0) >= 30 && (m.state ?? 'active') === 'active';
+    } catch (e) {
+      log.warn({ err: String(e), integration: String(i._id) }, 'could not read the GitLab membership');
+      return false;
+    }
+  }
+
+  /** A GitHub pull request's branches, for a comment command on it (null without a reply token, or when GitHub refuses). */
+  private async readPullRequest(i: IntegrationLean, settings: IntegrationSettings, ref: string | null, number: number): Promise<PullRequestSpec | null> {
+    const token = ref && i.kind === 'github' ? await this.token(i, settings) : null;
+    if (!token || !ref) return null;
+    const api = (settings.apiBaseUrl || this.config.GITHUB_API_URL).replace(/\/+$/, '');
+    try {
+      const res = await this.fetchImpl(`${api}/repos/${ref.split('#')[0]}/pulls/${number}`, { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'agent-orchestration' }, signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) return null;
+      const pr = (await res.json()) as any;
+      return pr?.state === 'open' ? githubPullRequestSpec(pr) : null;
+    } catch (e) {
+      log.warn({ err: String(e), integration: String(i._id) }, 'could not read the pull request');
+      return null;
+    }
   }
 
   /** The line comments of a GitHub review, as text for the prompt ('' without a reply token, or when GitHub refuses). */
@@ -310,7 +440,7 @@ export class IntegrationService {
       return;
     }
     if (t.kind === 'review' && t.status === 'COMPLETED' && t.completionReport?.review) return this.postReview(i, settings, src.ref, t);
-    await this.reply(i, settings, src.externalId ?? src.ref, src.refType ?? 'issue', `Task ${words[t.status] ?? t.status.toLowerCase()}: ${t.title}\n\n${summary}\n\n${this.taskUrl(t.organizationId, t.id)}`.trim());
+    await this.reply(i, settings, src.externalId ?? src.ref, src.refType ?? 'issue', `Task ${words[t.status] ?? t.status.toLowerCase()}: ${t.title}\n\n${summary}${mergeLines(t)}\n\n${this.taskUrl(t.organizationId, t.id)}`.trim());
   }
 
   private async token(i: IntegrationLean, settings: IntegrationSettings) {
@@ -413,18 +543,75 @@ const commandText = (body: string, command: string) => {
   return trimmed.toLowerCase().startsWith(command.toLowerCase()) ? trimmed.slice(command.length).trim() : null;
 };
 
+/** Appended to the prompt of issue tasks (`reproduceIssues`). */
+const REPRODUCE_FIRST = [
+  'Before you change anything, reproduce the problem. Find the exact combination on which it fails: the inputs, options, configuration, platform and versions involved. Narrow it down until you know which of them matter and which do not.',
+  'Add a test that fails for that combination, then fix the cause, not the symptom. The neighbouring combinations that worked before must still work: run their tests too.',
+  'In your report, state the failing combination, the cause, and the test that now covers it. If you cannot reproduce the problem, say what you tried and change nothing you cannot justify.',
+].join('\n');
+
+/** What a finished task did with its pull request, for the comment on the issue or request. */
+function mergeLines(t: TaskDto): string {
+  const g = t.gitResult;
+  if (!g) return '';
+  const out: string[] = [];
+  if (g.update?.state === 'conflicts_resolved') out.push(`Conflicts with \`${g.update.base}\` were resolved in: ${g.update.conflicts.join(', ')}.`);
+  else if (g.update?.state === 'merged') out.push(`\`${g.update.base}\` was merged into the branch.`);
+  if (g.supersedes && g.pullRequestUrl) out.push(`The branch of this pull request could not be pushed to. ${g.pullRequestUrl} replaces it, with the same commits and what was needed to merge them.`);
+  else if (g.pullRequestUrl && t.source?.url !== g.pullRequestUrl && t.source?.refType !== 'pr') out.push(`Pull request: ${g.pullRequestUrl}`);
+  if (g.merge?.state === 'merged') out.push(`Merged${g.merge.commit ? ` as ${g.merge.commit.slice(0, 7)}` : ''}.`);
+  else if (g.merge?.state === 'ready') out.push('The checks pass and nothing stands in the way of merging.');
+  else if (g.merge?.state === 'declined') out.push('The merge was declined.');
+  else if (g.merge?.state === 'blocked') out.push(`Not merged: ${g.merge.reason}.`);
+  return out.length ? `\n\n${out.join('\n')}` : '';
+}
+
+/** People GitHub reports as having write access to the repository. */
+const githubTrusted = (association: unknown) => ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(String(association));
+/**
+ * Whoever adds a label has triage rights at least. Labels that an issue form sets arrive as the
+ * author's own labeling, which says nothing.
+ */
+const githubLabeler = (p: any, item: any): Principal => ({ trusted: Boolean(p.sender?.login) && p.sender.login !== item?.user?.login && p.sender?.type !== 'Bot' });
+function githubPullRequestSpec(pr: any): PullRequestSpec {
+  const fork = pr.head?.repo?.full_name && pr.head.repo.full_name !== pr.base?.repo?.full_name;
+  return {
+    url: pr.html_url,
+    number: pr.number,
+    base: pr.base?.ref,
+    head: pr.head?.ref,
+    fetchHead: `pull/${pr.number}/head`,
+    ...(fork ? { fork: { url: pr.head.repo.clone_url, canPush: Boolean(pr.maintainer_can_modify) } } : {}),
+  };
+}
+/** The task that takes a pull request over. */
+function githubTakeover(repo: string | undefined, pr: any, extra: string, key: string): Trigger {
+  return {
+    title: clip(`PR #${pr.number}: ${pr.title ?? ''}`.trim(), 200),
+    prompt: `${extra ? `${extra}\n\n` : ''}Check whether pull request #${pr.number} "${pr.title}" (${pr.html_url}) can be merged, and do what is needed to merge it.\n\nIts description:\n${pr.body ?? ''}`,
+    idempotencyKey: key,
+    url: pr.html_url ?? null,
+    ref: `${repo}#${pr.number}`,
+    refType: 'pr',
+    pullRequest: { number: pr.number, url: pr.html_url, ...(pr.head?.ref ? { spec: githubPullRequestSpec(pr), headSha: pr.head?.sha } : {}) },
+  };
+}
+
 export function parseGitHub(event: string, p: any, s: IntegrationSettings): Parsed {
   if (event === 'ping') return { pong: true };
   const repo = p?.repository?.full_name as string | undefined;
   if (event === 'issues') {
     const issue = p.issue;
     const labels: string[] = (issue?.labels ?? []).map((l: { name: string }) => l.name);
+    const author: Principal = { trusted: githubTrusted(issue?.author_association) };
+    let actor = author;
     if (p.action === 'opened') {
       if (s.label && !labels.includes(s.label)) return { ignore: `issue does not have the "${s.label}" label` };
     } else if (p.action === 'labeled') {
       if (!s.label || p.label?.name !== s.label) return { ignore: 'a different label was added' };
+      if (!author.trusted) actor = githubLabeler(p, issue);
     } else return { ignore: `issues.${p.action} is not handled` };
-    return { title: issue.title ?? '', prompt: `${issue.body ?? ''}\n\nGitHub issue: ${issue.html_url}`, idempotencyKey: `gh:issue:${repo}#${issue.number}`, url: issue.html_url ?? null, ref: `${repo}#${issue.number}` };
+    return { title: issue.title ?? '', prompt: `${issue.body ?? ''}\n\nGitHub issue: ${issue.html_url}`, idempotencyKey: `gh:issue:${repo}#${issue.number}`, url: issue.html_url ?? null, ref: `${repo}#${issue.number}`, issue: true, actor, author };
   }
   if (event === 'issue_comment') {
     if (p.action !== 'created') return { ignore: `issue_comment.${p.action} is not handled` };
@@ -432,7 +619,19 @@ export function parseGitHub(event: string, p: any, s: IntegrationSettings): Pars
     const text = commandText(p.comment?.body ?? '', s.command);
     if (text === null) return { ignore: s.command ? `comment does not start with ${s.command}` : 'comment commands are off' };
     const issue = p.issue;
+    const actor: Principal = { trusted: githubTrusted(p.comment?.author_association) };
+    const author: Principal = issue?.user?.login === p.comment?.user?.login ? actor : { trusted: githubTrusted(issue?.author_association) };
+    if (issue.pull_request && s.merge !== 'off' && /^merge[.!]?$/i.test(text)) {
+      return { title: '', prompt: '', idempotencyKey: `gh:comment:${p.comment.id}`, url: p.comment.html_url ?? null, ref: `${repo}#${issue.number}`, refType: 'pr', actor, approveMerge: { pullRequestUrl: issue.pull_request.html_url ?? issue.html_url } };
+    }
+    // A command on a pull request, with takeovers on: the task works on the request (or follows up, when a task opened it).
+    if (issue.pull_request && s.pullRequestFixes !== 'off') {
+      const pr = { number: issue.number, title: issue.title, body: issue.body, html_url: issue.pull_request.html_url ?? issue.html_url };
+      return { ...githubTakeover(repo, pr, text, `gh:comment:${p.comment.id}`), url: p.comment.html_url ?? pr.html_url, actor, author, ...(s.followUps !== 'off' ? { followUp: { pullRequestUrl: pr.html_url, number: issue.number, required: false } } : {}) };
+    }
     return {
+      actor,
+      author,
       title: clip(text.split('\n')[0] || issue.title, 200),
       prompt: `${text}\n\nContext — GitHub ${issue.pull_request ? 'pull request' : 'issue'} "${issue.title}" (${issue.html_url}):\n${issue.body ?? ''}`,
       idempotencyKey: `gh:comment:${p.comment.id}`,
@@ -459,16 +658,35 @@ export function parseGitHub(event: string, p: any, s: IntegrationSettings): Pars
       url: review.html_url ?? pr.html_url ?? null,
       ref: `${repo}#${pr.number}`,
       refType: 'pr',
+      actor: { trusted: githubTrusted(review.author_association) },
       followUp: { pullRequestUrl: pr.html_url, number: pr.number, required: true, reviewId: review.id },
     };
   }
   if (event === 'pull_request') {
-    if (s.reviews === 'off') return { ignore: 'pull request reviews are off' };
     const pr = p.pull_request ?? {};
-    const actions = ['opened', 'reopened', 'ready_for_review', ...(s.reviews === 'every_push' ? ['synchronize'] : [])];
-    if (!actions.includes(p.action)) return { ignore: `pull_request.${p.action} is not reviewed` };
-    if (pr.draft) return { ignore: 'draft pull request' };
+    const opening = ['opened', 'reopened', 'ready_for_review'];
+    const author: Principal = { trusted: githubTrusted(pr.author_association) };
+    // Takeovers: when a request is opened (or pushed to), or when someone with write access labels an outsider's.
+    let takeover: Trigger | null = null;
+    if (s.pullRequestFixes !== 'off' && !pr.draft && pr.state !== 'closed') {
+      const labeled = p.action === 'labeled' && Boolean(s.label) && p.label?.name === s.label;
+      if (labeled || opening.includes(p.action) || (p.action === 'synchronize' && s.pullRequestFixes === 'every_push')) {
+        const labels: string[] = (pr.labels ?? []).map((l: { name: string }) => l.name);
+        // A push to a request that was let in with the label stays let in.
+        const vouched = !author.trusted && Boolean(s.label) && labels.includes(s.label) && (labeled ? githubLabeler(p, pr).trusted : p.action === 'synchronize');
+        takeover = { ...githubTakeover(repo, pr, '', `gh:fix:${repo}#${pr.number}@${pr.head?.sha}`), author, actor: vouched ? { trusted: true } : author };
+      }
+    }
+    const actions = [...opening, ...(s.reviews === 'every_push' ? ['synchronize'] : [])];
+    const reviewed = s.reviews !== 'off' && actions.includes(p.action) && !pr.draft;
+    if (!reviewed) {
+      if (takeover) return takeover;
+      if (s.reviews === 'off' && s.pullRequestFixes === 'off') return { ignore: 'pull request reviews are off' };
+      if (pr.draft) return { ignore: 'draft pull request' };
+      return { ignore: `pull_request.${p.action} is not ${s.reviews === 'off' ? 'handled' : 'reviewed'}` };
+    }
     return {
+      ...(takeover ? { and: takeover } : {}),
       title: clip(`Review: ${pr.title ?? `#${pr.number}`}`, 200),
       prompt: `Review pull request #${pr.number} "${pr.title}" (${pr.html_url}).\n\n${pr.body ?? ''}`,
       idempotencyKey: `gh:pr:${repo}#${pr.number}@${pr.head?.sha}`,
@@ -479,6 +697,36 @@ export function parseGitHub(event: string, p: any, s: IntegrationSettings): Pars
     };
   }
   return { ignore: `GitHub event "${event}" is not handled` };
+}
+
+function gitlabPullRequestSpec(a: any): PullRequestSpec {
+  const fork = a.source_project_id !== undefined && a.target_project_id !== undefined && a.source_project_id !== a.target_project_id;
+  const forkUrl = a.source?.git_http_url ?? a.source?.http_url;
+  return {
+    url: a.url,
+    number: a.iid,
+    base: a.target_branch,
+    head: a.source_branch,
+    fetchHead: `refs/merge-requests/${a.iid}/head`,
+    ...(fork && forkUrl ? { fork: { url: forkUrl, canPush: Boolean(a.allow_collaboration ?? a.allow_maintainer_to_push) } } : {}),
+  };
+}
+function gitlabTakeover(project: unknown, a: any, extra: string, key: string): Trigger {
+  return {
+    title: clip(`MR !${a.iid}: ${a.title ?? ''}`.trim(), 200),
+    prompt: `${extra ? `${extra}\n\n` : ''}Check whether merge request !${a.iid} "${a.title}" (${a.url}) can be merged, and do what is needed to merge it.\n\nIts description:\n${a.description ?? ''}`,
+    idempotencyKey: key,
+    url: a.url ?? null,
+    ref: `${project}#${a.iid}`,
+    refType: 'pr',
+    pullRequest: { number: a.iid, url: a.url, spec: gitlabPullRequestSpec(a), headSha: a.last_commit?.id },
+  };
+}
+/** The person who did what the delivery reports, and the item's author (the same object when they are one person). */
+function gitlabPrincipals(project: unknown, p: any, authorId: unknown): { actor: Principal; author: Principal } {
+  const person = (id: unknown): Principal => ({ gitlabUserId: typeof id === 'number' ? id : undefined, gitlabProject: project as string | number });
+  const actor = person(p?.user?.id);
+  return { actor, author: authorId === undefined || authorId === p?.user?.id ? actor : person(authorId) };
 }
 
 export function parseGitLab(event: string, p: any, s: IntegrationSettings): Parsed {
@@ -493,23 +741,45 @@ export function parseGitLab(event: string, p: any, s: IntegrationSettings): Pars
       const cur: string[] = (p.changes?.labels?.current ?? []).map((l: { title: string }) => l.title);
       if (!s.label || !cur.includes(s.label) || prev.includes(s.label)) return { ignore: 'the configured label was not added' };
     } else return { ignore: `issue action "${a.action}" is not handled` };
-    return { title: a.title ?? '', prompt: `${a.description ?? ''}\n\nGitLab issue: ${a.url}`, idempotencyKey: `gl:issue:${project}#${a.iid}`, url: a.url ?? null, ref: `${project}#${a.iid}` };
+    return { title: a.title ?? '', prompt: `${a.description ?? ''}\n\nGitLab issue: ${a.url}`, idempotencyKey: `gl:issue:${project}#${a.iid}`, url: a.url ?? null, ref: `${project}#${a.iid}`, issue: true, ...gitlabPrincipals(project, p, a.author_id) };
   }
   if (event === 'Note Hook') {
     const a = p.object_attributes ?? {};
-    if (a.noteable_type !== 'Issue') return { ignore: 'only issue comments are handled' };
+    const mr = a.noteable_type === 'MergeRequest' && (s.pullRequestFixes !== 'off' || s.merge !== 'off') ? p.merge_request : null;
+    if (a.noteable_type !== 'Issue' && !mr) return { ignore: 'only issue comments are handled' };
     const text = commandText(a.note ?? '', s.command);
     if (text === null) return { ignore: s.command ? `comment does not start with ${s.command}` : 'comment commands are off' };
+    if (mr) {
+      const who = gitlabPrincipals(project, p, mr.author_id);
+      if (s.merge !== 'off' && /^merge[.!]?$/i.test(text)) return { title: '', prompt: '', idempotencyKey: `gl:note:${a.id}`, url: a.url ?? null, ref: `${project}#${mr.iid}`, refType: 'pr', actor: who.actor, approveMerge: { pullRequestUrl: mr.url } };
+      if (s.pullRequestFixes === 'off') return { ignore: 'merge request fixes are off' };
+      if (mr.state && mr.state !== 'opened') return { ignore: 'the merge request is not open' };
+      return { ...gitlabTakeover(project, mr, text, `gl:note:${a.id}`), url: a.url ?? mr.url ?? null, ...who };
+    }
     const issue = p.issue ?? {};
-    return { title: clip(text.split('\n')[0] || issue.title, 200), prompt: `${text}\n\nContext — GitLab issue "${issue.title}" (${issue.url ?? a.url}):\n${issue.description ?? ''}`, idempotencyKey: `gl:note:${a.id}`, url: a.url ?? null, ref: `${project}#${issue.iid}` };
+    return { title: clip(text.split('\n')[0] || issue.title, 200), prompt: `${text}\n\nContext — GitLab issue "${issue.title}" (${issue.url ?? a.url}):\n${issue.description ?? ''}`, idempotencyKey: `gl:note:${a.id}`, url: a.url ?? null, ref: `${project}#${issue.iid}`, ...gitlabPrincipals(project, p, issue.author_id) };
   }
   if (event === 'Merge Request Hook') {
-    if (s.reviews === 'off') return { ignore: 'merge request reviews are off' };
     const a = p.object_attributes ?? {};
     const pushed = a.action === 'update' && Boolean(a.oldrev);
-    if (!(['open', 'reopen'].includes(a.action) || (pushed && s.reviews === 'every_push'))) return { ignore: `merge request action "${a.action}" is not reviewed` };
-    if (a.draft || a.work_in_progress) return { ignore: 'draft merge request' };
+    const draft = Boolean(a.draft || a.work_in_progress);
+    // Takeovers: when a request is opened (or pushed to), or when the label is added to it.
+    let takeover: Trigger | null = null;
+    if (s.pullRequestFixes !== 'off' && !draft && (a.state ?? 'opened') === 'opened') {
+      const before: string[] = (p.changes?.labels?.previous ?? []).map((l: { title: string }) => l.title);
+      const now: string[] = (p.changes?.labels?.current ?? []).map((l: { title: string }) => l.title);
+      const labeled = a.action === 'update' && Boolean(s.label) && now.includes(s.label) && !before.includes(s.label);
+      if (labeled || ['open', 'reopen'].includes(a.action) || (pushed && s.pullRequestFixes === 'every_push')) takeover = { ...gitlabTakeover(project, a, '', `gl:fix:${project}!${a.iid}@${a.last_commit?.id}`), ...gitlabPrincipals(project, p, a.author_id) };
+    }
+    const reviewed = s.reviews !== 'off' && (['open', 'reopen'].includes(a.action) || (pushed && s.reviews === 'every_push')) && !draft;
+    if (!reviewed) {
+      if (takeover) return takeover;
+      if (s.reviews === 'off' && s.pullRequestFixes === 'off') return { ignore: 'merge request reviews are off' };
+      if (draft) return { ignore: 'draft merge request' };
+      return { ignore: `merge request action "${a.action}" is not ${s.reviews === 'off' ? 'handled' : 'reviewed'}` };
+    }
     return {
+      ...(takeover ? { and: takeover } : {}),
       title: clip(`Review: ${a.title ?? `!${a.iid}`}`, 200),
       prompt: `Review merge request !${a.iid} "${a.title}" (${a.url}).\n\n${a.description ?? ''}`,
       idempotencyKey: `gl:mr:${project}!${a.iid}@${a.last_commit?.id}`,

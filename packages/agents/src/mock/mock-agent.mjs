@@ -113,6 +113,19 @@ function run() {
       );
       return finish('Review written');
     }
+    case 'resolve': {
+      // Merge conflicts: the first session leaves the markers in; once sent back, it keeps both sides.
+      implement();
+      if (prompt.includes('Verification failed')) {
+        for (const f of fs.readdirSync(process.cwd())) {
+          const p = path.join(process.cwd(), f);
+          if (!fs.statSync(p).isFile()) continue;
+          const text = fs.readFileSync(p, 'utf8');
+          if (/^<{7} /m.test(text)) fs.writeFileSync(p, text.replace(/^(?:<{7}|>{7}) .*\r?\n|^={7}\r?\n/gm, ''));
+        }
+      }
+      return finish(`Resolved. MARKER-${prompt.includes('produced conflicts in:') ? 'CONFLICTS-LISTED' : 'NO-CONFLICTS'}`);
+    }
     case 'success': {
       const f = implement();
       out({ t: 'tool', name: 'Edit', summary: f });

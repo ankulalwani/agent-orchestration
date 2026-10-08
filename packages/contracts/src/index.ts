@@ -237,6 +237,34 @@ export const reviewRequest = z.object({
   fetchHead: z.string().max(200).optional(),
   pullRequest: z.object({ url: z.string().url(), number: z.number().int() }).optional(),
 });
+/**
+ * A pull/merge request that a task takes over: the task works on its branch, brings it up to date with
+ * the base branch, makes the checks pass and pushes to it.
+ */
+export const pullRequestSpec = z.object({
+  url: z.string().url(),
+  number: z.number().int().positive(),
+  /** The branch the request is merged into. */
+  base: z.string().min(1).max(200),
+  /** The branch with the changes (in the fork, for a request from a fork). */
+  head: z.string().min(1).max(200),
+  /** Ref to fetch from origin for the head, e.g. pull/12/head or refs/merge-requests/3/head. */
+  fetchHead: z.string().max(200).optional(),
+  /**
+   * A request from a fork: the fork's clone URL, and whether maintainers may push to its branch. Without
+   * that permission the task pushes a branch of its own and opens a request that replaces this one.
+   */
+  fork: z.object({ url: z.string().url(), canPush: z.boolean() }).optional(),
+});
+export type PullRequestSpec = z.infer<typeof pullRequestSpec>;
+export const MERGE_METHODS = ['merge', 'squash', 'rebase'] as const;
+/**
+ * Merging the task's pull request once the task is verified and the CI checks pass: after a person
+ * approves (`approval`), or at once (`automatic`). The host's own rules (branch protection, required
+ * reviews) always apply: a request they block is not merged.
+ */
+export const mergeSpec = z.object({ mode: z.enum(['approval', 'automatic']), method: z.enum(MERGE_METHODS).default('squash') });
+export type MergeSpec = z.infer<typeof mergeSpec>;
 export const REVIEW_VERDICTS = ['approve', 'comment', 'request_changes'] as const;
 /** What a review agent writes to .agent-orchestration/progress/<task>.review.json. */
 export const reviewResult = z.object({
@@ -284,6 +312,10 @@ export const createTaskRequest = z.object({
   /** `review`: the agent reviews the changes between `review.base` and `review.head` and changes nothing. */
   kind: z.enum(TASK_KINDS).optional(),
   review: reviewRequest.optional(),
+  /** Work on an open pull/merge request instead of a new task branch. Code tasks only. */
+  pullRequest: pullRequestSpec.optional(),
+  /** Merge the task's pull request when it is verified. Code tasks only. */
+  merge: mergeSpec.optional(),
   title: z.string().trim().min(1).max(200),
   prompt: z.string().trim().min(1).max(100_000),
   /** Task-specific knowledge for the agent, next to organization and project knowledge (spec §77). */
@@ -370,6 +402,15 @@ export const gitResultDto = z.object({
   warnings: z.array(z.string()).optional(),
   /** CI checks of the pushed commit, when the policy waits for them (`verification.ci`). */
   ci: z.object({ commit: z.string(), state: z.enum(['success', 'failure', 'pending', 'none', 'unknown']), checks: z.array(z.object({ name: z.string(), state: z.string(), url: z.string().nullable() })) }).optional(),
+  /** Tasks on a pull request: how its branch was brought up to date with the base branch. */
+  update: z.object({ base: z.string(), state: z.enum(['up_to_date', 'merged', 'conflicts_resolved']), conflicts: z.array(z.string()) }).optional(),
+  /** The pull request this task's one replaces (a request from a fork that could not be pushed to). */
+  supersedes: z.string().nullable().optional(),
+  /**
+   * Tasks that merge (`merge`): `merged`; `ready` (nothing stands in the way, and nobody was asked);
+   * `blocked` (the host refuses, with its reason); `declined` (a person said no).
+   */
+  merge: z.object({ state: z.enum(['merged', 'ready', 'blocked', 'declined']), method: z.string().optional(), commit: z.string().nullable().optional(), reason: z.string().nullable().optional() }).optional(),
   /**
    * Projects with several repositories: the result in each of the other repositories (the fields above
    * are the primary repository's, except filesChanged and blocked, which cover all, prefixed "<name>/").
@@ -408,6 +449,8 @@ export type CompletionReportDto = z.infer<typeof completionReportDto>;
 export const pendingInteraction = z.object({
   kind: z.enum(['input', 'approval']),
   question: z.string(),
+  /** What an approval is for, when something else can answer it (`merge`: a comment on the pull request). */
+  subject: z.enum(['merge']).optional(),
   requestedAt: z.string(),
   options: z.array(z.string()).optional(),
 });
@@ -421,6 +464,8 @@ export const taskDto = z.object({
   knowledge: z.string().optional(),
   kind: z.enum(TASK_KINDS).optional(),
   review: reviewRequest.nullable().optional(),
+  pullRequest: pullRequestSpec.nullable().optional(),
+  merge: mergeSpec.nullable().optional(),
   parentTaskId: z.string().nullable().optional(),
   /** Plan tasks: the tasks created from the plan, once applied. */
   planApplied: z.object({ at: z.string(), by: z.string(), taskIds: z.array(z.string()) }).nullable().optional(),
@@ -460,7 +505,7 @@ export const taskDto = z.object({
   progress: z.object({ percent: z.number().nullable(), currentStep: z.string().nullable(), message: z.string().nullable() }),
   verificationStatus: z.enum(['NOT_RUN', 'RUNNING', 'PASSED', 'FAILED', 'SKIPPED']),
   verificationRuns: z.array(verificationRunDto),
-  gitStatus: z.enum(['NONE', 'PENDING', 'COMMITTED', 'PUSHED', 'PR_OPENED', 'BLOCKED', 'FAILED']),
+  gitStatus: z.enum(['NONE', 'PENDING', 'COMMITTED', 'PUSHED', 'PR_OPENED', 'MERGED', 'BLOCKED', 'FAILED']),
   gitResult: gitResultDto.nullable(),
   completionReport: completionReportDto.nullable(),
   pendingInteraction: pendingInteraction.nullable(),
@@ -1182,7 +1227,27 @@ export const integrationSettings = z.object({
    * request follow up too. Off by default.
    */
   followUps: z.enum(['off', 'changes_requested', 'all_reviews']).default('off'),
+  /**
+   * github/gitlab: an agent takes over pull/merge requests that people open: it brings the branch up to
+   * date with the base branch, resolves conflicts, makes the local checks and the CI checks pass, and
+   * pushes what that needed. When a request is opened, or also on every push by someone else.
+   */
+  pullRequestFixes: z.enum(['off', 'opened', 'every_push']).default('off'),
+  /**
+   * github/gitlab: merge the pull requests of this integration's tasks (taken over, or opened for an
+   * issue) once they are verified: after a person approves, or at once. Requests by people without
+   * write access always wait for an approval.
+   */
+  merge: z.enum(['off', 'approval', 'automatic']).default('off'),
+  mergeMethod: z.enum(MERGE_METHODS).default('squash'),
+  /** Issue tasks: tell the agent to find the combination that fails and to cover it with a test before it fixes. */
+  reproduceIssues: z.boolean().default(false),
 });
+/**
+ * With pull request fixes or merging on, only people with write access start tasks. Issues and requests
+ * by others wait until someone with write access adds the label or writes the comment command.
+ */
+export const integrationIsGated = (s: { pullRequestFixes: string; merge: string }) => s.pullRequestFixes !== 'off' || s.merge !== 'off';
 export type IntegrationSettings = z.infer<typeof integrationSettings>;
 export const createIntegrationRequest = z.object({
   name: z.string().trim().min(1).max(100),

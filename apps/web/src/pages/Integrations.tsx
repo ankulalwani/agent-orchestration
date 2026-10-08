@@ -17,6 +17,10 @@ interface IntegrationSettings {
   callbackUrl: string;
   reviews: 'off' | 'opened' | 'every_push';
   followUps: 'off' | 'changes_requested' | 'all_reviews';
+  pullRequestFixes: 'off' | 'opened' | 'every_push';
+  merge: 'off' | 'approval' | 'automatic';
+  mergeMethod: 'merge' | 'squash' | 'rebase';
+  reproduceIssues: boolean;
 }
 interface Integration {
   id: string;
@@ -32,8 +36,8 @@ interface Integration {
 }
 
 const SETUP: Record<Integration['kind'], string> = {
-  github: 'In the repository: Settings → Webhooks → Add webhook. Payload URL: the URL below; content type application/json; secret: the secret; events: Issues, Issue comments, and Pull requests for reviews.',
-  gitlab: 'In the project: Settings → Webhooks. URL: the URL below; secret token: the secret; triggers: Issues events, Comments, and Merge request events for reviews.',
+  github: 'In the repository: Settings → Webhooks → Add webhook. Payload URL: the URL below; content type application/json; secret: the secret; events: Issues, Issue comments, and Pull requests for reviews, fixes and merging.',
+  gitlab: 'In the project: Settings → Webhooks. URL: the URL below; secret token: the secret; triggers: Issues events, Comments, and Merge request events for reviews, fixes and merging.',
   jira: 'In Jira: Settings → System → WebHooks → Create a WebHook. URL: the URL below; secret: the secret; events: Issue created, Issue updated, and Comment created.',
   linear: 'In Linear: Settings → API → Webhooks → New webhook. URL: the URL below; data change events: Issues and Comments. Linear then shows a signing secret: paste it here and save. Deliveries are refused until you do.',
   generic: 'POST JSON to the URL below with header X-AO-Signature: sha256=<HMAC-SHA256 of the body with the secret>, and optionally X-AO-Delivery: <unique id> so retries do not create duplicates.',
@@ -45,7 +49,7 @@ export function Integrations() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['integrations', orgId], queryFn: () => get<Integration[]>(`/orgs/${orgId}/integrations`) });
   const projects = useQuery({ queryKey: ['projects', orgId], queryFn: () => get<ProjectDto[]>(`/orgs/${orgId}/projects`) });
-  const [form, setForm] = useState({ name: '', kind: 'github' as Integration['kind'], projectId: '', label: 'agent', command: '/agent', reviews: 'off' as IntegrationSettings['reviews'], followUps: 'off' as IntegrationSettings['followUps'], replyTokenSecret: '', titleTemplate: '{{title}}', promptTemplate: '{{prompt}}', callbackUrl: '', apiBaseUrl: '' });
+  const [form, setForm] = useState({ name: '', kind: 'github' as Integration['kind'], projectId: '', label: 'agent', command: '/agent', reviews: 'off' as IntegrationSettings['reviews'], followUps: 'off' as IntegrationSettings['followUps'], pullRequestFixes: 'off' as IntegrationSettings['pullRequestFixes'], merge: 'off' as IntegrationSettings['merge'], mergeMethod: 'squash' as IntegrationSettings['mergeMethod'], reproduceIssues: false, replyTokenSecret: '', titleTemplate: '{{title}}', promptTemplate: '{{prompt}}', callbackUrl: '', apiBaseUrl: '' });
   // Code hosts have pull/merge requests to review; issue trackers do not.
   const hosting = form.kind === 'github' || form.kind === 'gitlab';
   const [shown, setShown] = useState<{ id: string; name: string; url: string; secret: string; kind: Integration['kind'] } | null>(null);
@@ -58,7 +62,7 @@ export function Integrations() {
         name: form.name,
         kind: form.kind,
         projectId: form.projectId || projects.data?.[0]?.id,
-        settings: form.kind === 'generic' ? { titleTemplate: form.titleTemplate, promptTemplate: form.promptTemplate, callbackUrl: form.callbackUrl } : { label: form.label, command: form.command, replyTokenSecret: form.replyTokenSecret, ...(hosting ? { reviews: form.reviews } : {}), ...(form.kind === 'github' ? { followUps: form.followUps } : {}), ...(form.kind === 'jira' && form.apiBaseUrl.trim() ? { apiBaseUrl: form.apiBaseUrl.trim() } : {}) },
+        settings: form.kind === 'generic' ? { titleTemplate: form.titleTemplate, promptTemplate: form.promptTemplate, callbackUrl: form.callbackUrl } : { label: form.label, command: form.command, replyTokenSecret: form.replyTokenSecret, ...(hosting ? { reviews: form.reviews, pullRequestFixes: form.pullRequestFixes, merge: form.merge, mergeMethod: form.mergeMethod, reproduceIssues: form.reproduceIssues } : {}), ...(form.kind === 'github' ? { followUps: form.followUps } : {}), ...(form.kind === 'jira' && form.apiBaseUrl.trim() ? { apiBaseUrl: form.apiBaseUrl.trim() } : {}) },
       }),
     onSuccess: (r) => {
       setShown({ id: r.id, name: r.name, url: r.webhookUrl, secret: r.secret, kind: r.kind });
@@ -105,7 +109,7 @@ export function Integrations() {
                 <tr key={i.id}>
                   <td>
                     {i.name} <Badge tone={i.enabled ? 'ok' : 'neutral'}>{i.enabled ? i.kind : 'off'}</Badge>
-                    <div className="small muted">{i.kind === 'generic' ? 'templates' : [i.settings.label && `label "${i.settings.label}"`, i.settings.command && `comments "${i.settings.command} …"`, i.settings.reviews !== 'off' && `reviews (${i.settings.reviews === 'opened' ? 'when opened' : 'every push'})`].filter(Boolean).join(' · ') || 'every new issue'}</div>
+                    <div className="small muted">{i.kind === 'generic' ? 'templates' : [i.settings.label && `label "${i.settings.label}"`, i.settings.command && `comments "${i.settings.command} …"`, i.settings.reviews !== 'off' && `reviews (${i.settings.reviews === 'opened' ? 'when opened' : 'every push'})`, i.settings.pullRequestFixes !== 'off' && `fixes pull requests (${i.settings.pullRequestFixes === 'opened' ? 'when opened' : 'every push'})`, i.settings.merge !== 'off' && `merges (${i.settings.merge === 'approval' ? 'after approval' : 'automatically'})`].filter(Boolean).join(' · ') || 'every new issue'}</div>
                   </td>
                   <td>{projectName(i.projectId)}</td>
                   <td className="small">{i.lastDeliveryAt ? `${new Date(i.lastDeliveryAt).toLocaleString()} — ${i.lastDeliveryResult}` : 'none yet'}<div className="muted">{i.deliveries} deliveries</div></td>
@@ -160,6 +164,47 @@ export function Integrations() {
                     )}
                   </Field>
                 )}
+                {hosting && (
+                  <>
+                    <Field label="Make pull/merge requests mergeable" hint="An agent works on the request's branch: merges the base branch, resolves conflicts, makes the checks pass">
+                      {(id) => (
+                        <Select id={id} value={form.pullRequestFixes} onChange={(e) => setForm({ ...form, pullRequestFixes: e.target.value as IntegrationSettings['pullRequestFixes'] })}>
+                          <option value="off">Off</option>
+                          <option value="opened">When opened</option>
+                          <option value="every_push">When opened and on every push</option>
+                        </Select>
+                      )}
+                    </Field>
+                    <Field label="Merge verified pull requests" hint={`The host's branch rules always apply.${form.command ? ` Approve in the task, or with the comment "${form.command} merge".` : ''}`}>
+                      {(id) => (
+                        <Select id={id} value={form.merge} onChange={(e) => setForm({ ...form, merge: e.target.value as IntegrationSettings['merge'] })}>
+                          <option value="off">Off</option>
+                          <option value="approval">After a person approves</option>
+                          <option value="automatic">Automatically</option>
+                        </Select>
+                      )}
+                    </Field>
+                    {form.merge !== 'off' && (
+                      <Field label="Merge method" hint={form.kind === 'gitlab' ? 'GitLab: squash or not; the rest is the project’s setting' : 'Another method is used if the repository does not allow this one'}>
+                        {(id) => (
+                          <Select id={id} value={form.mergeMethod} onChange={(e) => setForm({ ...form, mergeMethod: e.target.value as IntegrationSettings['mergeMethod'] })}>
+                            <option value="squash">Squash</option>
+                            <option value="merge">Merge commit</option>
+                            <option value="rebase">Rebase</option>
+                          </Select>
+                        )}
+                      </Field>
+                    )}
+                    <Field label="Issues" hint="The agent finds the combination that fails and covers it with a test before it fixes">
+                      {(id) => (
+                        <Select id={id} value={form.reproduceIssues ? 'on' : 'off'} onChange={(e) => setForm({ ...form, reproduceIssues: e.target.value === 'on' })}>
+                          <option value="off">Fix as described</option>
+                          <option value="on">Reproduce first, then fix</option>
+                        </Select>
+                      )}
+                    </Field>
+                  </>
+                )}
                 {form.kind === 'jira' && <Field label="Jira site URL" hint="For replies, for example https://acme.atlassian.net">{(id) => <Input id={id} value={form.apiBaseUrl} onChange={(e) => setForm({ ...form, apiBaseUrl: e.target.value })} />}</Field>}
                 {form.kind === 'github' && (
                   <Field label="Follow up on review feedback" hint="For pull requests a task opened: a new task on the same branch. Needs the webhook event “Pull request reviews”.">
@@ -183,6 +228,12 @@ export function Integrations() {
               <Field label="Title template" hint="{{path.in.payload}} is replaced with values from the delivered JSON">{(id) => <Input id={id} value={form.titleTemplate} onChange={(e) => setForm({ ...form, titleTemplate: e.target.value })} />}</Field>
               <Field label="Prompt template">{(id) => <Textarea id={id} rows={4} value={form.promptTemplate} onChange={(e) => setForm({ ...form, promptTemplate: e.target.value })} />}</Field>
             </>
+          )}
+          {hosting && (form.pullRequestFixes !== 'off' || form.merge !== 'off') && (
+            <Alert>
+              With fixes or merging on, only people with write access start tasks. Issues and requests by others wait until someone with write access {form.label ? `adds the "${form.label}" label` : ''}{form.label && form.command ? ' or ' : ''}{form.command ? `comments ${form.command}` : ''}, and their requests are never merged without an approval.{' '}
+              {form.kind === 'gitlab' ? 'GitLab: the token for replies is needed to check who has write access.' : 'A comment command on a pull request needs the token for replies.'} The worker merges with its Git hosting token, or the GitHub App.
+            </Alert>
           )}
           <div><Button variant="primary" disabled={!form.name.trim() || !projects.data?.length} loading={create.isPending} onClick={() => create.mutate()}>Create integration</Button></div>
         </div>

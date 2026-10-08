@@ -306,6 +306,10 @@ const taskSchema = new Schema(
     planApplied: { type: Mixed, default: null },
     /** Review tasks: { base, head, fetchHead?, pullRequest? }. */
     review: { type: Mixed, default: null },
+    /** Tasks on a pull request: { url, number, base, head, fetchHead?, fork? }. */
+    pullRequest: { type: Mixed, default: null },
+    /** Merge the task's pull request when it is verified: { mode, method }. */
+    merge: { type: Mixed, default: null },
     /** Where the task came from when not created by a person: an integration delivery (spec §74). */
     source: { type: Mixed, default: null },
     /** Task-specific knowledge (context, links, constraints) given to the agent with the prompt (spec §77). */
@@ -345,7 +349,7 @@ const taskSchema = new Schema(
     progress: { percent: { type: Number, default: null }, currentStep: { type: String, default: null }, message: { type: String, default: null } },
     verificationStatus: { type: String, enum: ['NOT_RUN', 'RUNNING', 'PASSED', 'FAILED', 'SKIPPED'], default: 'NOT_RUN' },
     verificationRuns: { type: [Mixed], default: [] },
-    gitStatus: { type: String, enum: ['NONE', 'PENDING', 'COMMITTED', 'PUSHED', 'PR_OPENED', 'BLOCKED', 'FAILED'], default: 'NONE' },
+    gitStatus: { type: String, enum: ['NONE', 'PENDING', 'COMMITTED', 'PUSHED', 'PR_OPENED', 'MERGED', 'BLOCKED', 'FAILED'], default: 'NONE' },
     gitResult: { type: Mixed, default: null },
     completionReport: { type: Mixed, default: null },
     pendingInteraction: { type: Mixed, default: null },

@@ -72,6 +72,8 @@ export function toTaskDto(t: AnyDoc): TaskDto {
     source: t.source ?? null,
     kind: t.kind ?? 'code',
     review: t.review ?? null,
+    pullRequest: t.pullRequest ?? null,
+    merge: t.merge ?? null,
     parentTaskId: t.parentTaskId ? String(t.parentTaskId) : null,
     planApplied: t.planApplied ? { at: new Date(t.planApplied.at).toISOString(), by: String(t.planApplied.by), taskIds: (t.planApplied.taskIds ?? []).map(String) } : null,
     normalizedPrompt: t.normalizedPrompt ?? null,

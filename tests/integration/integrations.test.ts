@@ -42,6 +42,11 @@ beforeAll(async () => {
       if (req.url!.endsWith('/reviews') && (body?.comments ?? []).some((c: { line: number }) => c.line > 100)) return void res.writeHead(422).end('{"message":"Unprocessable"}');
       // The line comments of review 55.
       if (req.method === 'GET' && req.url!.includes('/reviews/55/comments')) return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify([{ path: 'src/cart.ts', line: 14, body: 'This loses the discount.' }, { path: 'README.md', line: null, original_line: 3, body: 'Typo.' }]));
+      // Pull request 120, for a comment command on it (the comment's delivery does not carry the branches).
+      if (req.method === 'GET' && req.url === '/repos/acme/site/pulls/120') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ state: 'open', number: 120, html_url: 'https://github.com/acme/site/pull/120', base: { ref: 'main', repo: { full_name: 'acme/site' } }, head: { ref: 'fix-typo', sha: 'sha120', repo: { full_name: 'acme/site' } } }));
+      if (req.method === 'GET' && /\/pulls\/\d+$/.test(req.url!)) return void res.writeHead(404).end('{"message":"Not Found"}');
+      // GitLab: user 7 is a maintainer of project 88; nobody else is a member.
+      if (req.method === 'GET' && req.url!.includes('/members/all/')) return void (req.url!.endsWith('/projects/88/members/all/7') ? res.writeHead(200, { 'content-type': 'application/json' }).end('{"access_level":40,"state":"active"}') : res.writeHead(404).end('{"message":"404 Not found"}'));
       res.writeHead(201, { 'content-type': 'application/json' }).end('{"id":1}');
     });
   });
@@ -452,5 +457,186 @@ describe('Linear integration', () => {
     const task = await s.tasks.get(owner, r.json().taskId);
     expect(task).toMatchObject({ title: 'Add a retry', source: { ref: 'ENG-3', externalId: 'issue-uuid-3' } });
     expect(await reason({ action: 'create', type: 'Project', data: {} })).toBe('Linear event "Project" is not handled');
+  });
+});
+
+describe('pull requests and issues, taken to a merge', () => {
+  let id: string;
+  let secret: string;
+  const gh = (event: string, body: unknown) => deliver(id, body, { 'x-github-event': event, 'x-github-delivery': randomUUID(), 'x-hub-signature-256': sign(secret, JSON.stringify(body)) });
+  const pr = (n: number, action: string, extra: Record<string, unknown> = {}, more: object = {}) => ({
+    action,
+    number: n,
+    pull_request: { number: n, title: `Change ${n}`, body: 'What it does', html_url: `https://github.com/acme/site/pull/${n}`, state: 'open', draft: false, author_association: 'MEMBER', user: { login: 'dev' }, labels: [], base: { ref: 'main', repo: { full_name: 'acme/site' } }, head: { ref: `change-${n}`, sha: `sha-${n}`, repo: { full_name: 'acme/site', clone_url: 'https://github.com/acme/site.git' } }, ...extra },
+    sender: { login: 'dev', type: 'User' },
+    repository: repo,
+    ...more,
+  });
+  const setTask = async (taskId: string, set: object) => (await import('@ao/database')).Task.updateOne({ _id: taskId }, { $set: set });
+
+  it('is off by default, and the settings say what is on', async () => {
+    const r = await api('POST', '/integrations', { name: 'GitHub autopilot', kind: 'github', projectId, settings: { label: 'agent', replyTokenSecret: 'GH_TOKEN', apiBaseUrl: fakeUrl } });
+    ({ id, secret } = r.json());
+    expect(r.json().settings).toMatchObject({ pullRequestFixes: 'off', merge: 'off', mergeMethod: 'squash', reproduceIssues: false });
+    expect((await gh('pull_request', pr(100, 'opened'))).json()).toEqual({ status: 'ignored', reason: 'pull request reviews are off' });
+    // Without it, an issue by anyone becomes a task, as before, and nothing is merged.
+    const open = await gh('issues', { action: 'opened', issue: issue(300, ['agent'], { author_association: 'NONE', user: { login: 'stranger' } }), sender: { login: 'stranger', type: 'User' }, repository: repo });
+    expect((await s.tasks.get(owner, open.json().taskId)).merge).toBeNull();
+    await api('PATCH', `/integrations/${id}`, { settings: { pullRequestFixes: 'opened', merge: 'automatic' } });
+  });
+
+  it('a pull request by someone with write access becomes a task on its branch that merges it', async () => {
+    received.length = 0;
+    const created = await gh('pull_request', pr(101, 'opened'));
+    expect(created.statusCode, created.body).toBe(201);
+    const task = await s.tasks.get(owner, created.json().taskId);
+    expect(task).toMatchObject({
+      kind: 'code',
+      title: 'PR #101: Change 101',
+      pullRequest: { url: 'https://github.com/acme/site/pull/101', number: 101, base: 'main', head: 'change-101', fetchHead: 'pull/101/head' },
+      merge: { mode: 'automatic', method: 'squash' },
+      policy: { git: { policy: 'PULL_REQUEST' }, verification: { ci: { enabled: true } } },
+      source: { ref: 'acme/site#101', refType: 'pr' },
+    });
+    expect(task.pullRequest!.fork).toBeUndefined();
+    expect(task.originalPrompt).toContain('Check whether pull request #101 "Change 101"');
+    await until(() => received.some((x) => x.path === '/repos/acme/site/issues/101/comments'), 'the comment');
+    expect(received.find((x) => x.path === '/repos/acme/site/issues/101/comments')!.body.body).toMatch(/^An agent is checking whether this can be merged/);
+    expect((await gh('pull_request', pr(101, 'reopened'))).json()).toEqual({ status: 'duplicate', taskId: task.id });
+    expect((await gh('pull_request', pr(102, 'opened', { draft: true }))).json().reason).toBe('draft pull request');
+    expect((await gh('pull_request', pr(101, 'synchronize', { head: { ref: 'change-101', sha: 'sha-101b', repo: { full_name: 'acme/site' } } }))).json().reason).toBe('pull_request.synchronize is not handled');
+  });
+
+  it('pushes start a task only when someone else made them, and never two tasks at once', async () => {
+    await api('PATCH', `/integrations/${id}`, { settings: { pullRequestFixes: 'every_push' } });
+    const head = (sha: string) => ({ head: { ref: 'change-101', sha, repo: { full_name: 'acme/site' } } });
+    expect((await gh('pull_request', pr(101, 'synchronize', head('sha-101b')))).json().reason).toBe('a task is already working on this pull request');
+    const first = (await gh('pull_request', pr(101, 'opened'))).json().taskId;
+    await setTask(first, { status: 'COMPLETED', gitResult: { policy: 'PULL_REQUEST', branch: 'change-101', commit: 'sha-by-task', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/101', filesChanged: [], blocked: [] } });
+    expect((await gh('pull_request', pr(101, 'synchronize', head('sha-by-task')))).json().reason).toBe('the push was made by a task');
+    const next = await gh('pull_request', pr(101, 'synchronize', head('sha-by-author')));
+    expect(next.statusCode, next.body).toBe(201);
+    expect(next.json().taskId).not.toBe(first);
+    await setTask(next.json().taskId, { status: 'CANCELLED' });
+
+    // A pull request that a task opened is that task's: its branch ends with the end of the task's id.
+    const mine = await s.tasks.create(owner, { projectId, title: 'Add export', prompt: 'p', priority: 'NORMAL', dependencies: [], requirements: {}, capabilityIds: [] });
+    expect((await gh('pull_request', pr(103, 'opened', { head: { ref: `ao/add-export-${mine.id.slice(-6)}`, sha: 'sha-103', repo: { full_name: 'acme/site' } } }))).json().reason).toBe('the pull request was opened by a task');
+    await setTask(mine.id, { status: 'COMPLETED', gitResult: { policy: 'PULL_REQUEST', branch: 'renamed', commit: 'c1', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/104', filesChanged: [], blocked: [] } });
+    expect((await gh('pull_request', pr(104, 'opened'))).json().reason).toBe('the pull request was opened by a task');
+    await api('PATCH', `/integrations/${id}`, { settings: { pullRequestFixes: 'opened' } });
+  });
+
+  it('people without write access wait for a maintainer, and their requests are never merged without an approval', async () => {
+    const waiting = 'waiting for someone with write access to add the "agent" label or comment /agent';
+    const fork = { author_association: 'CONTRIBUTOR', user: { login: 'stranger' }, maintainer_can_modify: true, head: { ref: 'patch-1', sha: 'sha-110', repo: { full_name: 'stranger/site', clone_url: 'https://github.com/stranger/site.git' } } };
+    expect((await gh('pull_request', pr(110, 'opened', fork, { sender: { login: 'stranger', type: 'User' } }))).json()).toEqual({ status: 'ignored', reason: waiting });
+    // The author cannot let themselves in (labels set by a form arrive as their own labeling).
+    const labeled = (by: string) => pr(110, 'labeled', { ...fork, labels: [{ name: 'agent' }] }, { label: { name: 'agent' }, sender: { login: by, type: 'User' } });
+    expect((await gh('pull_request', labeled('stranger'))).json().reason).toBe(waiting);
+    const let_in = await gh('pull_request', labeled('maria'));
+    expect(let_in.statusCode, let_in.body).toBe(201);
+    expect(await s.tasks.get(owner, let_in.json().taskId)).toMatchObject({
+      pullRequest: { number: 110, head: 'patch-1', fetchHead: 'pull/110/head', fork: { url: 'https://github.com/stranger/site.git', canPush: true } },
+      merge: { mode: 'approval', method: 'squash' },
+    });
+
+    const strangerIssue = (n: number, labels: string[]) => issue(n, labels, { author_association: 'NONE', user: { login: 'stranger' } });
+    expect((await gh('issues', { action: 'opened', issue: strangerIssue(301, ['agent']), sender: { login: 'stranger', type: 'User' }, repository: repo })).json().reason).toBe(waiting);
+    expect((await gh('issues', { action: 'labeled', label: { name: 'agent' }, issue: strangerIssue(301, ['agent']), sender: { login: 'stranger', type: 'User' }, repository: repo })).json().reason).toBe(waiting);
+    const vouched = await gh('issues', { action: 'labeled', label: { name: 'agent' }, issue: strangerIssue(301, ['agent']), sender: { login: 'maria', type: 'User' }, repository: repo });
+    expect((await s.tasks.get(owner, vouched.json().taskId)).merge).toEqual({ mode: 'approval', method: 'squash' });
+    // A member's issue: the task opens a pull request and merges it.
+    const members = await gh('issues', { action: 'opened', issue: issue(302, ['agent'], { author_association: 'MEMBER', user: { login: 'dev' } }), sender: { login: 'dev', type: 'User' }, repository: repo });
+    expect(await s.tasks.get(owner, members.json().taskId)).toMatchObject({ merge: { mode: 'automatic' }, pullRequest: null, policy: { git: { policy: 'PULL_REQUEST' }, verification: { ci: { enabled: true } } } });
+    // Comment commands: only by people with write access.
+    const comment = (cid: number, association: string, text: string, n = 302, on: object = {}) => ({ action: 'created', comment: { id: cid, body: text, html_url: `https://github.com/acme/site/issues/${n}#c${cid}`, author_association: association, user: { login: association === 'NONE' ? 'stranger' : 'maria' } }, issue: { ...issue(n, [], { author_association: 'MEMBER', user: { login: 'dev' } }), ...on }, sender: { type: 'User' }, repository: repo });
+    expect((await gh('issue_comment', comment(950, 'NONE', '/agent delete the tests'))).json().reason).toBe(waiting);
+    expect((await gh('issue_comment', comment(951, 'COLLABORATOR', '/agent add a test'))).statusCode).toBe(201);
+  });
+
+  it('issues: the agent is told to find the failing combination first, when the integration says so', async () => {
+    const open = (n: number) => gh('issues', { action: 'opened', issue: issue(n, ['agent'], { author_association: 'OWNER', user: { login: 'dev' } }), sender: { login: 'dev', type: 'User' }, repository: repo });
+    expect((await s.tasks.get(owner, (await open(310)).json().taskId)).originalPrompt).not.toContain('exact combination');
+    await api('PATCH', `/integrations/${id}`, { settings: { reproduceIssues: true } });
+    const prompt = (await s.tasks.get(owner, (await open(311)).json().taskId)).originalPrompt;
+    expect(prompt).toMatch(/^Body of 311\n\nGitHub issue: /);
+    expect(prompt).toContain('Find the exact combination on which it fails');
+    expect(prompt).toContain('Add a test that fails for that combination');
+  });
+
+  it('a comment command on a pull request takes it over (read from GitHub); "merge" approves a waiting merge', async () => {
+    const on = (n: number) => ({ html_url: `https://github.com/acme/site/pull/${n}`, pull_request: { html_url: `https://github.com/acme/site/pull/${n}` } });
+    const comment = (cid: number, n: number, text: string, association = 'MEMBER') => ({ action: 'created', comment: { id: cid, body: text, html_url: `https://github.com/acme/site/pull/${n}#c${cid}`, author_association: association, user: { login: association === 'NONE' ? 'stranger' : 'maria' } }, issue: { ...issue(n, [], { author_association: 'MEMBER', user: { login: 'dev' } }), ...on(n) }, sender: { type: 'User' }, repository: repo });
+    const taken = await gh('issue_comment', comment(960, 120, '/agent Fix the failing lint job'));
+    expect(taken.statusCode, taken.body).toBe(201);
+    const task = await s.tasks.get(owner, taken.json().taskId);
+    expect(task).toMatchObject({ title: 'PR #120: Issue 120', pullRequest: { number: 120, base: 'main', head: 'fix-typo', fetchHead: 'pull/120/head' }, merge: { mode: 'automatic' } });
+    expect(task.originalPrompt).toMatch(/^Fix the failing lint job\n\nCheck whether pull request #120/);
+    expect((await gh('issue_comment', comment(961, 121, '/agent Fix it'))).json().reason).toMatch(/^the pull request could not be read/);
+
+    expect((await gh('issue_comment', comment(962, 120, '/agent merge', 'NONE'))).json().reason).toBe('only people with write access approve a merge');
+    expect((await gh('issue_comment', comment(963, 120, '/agent merge'))).json().reason).toBe('no task waits for an approval to merge this pull request');
+    // The task waits for the approval; its worker is not connected here, which the delivery reports.
+    const { worker } = await makeWorker(s, owner, projectId, { name: 'w-merge' });
+    await setTask(task.id, { status: 'WAITING_FOR_APPROVAL', workerId: worker.workerId, pendingInteraction: { kind: 'approval', subject: 'merge', question: 'Merge?', requestedAt: new Date().toISOString() }, gitResult: { policy: 'PULL_REQUEST', branch: 'fix-typo', commit: 'c9', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/120', filesChanged: [], blocked: [] } });
+    expect((await gh('issue_comment', comment(964, 120, '/agent merge'))).json().reason).toMatch(/^the merge could not be approved: The worker running this task is not connected/);
+    await setTask(task.id, { status: 'CANCELLED' });
+  });
+
+  it('the comment at the end says what was done to the pull request', async () => {
+    const created = await gh('pull_request', pr(130, 'opened'));
+    const taskId = created.json().taskId;
+    const { worker } = await makeWorker(s, owner, projectId, { name: 'w-pr-130' });
+    await s.tasks.claim(worker, taskId);
+    const tr = (to: string, patch: Record<string, unknown> = {}) => s.tasks.transition(worker, taskId, { to: to as never, transitionId: randomUUID(), patch });
+    await tr('PREPARING');
+    await tr('RUNNING', { agentId: 'mock', providerId: 'mock', modelId: 'mock-1' });
+    await tr('VERIFYING', { verificationStatus: 'RUNNING' });
+    received.length = 0;
+    await tr('COMPLETED', {
+      verificationStatus: 'PASSED',
+      gitStatus: 'MERGED',
+      gitResult: { policy: 'PULL_REQUEST', branch: 'change-130', commit: 'abc', pushed: true, pullRequestUrl: 'https://github.com/acme/site/pull/130', filesChanged: [], blocked: [], update: { base: 'main', state: 'conflicts_resolved', conflicts: ['src/cart.ts'] }, merge: { state: 'merged', method: 'squash', commit: 'feedc0ffee' } },
+      completionReport: { summary: 'Resolved the conflict in the cart.' },
+    });
+    await until(() => received.some((x) => x.path === '/repos/acme/site/issues/130/comments'), 'the result comment');
+    const text = received.find((x) => x.path === '/repos/acme/site/issues/130/comments')!.body.body as string;
+    expect(text).toContain('Task completed: PR #130: Change 130');
+    expect(text).toContain('Conflicts with `main` were resolved in: src/cart.ts.\nMerged as feedc0f.');
+    expect((await s.tasks.get(owner, taskId)).gitStatus).toBe('MERGED');
+  });
+
+  it('with reviews on too, a pull request gets both tasks', async () => {
+    await api('PATCH', `/integrations/${id}`, { settings: { reviews: 'opened' } });
+    const both = await gh('pull_request', pr(140, 'opened'));
+    expect(both.statusCode).toBe(201);
+    expect((await s.tasks.get(owner, both.json().taskId)).kind).toBe('review');
+    const mine = (await api('GET', '/integrations')).json().find((x: { id: string }) => x.id === id);
+    expect(mine.lastDeliveryResult).toMatch(/^created task [a-f0-9]{24}; created task [a-f0-9]{24}$/);
+    const { Task } = await import('@ao/database');
+    expect(await Task.countDocuments({ 'pullRequest.number': 140 })).toBe(1);
+  });
+
+  it('GitLab: membership is asked of GitLab; merge requests and their comment commands are taken over', async () => {
+    const r = await api('POST', '/integrations', { name: 'GitLab autopilot', kind: 'gitlab', projectId, settings: { label: 'agent', pullRequestFixes: 'opened', merge: 'approval', mergeMethod: 'merge', replyTokenSecret: 'GL_TOKEN', apiBaseUrl: fakeUrl } });
+    const gl = (event: string, body: unknown) => deliver(r.json().id, body, { 'x-gitlab-event': event, 'x-gitlab-token': r.json().secret });
+    const attrs = (iid: number, extra: object = {}) => ({ iid, title: `MR ${iid}`, description: 'd', url: `https://gitlab.com/acme/site/-/merge_requests/${iid}`, state: 'opened', source_branch: `mr-${iid}`, target_branch: 'main', source_project_id: 88, target_project_id: 88, author_id: 7, last_commit: { id: `c${iid}` }, ...extra });
+    const mr = (iid: number, user: number, extra: object = {}) => ({ project: { id: 88 }, user: { id: user }, object_attributes: { ...attrs(iid, extra), action: 'open' } });
+    received.length = 0;
+    const created = await gl('Merge Request Hook', mr(5, 7));
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await s.tasks.get(owner, created.json().taskId)).toMatchObject({ title: 'MR !5: MR 5', pullRequest: { number: 5, base: 'main', head: 'mr-5', fetchHead: 'refs/merge-requests/5/head' }, merge: { mode: 'approval', method: 'merge' }, source: { ref: '88#5', refType: 'pr' } });
+    expect(received.find((x) => x.path === '/api/v4/projects/88/members/all/7')!.headers['private-token']).toBe('glpat_reply_token_value');
+    // Not a member: nothing starts. From a fork, let in by a member's comment: the fork is recorded.
+    const fork = { author_id: 99, source_project_id: 12, source: { git_http_url: 'https://gitlab.com/stranger/site.git' } };
+    expect((await gl('Merge Request Hook', mr(6, 99, fork))).json().reason).toMatch(/^waiting for someone with write access/);
+    const note = (nid: number, user: number, text: string, iid: number, extra: object = {}) => ({ project: { id: 88 }, user: { id: user }, object_attributes: { id: nid, note: text, noteable_type: 'MergeRequest', url: `https://gitlab.com/acme/site/-/merge_requests/${iid}#note_${nid}` }, merge_request: attrs(iid, extra) });
+    expect((await gl('Note Hook', note(1, 99, '/agent fix it', 6, fork))).json().reason).toMatch(/^waiting for someone with write access/);
+    const let_in = await gl('Note Hook', note(2, 7, '/agent fix it', 6, fork));
+    expect(let_in.statusCode, let_in.body).toBe(201);
+    expect(await s.tasks.get(owner, let_in.json().taskId)).toMatchObject({ pullRequest: { number: 6, fork: { url: 'https://gitlab.com/stranger/site.git', canPush: false } }, merge: { mode: 'approval' } });
+    expect((await gl('Note Hook', note(3, 7, '/agent merge', 5))).json().reason).toBe('no task waits for an approval to merge this pull request');
+    expect((await gl('Note Hook', note(4, 99, '/agent merge', 5))).json().reason).toBe('only people with write access approve a merge');
   });
 });

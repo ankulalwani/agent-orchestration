@@ -158,7 +158,7 @@ See [verification](docs/verification/README.md).
 - **Tasks from where the work is:** GitHub and GitLab issues and comments, Jira, Linear, any system that
   can send a signed webhook, cron schedules and reusable templates. See [integrations](docs/integrations/README.md).
 - **Git your way:** commit, commit and push, or pull request, per project. A GitHub App syncs repositories
-  into projects, and projects can span several repositories. Review feedback on GitHub becomes a follow-up task on the same branch.
+  into projects, and projects can span several repositories. Review feedback on GitHub becomes a follow-up task on the same branch. Pull requests that people open can be taken to a merge: the base branch merged in, conflicts resolved, checks green, then merged after an approval or at once.
 - **Where you already are:** web dashboard, `agentctl` CLI, VS Code extension, Slack (approve, retry and
   answer from chat) and Microsoft Teams notifications.
 - **Spend under control:** USD and token budgets per task, project and organization.

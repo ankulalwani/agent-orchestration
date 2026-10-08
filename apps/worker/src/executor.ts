@@ -28,7 +28,7 @@ import { GATEWAY_KIND, detectSandbox, startAgentSession, wrapInvocation, type Ag
 import { chatCompletionsBaseUrl, type ProviderManager } from '@ao/providers';
 import type { ModelGateway } from './gateway/server.js';
 import type { GatewayTarget } from './gateway/upstream.js';
-import { GitManager, tokenAuthEnv, type Baseline } from '@ao/git';
+import { GitManager, pullRequestNumber, tokenAuthEnv, type Baseline } from '@ao/git';
 import { VerificationEngine, failureSummary, type VerificationRun } from '@ao/verification';
 import type { ClaimResult, ControlPlaneClient } from './control-client.js';
 import { LeaseLostError, sleep } from './control-client.js';
@@ -406,22 +406,33 @@ export class TaskRun {
     const isCode = (this.task.kind ?? 'code') === 'code';
     // A follow-up works on the branch of the task it continues, and adds to that task's pull request.
     const continues = isCode && this.policy.git.policy !== 'NONE' ? (this.task.continues ?? null) : null;
+    // A task on a pull request works on that request's branch (for a fork: a local branch of its head).
+    const adopt = isCode && this.policy.git.policy !== 'NONE' ? (this.task.pullRequest ?? null) : null;
     const branch = continues
       ? (this.local.branch ?? continues.branch)
-      : this.policy.git.policy !== 'NONE' && this.policy.git.workOnBranch && isCode
+      : adopt
+        ? (this.local.branch ?? (adopt.fork ? `${this.policy.git.branchPrefix}pr-${adopt.number}` : adopt.head))
+        : this.policy.git.policy !== 'NONE' && this.policy.git.workOnBranch && isCode
         ? (this.local.branch ?? `${this.policy.git.branchPrefix}${slug(this.task.title)}-${this.taskId.slice(-6)}`)
         : null;
     if (continues?.pullRequestUrl && !this.local.pullRequests?.['']) this.local.pullRequests = { ...(this.local.pullRequests ?? {}), '': continues.pullRequestUrl };
+    // Commits join the request, unless it is a fork's that cannot be pushed to: then a request of ours replaces it.
+    if (adopt && (!adopt.fork || (adopt.fork.canPush && !this.local.forkPushFailed)) && !this.local.pullRequests?.['']) this.local.pullRequests = { ...(this.local.pullRequests ?? {}), '': adopt.url };
     const git = this.newGit(this.cwd, primary.name);
     if (await git.isRepo()) {
       this.git = git;
       await git.excludeStateDir(`${STATE_DIR}/`);
       this.baseline = (this.local.baseline as Baseline | null) ?? (await git.baseline());
-      if (branch) {
+      if (branch && adopt) {
+        await this.preparePullRequest(git, branch, adopt);
+      } else if (branch) {
         await git.ensureBranch(branch, { fromRemote: Boolean(continues) });
         this.local.branch = branch;
       }
       this.persist();
+    } else if (adopt) {
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'setup' }, 'Work on a pull request needs the project folder to be a Git repository');
+      throw new Aborted('cancelled');
     } else {
       this.ev('GitOperationBlocked', { reason: 'Project directory is not a Git repository; Git policy skipped' });
     }
@@ -435,7 +446,8 @@ export class TaskRun {
         if (await g.isRepo()) {
           other.git = g;
           other.baseline = (this.local.repoBaselines?.[r.name] as Baseline | undefined) ?? (await g.baseline());
-          if (branch) {
+          // The pull request is the primary repository's: the others stay as they are.
+          if (branch && !adopt) {
             await g.ensureBranch(branch);
             this.local.branch = branch;
           }
@@ -467,6 +479,48 @@ export class TaskRun {
       }
       await this.tr('PREPARING', { pendingInteraction: null }, 'Approved');
     }
+  }
+
+  /**
+   * Checks the pull request's branch out and merges the base branch into it. Conflicts are left in the
+   * files for the agent, with the merge in progress; the task's commit concludes it.
+   */
+  private async preparePullRequest(git: GitManager, branch: string, pr: NonNullable<TaskDto['pullRequest']>) {
+    try {
+      await git.ensureBranchFromRef(branch, pr.fork ? (pr.fetchHead ?? `pull/${pr.number}/head`) : `refs/heads/${pr.head}`);
+      this.local.branch = branch;
+      const before = this.local.update ?? null;
+      const u = await git.updateFromBase(pr.base);
+      const conflicts = [...new Set([...(before?.conflicts ?? []), ...u.conflicts])];
+      // A later run (a retry, a restart of the worker) finds the branch as the first run left it.
+      this.local.update = u.state === 'up_to_date' && before ? before : { base: pr.base, state: conflicts.length ? 'conflicts' : u.state, conflicts };
+      this.persist();
+      if (!before) this.ev('PullRequestUpdated', { url: pr.url, base: pr.base, state: this.local.update.state, conflicts });
+    } catch (e) {
+      if (e instanceof Aborted) throw e;
+      await this.tr('RECOVERY_REQUIRED', { failureCategory: 'setup' }, `Could not prepare the branch of pull request #${pr.number}: ${(e as Error).message}`.slice(0, 1000));
+      throw new Aborted('cancelled');
+    }
+  }
+
+  /** What the agent is told about the pull request it works on, after the task's own prompt. */
+  private pullRequestNotes(): string {
+    const pr = this.task.pullRequest;
+    const u = this.local?.update;
+    if (!pr || !u) return '';
+    const state =
+      u.state === 'conflicts'
+        ? `Merging ${pr.base} into the branch produced conflicts in:\n${u.conflicts.map((f) => `- ${f}`).join('\n')}\nThe merge is in progress. Resolve every conflict in these files so that both sides keep working: what the pull request changes, and what changed on ${pr.base} since. Remove all conflict markers. Do not commit, and do not abort or reset the merge: the worker commits the result.`
+        : u.state === 'merged'
+          ? `${pr.base} was merged into the branch without conflicts.`
+          : `The branch already contains ${pr.base}.`;
+    return [
+      '',
+      `## Pull request #${pr.number}`,
+      `You work on the branch of pull request #${pr.number} (${pr.url}), which is to be merged into ${pr.base}. ${state}`,
+      'Make the pull request ready to merge: the project must build and its checks must pass with these changes. Change only what stands in the way of merging. Keep what the author intended and everything that works today: do not remove features, and do not delete or weaken tests to make them pass. If nothing has to change, change nothing.',
+      'In your report, list what was needed to make it mergeable (or that nothing was), and anything a maintainer should look at before merging.',
+    ].join('\n\n');
   }
 
   /**
@@ -691,7 +745,7 @@ export class TaskRun {
         : buildExecutionPrompt({
             taskId: this.taskId,
             title: this.task.title,
-            prompt: this.task.normalizedPrompt ?? this.task.originalPrompt,
+            prompt: (this.task.normalizedPrompt ?? this.task.originalPrompt) + this.pullRequestNotes(),
             plan: this.task.generatedPlan,
             stateDir: STATE_DIR,
             checkpoint: this.checkpoint,
@@ -1048,6 +1102,19 @@ export class TaskRun {
   private async verify(): Promise<'passed' | 'stop' | string> {
     if (this.review) return this.verifyReview();
     if (this.planning) return this.verifyPlan();
+    // A merge with conflict markers left in it must not be committed, whatever the checks say.
+    const marked = this.git && this.local.update?.conflicts.length ? await this.git.withConflictMarkers(this.local.update.conflicts) : [];
+    if (marked.length) {
+      await this.tr('VERIFYING', { verificationStatus: 'RUNNING' }, 'Checking the merge');
+      this.ev('VerificationFailed', { attempt: this.task.remediationCount + 1, failed: marked.map((f) => `conflict markers in ${f}`) });
+      if (this.task.remediationCount >= this.policy.maxRemediationAttempts) {
+        await this.tr('RECOVERY_REQUIRED', { failureCategory: 'verification', verificationStatus: 'FAILED' }, `Conflicts with ${this.local.update!.base} are still unresolved after ${this.policy.maxRemediationAttempts} attempts: ${marked.join(', ')}`.slice(0, 1000));
+        return 'stop';
+      }
+      this.ev('RemediationStarted', { attempt: this.task.remediationCount + 1 });
+      await this.tr('RUNNING', { verificationStatus: 'FAILED', incRemediation: true }, 'Conflicts are unresolved; the agent is resolving them');
+      return `These files still contain conflict markers from merging ${this.local.update!.base}:\n${marked.map((f) => `- ${f}`).join('\n')}\nResolve each conflict so that both sides keep working, and remove the markers (<<<<<<<, =======, >>>>>>>).`;
+    }
     if (!this.policy.verification.enabled) {
       await this.tr('VERIFYING', { verificationStatus: 'SKIPPED' }, 'Verification disabled by policy');
       return 'passed';
@@ -1126,7 +1193,7 @@ export class TaskRun {
       return 'done';
     }
     let gitResult: Record<string, unknown> | null = null;
-    let gitStatus: 'NONE' | 'COMMITTED' | 'PUSHED' | 'PR_OPENED' | 'BLOCKED' | 'FAILED' = 'NONE';
+    let gitStatus: 'NONE' | 'COMMITTED' | 'PUSHED' | 'PR_OPENED' | 'MERGED' | 'BLOCKED' | 'FAILED' = 'NONE';
     const agentReport = readAgentReport(this.stateRoot, this.taskId);
     const others = this.others.filter((o): o is typeof o & { git: GitManager; baseline: Baseline } => Boolean(o.git && o.baseline));
     if (((this.git && this.baseline) || others.length) && this.policy.git.policy !== 'NONE') {
@@ -1139,19 +1206,38 @@ export class TaskRun {
         pushApproved = c?.action === 'approve';
         await this.tr('VERIFYING', { pendingInteraction: null }, pushApproved ? 'Push approved' : 'Push denied');
       }
+      const adopt = this.task.pullRequest ?? null;
+      // An issue's pull request closes the issue when it is merged.
+      const src = this.task.source;
+      const issue = this.task.merge && src && src.refType !== 'pr' && ['github', 'gitlab'].includes(src.kind) ? /#(\d+)$/.exec(src.ref ?? '')?.[1] : null;
       const apply = async (git: GitManager, baseline: Baseline, repository?: string) => {
         try {
-          const r = await git.applyPolicy({
+          const onRequest = !repository && adopt ? adopt : null;
+          const input = {
             policy: this.policy.git.policy,
             baseline,
             branch: this.local.branch,
             message: `${this.task.title}\n\n${summarize(agentReport) ?? ''}\n\nTask: ${this.taskId}\nAgent: ${this.target?.agentId}/${this.target?.providerId}/${this.target?.modelId}`.trim(),
             prTitle: this.task.title,
-            prBody: agentReport ?? this.task.originalPrompt,
+            prBody: `${onRequest ? `Replaces ${onRequest.url}, whose branch could not be pushed to: its commits, and what was needed to merge them.\n\n` : ''}${agentReport ?? this.task.originalPrompt}${issue && !repository ? `\n\nCloses #${issue}` : ''}`,
             requirePushApproval: this.policy.requireApprovalFor.push,
             pushApproved,
             existingPullRequestUrl: this.local.pullRequests?.[repository ?? ''] ?? null,
-          });
+            // The merge of the base branch is a commit of its own: it is pushed even when the agent changed nothing.
+            pushHead: Boolean(onRequest && this.local.update && this.local.update.state !== 'up_to_date' && (await git.head()) !== this.local.pushedCommit),
+            pushTo: onRequest?.fork?.canPush && !this.local.forkPushFailed ? { url: onRequest.fork.url, branch: onRequest.head } : null,
+            prBase: onRequest?.base ?? null,
+          };
+          let r = await git.applyPolicy(input);
+          if (input.pushTo && !r.pushed && r.blocked.some((b) => b.startsWith('Push failed'))) {
+            // The fork refused: the same commits go to a branch of this repository, in a request that replaces the fork's.
+            this.local.forkPushFailed = true;
+            const { '': _fork, ...rest } = this.local.pullRequests ?? {};
+            this.local.pullRequests = rest;
+            const again = await git.applyPolicy({ ...input, pushTo: null, pushHead: true, existingPullRequestUrl: null });
+            r = { ...again, filesChanged: r.filesChanged, diffStat: r.diffStat, warnings: [...r.warnings, ...again.warnings, `The fork did not accept the push (${r.blocked.join('; ').slice(0, 300)}); a pull request of this repository replaces it`] };
+          }
+          if (r.pushed && !repository) this.local.pushedCommit = r.commit;
           if (r.pullRequestUrl) this.local.pullRequests = { ...(this.local.pullRequests ?? {}), [repository ?? '']: r.pullRequestUrl };
           const where = repository ? { repository } : {};
           if (r.commit) this.ev('GitCommitCreated', { commit: r.commit, branch: r.branch, files: r.filesChanged.length, ...where });
@@ -1184,17 +1270,87 @@ export class TaskRun {
       const files = new Map([...(this.local.committedFiles ?? []), ...(gitResult.filesChanged as Array<{ path: string; status: string }>)].map((f) => [f.path, f]));
       gitResult.filesChanged = [...files.values()];
       this.local.committedFiles = [...files.values()];
+      if (adopt) {
+        // The task's request: the one it worked on, or the one that replaces it.
+        gitResult.pullRequestUrl = (gitResult.pullRequestUrl as string | null) ?? this.local.pullRequests?.[''] ?? adopt.url;
+        if (gitResult.pullRequestUrl !== adopt.url) gitResult.supersedes = adopt.url;
+        if (this.local.update) gitResult.update = { base: this.local.update.base, state: this.local.update.state === 'conflicts' ? 'conflicts_resolved' : this.local.update.state, conflicts: this.local.update.conflicts };
+      }
       this.persist();
       if (this.policy.verification.ci.enabled && this.git) {
         const earlier = gitStatus === 'NONE' && Boolean(this.local.ciFailedCommit);
-        const ci = await this.ciGate(main?.r.pushed ? main.r.commit : null, gitResult, earlier ? 'PUSHED' : gitStatus);
+        // A pull request that needed no change has checks too: those of its head.
+        const commit = main?.r.pushed ? main.r.commit : adopt && !this.local.ciFailedCommit && gitResult.pullRequestUrl === adopt.url ? await this.git.head() : null;
+        const ci = await this.ciGate(commit, gitResult, earlier ? 'PUSHED' : gitStatus);
         if (ci !== 'passed') return ci;
       }
+      if (this.git && (this.task.merge || adopt)) gitStatus = await this.mergeStep(gitResult, gitStatus);
     }
     const report = this.completionReport(gitResult, agentReport);
     await this.tr('COMPLETED', { verificationStatus: this.policy.verification.enabled ? 'PASSED' : 'SKIPPED', gitStatus, gitResult: gitResult as never, completionReport: report as never }, 'Completed and verified');
     await this.runPlugins('task.completed', { report: { summary: report.summary, filesChanged: report.filesChanged, verification: report.verification, git: gitResult } });
     return 'done';
+  }
+
+  /**
+   * The last step of a task that merges: asks the host whether the pull request can be merged, asks a
+   * person when the task says so, and merges at the commit that was verified. What stands in the way is
+   * recorded, and the task completes: its work is done either way. Without `merge`, a task on a pull
+   * request only records whether the request is ready.
+   */
+  private async mergeStep(gitResult: Record<string, unknown>, gitStatus: 'NONE' | 'COMMITTED' | 'PUSHED' | 'PR_OPENED' | 'MERGED' | 'BLOCKED' | 'FAILED'): Promise<typeof gitStatus> {
+    const spec = this.task.merge ?? null;
+    const url = (gitResult.pullRequestUrl as string | null | undefined) ?? null;
+    const number = url ? pullRequestNumber(url) : null;
+    // No pull request: the task changed nothing, or its policy does not open one.
+    if (!url || !number) return gitStatus;
+    const block = (reason: string) => {
+      gitResult.merge = { state: 'blocked', ...(spec ? { method: spec.method } : {}), reason };
+      this.ev('PullRequestMergeBlocked', { url, reason });
+      return gitStatus;
+    };
+    if (gitStatus === 'FAILED' || (gitResult.blocked as string[]).length) return block('the task could not push its changes');
+    let state;
+    try {
+      state = await this.git!.pullRequestState(number, { waitMs: this.scaled(3000) });
+    } catch (e) {
+      return block((e as Error).message);
+    }
+    if (!state) return block('this worker has no Git hosting token for the repository’s host, so the pull request cannot be read');
+    if (state.merged) {
+      gitResult.merge = { state: 'merged' };
+      return 'MERGED';
+    }
+    if (!state.open) return block('it is closed');
+    if (state.blocked) return block(state.blocked);
+    const head = await this.git!.head();
+    if (state.headSha && head && state.headSha !== head) return block('its branch changed after the checks ran');
+    if (!spec) {
+      gitResult.merge = { state: 'ready' };
+      return gitStatus;
+    }
+    if (spec.mode === 'approval') {
+      const question = `Merge pull request #${number} (${url})? It is verified and can be merged.`;
+      await this.tr('WAITING_FOR_APPROVAL', { pendingInteraction: { kind: 'approval', subject: 'merge', question }, gitStatus, gitResult: gitResult as never }, 'Waiting for approval to merge');
+      this.ev('ApprovalRequested', { question: 'merge', url });
+      const c = await this.waitForControl(['approve', 'deny']);
+      const approved = c?.action === 'approve';
+      await this.tr('VERIFYING', { pendingInteraction: null }, approved ? 'Merge approved' : 'Merge declined');
+      if (!approved) {
+        gitResult.merge = { state: 'declined', method: spec.method };
+        return gitStatus;
+      }
+    }
+    let r;
+    try {
+      r = await this.git!.mergePullRequest(number, { method: spec.method, sha: state.headSha ?? head });
+    } catch (e) {
+      return block((e as Error).message);
+    }
+    if (!r.merged) return block(r.reason ?? 'the host refused the merge');
+    gitResult.merge = { state: 'merged', method: r.method, commit: r.commit };
+    this.ev('PullRequestMerged', { url, method: r.method, commit: r.commit });
+    return 'MERGED';
   }
 
   /**
@@ -1488,6 +1644,7 @@ export class TaskRun {
     const v = this.lastVerification;
     const cp = this.checkpoint;
     const warnings = [...(v?.warnings ?? []), ...((git?.warnings as string[]) ?? []), ...((git?.blocked as string[]) ?? [])];
+    if (git?.merge?.state === 'blocked') warnings.push(`The pull request was not merged: ${git.merge.reason}`);
     if (!agentReport) warnings.push('The agent did not write a completion report; summary is derived from verified facts only.');
     return {
       summary: summarize(agentReport) ?? `Task "${this.task.title}" executed and verified.`,

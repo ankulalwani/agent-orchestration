@@ -54,6 +54,12 @@ Actual, current limitations. Updated as the implementation changes. Last updated
 - **CI checks** are read for the primary repository only. Full logs are not fetched: the agent gets the
   last 6,000 characters of a failed job's log (GitHub Actions, GitLab CI) or the check's annotations.
 - **Follow-ups on review feedback** exist for GitHub only.
+- **Taking pull requests to a merge** was tested with real Git repositories against a local fake of
+  GitHub's API, and GitLab's answers against a fake that follows its documentation; not against the real
+  hosts. A merge waiting for an approval needs the worker that runs the task to stay connected. A request
+  is brought up to date once, when the task starts: if the base branch moves and conflicts again before
+  the merge, the merge is reported as blocked and the task must be run again. In a project with several
+  repositories the request is the primary repository's.
 - **Microsoft Teams** channels receive notifications; approving from Teams is not built (it needs a bot
   registered with Microsoft).
 - **SCIM** covers users, not groups. A suspended member's live dashboard connection ends at its next

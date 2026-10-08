@@ -50,6 +50,9 @@ export const TASK_EVENT_TYPES = [
   'CiChecksStarted',
   'CiChecksPassed',
   'CiChecksFailed',
+  'PullRequestUpdated',
+  'PullRequestMerged',
+  'PullRequestMergeBlocked',
 ] as const;
 export type TaskEventType = (typeof TASK_EVENT_TYPES)[number];
 

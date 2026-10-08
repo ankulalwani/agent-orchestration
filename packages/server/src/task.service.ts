@@ -188,6 +188,7 @@ export class TaskService {
 
   async create(actor: Actor, input: z.output<typeof createTaskRequest>, opts: { source?: Record<string, unknown>; parentTaskId?: string; attempt?: Record<string, unknown> } = {}): Promise<TaskDto> {
     requirePermission(actor, 'task.create');
+    if ((input.pullRequest || input.merge) && input.attempts?.length) throw new AppError('VALIDATION_FAILED', 'A task that works on a pull request or merges one cannot run as several attempts');
     if (input.attempts?.length) return this.createAttempts(actor, input, opts);
     const orgId = oid(actor.organizationId);
     if (input.idempotencyKey) {
@@ -208,6 +209,8 @@ export class TaskService {
     const readiness = dependencyReadiness(depIds, new Map(deps.map((d) => [String(d._id), d.status as TaskStatus])));
     if (input.policy) resolvePolicy(input.policy); // validate early
     if (input.kind === 'review' && !input.review) throw new AppError('VALIDATION_FAILED', 'A review task needs review.base and review.head');
+    if ((input.pullRequest || input.merge) && (input.kind ?? 'code') !== 'code') throw new AppError('VALIDATION_FAILED', 'Only tasks that change code can work on a pull request or merge one');
+    if (input.pullRequest && input.continuesTaskId) throw new AppError('VALIDATION_FAILED', 'A task works on a pull request or follows up on another task, not both');
     if (input.environment) {
       const env = (project.environments as Array<{ name: string; requiresApproval?: boolean }>).find((e) => e.name === input.environment);
       if (!env) throw new AppError('VALIDATION_FAILED', `Unknown environment "${input.environment}"`);
@@ -238,6 +241,8 @@ export class TaskService {
         attempt: opts.attempt ?? null,
         kind: input.kind ?? 'code',
         review: input.kind === 'review' ? input.review : null,
+        pullRequest: input.pullRequest ?? null,
+        merge: input.merge ?? null,
         priority: input.priority,
         dependencies: depIds.map((d) => oid(d)),
         requirements: input.requirements,

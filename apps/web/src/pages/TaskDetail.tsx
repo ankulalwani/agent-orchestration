@@ -419,6 +419,9 @@ function GitView({ task }: { task: TaskDto }) {
             ['Commit', g.commit ? <code>{g.commit}</code> : 'No commit'],
             ['Pushed', g.pushed ? 'Yes' : 'No'],
             ['Pull request', g.pullRequestUrl ? <a href={g.pullRequestUrl} target="_blank" rel="noreferrer">{g.pullRequestUrl}</a> : null],
+            ['Replaces', g.supersedes ? <a href={g.supersedes} target="_blank" rel="noreferrer">{g.supersedes}</a> : null],
+            ['Update from base', g.update ? (g.update.state === 'up_to_date' ? `Already contained ${g.update.base}` : g.update.state === 'merged' ? `${g.update.base} merged, no conflicts` : `${g.update.base} merged, conflicts resolved in ${g.update.conflicts.join(', ')}`) : null],
+            ['Merge', g.merge ? (g.merge.state === 'merged' ? `Merged${g.merge.method ? ` (${g.merge.method})` : ''}${g.merge.commit ? ` as ${g.merge.commit.slice(0, 7)}` : ''}` : g.merge.state === 'ready' ? 'Ready to merge' : g.merge.state === 'declined' ? 'Declined' : `Not merged: ${g.merge.reason}`) : task.merge ? (task.merge.mode === 'approval' ? 'After approval, when verified' : 'Automatic, when verified') : null],
           ]}
         />
         {g.blocked.length > 0 && <Alert tone="warn">{g.blocked.map((b, i) => <div key={i}>{b}</div>)}</Alert>}

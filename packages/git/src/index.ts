@@ -62,6 +62,28 @@ export interface CiStatus {
   state: 'none' | 'pending' | 'success' | 'failure';
   checks: CiCheck[];
 }
+/** A pull/merge request as its host sees it. `blocked`: why the host would not merge it now (null: nothing known against it). */
+export interface PullRequestState {
+  number: number;
+  open: boolean;
+  merged: boolean;
+  draft: boolean;
+  headSha: string | null;
+  blocked: string | null;
+}
+export type MergeMethod = 'merge' | 'squash' | 'rebase';
+/** `merged: false`: the host refused, with its reason. */
+export interface MergeResult {
+  merged: boolean;
+  method: MergeMethod;
+  commit: string | null;
+  reason: string | null;
+}
+/** The number of a pull request (GitHub) or merge request (GitLab) from its URL. */
+export function pullRequestNumber(url: string): number | null {
+  const m = /\/(?:pull|merge_requests)\/(\d+)(?:[/?#]|$)/.exec(url);
+  return m ? Number(m[1]) : null;
+}
 /** Characters kept from the end of a failed check's log. */
 const CI_LOG_TAIL = 6000;
 
@@ -99,6 +121,9 @@ export function tokenAuthEnv(host: string, token: string): Record<string, string
     GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
   };
 }
+
+/** A branch or ref name that is safe as a Git argument: no option look-alikes, no ranges, no refspec characters. */
+const safeRef = (name: string) => /^[A-Za-z0-9._/-]{1,200}$/.test(name) && !name.includes('..') && !name.startsWith('-');
 
 export class GitManager {
   readonly log: Array<{ command: string; exitCode: number | null; durationMs: number }> = [];
@@ -257,6 +282,72 @@ export class GitManager {
     if (fetched) await this.run(['merge', '--ff-only', '--quiet', tracking], { allowFail: true });
   }
 
+  /** Git environment with the credentials for a remote URL's host, when the worker has some of its own for it. */
+  private async authEnv(url: string): Promise<Record<string, string> | undefined> {
+    const host = url ? parseRemote(url)?.host : null;
+    return host && this.opts.pushAuth ? ((await this.opts.pushAuth(host).catch(() => null)) ?? undefined) : undefined;
+  }
+
+  private async originUrl() {
+    return (await this.run(['remote', 'get-url', 'origin'], { allowFail: true })).stdout.trim();
+  }
+
+  /**
+   * Create (or switch to) a local branch for a ref that origin publishes without a branch of ours, e.g.
+   * `pull/12/head` for a pull request from a fork. An existing branch only moves forward.
+   */
+  async ensureBranchFromRef(name: string, ref: string) {
+    // Both names can come from a pull request, which anyone may open.
+    if (!safeRef(name)) throw new AppError('UNSAFE_ARGUMENT', 'Invalid branch name');
+    if (!safeRef(ref)) throw new AppError('UNSAFE_ARGUMENT', 'Invalid ref');
+    const url = await this.originUrl();
+    await this.run(['fetch', '--quiet', 'origin', ref], { timeoutMs: 300_000, env: await this.authEnv(url) });
+    const fetched = (await this.run(['rev-parse', 'FETCH_HEAD^{commit}'])).stdout.trim();
+    const has = (await this.run(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`], { allowFail: true })).exitCode === 0;
+    if (!has) await this.run(['branch', '--quiet', name, fetched]);
+    if ((await this.currentBranch()) !== name) await this.run(['switch', name]);
+    if (has) await this.run(['merge', '--ff-only', '--quiet', fetched], { allowFail: true });
+  }
+
+  /** Files with unresolved conflicts of a merge that is in progress. */
+  async conflicts(): Promise<string[]> {
+    return (await this.run(['diff', '--name-only', '--diff-filter=U', '-z'], { allowFail: true })).stdout.split('\0').filter(Boolean);
+  }
+
+  async mergeInProgress() {
+    return (await this.run(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], { allowFail: true })).exitCode === 0;
+  }
+
+  /**
+   * Brings the current branch up to date with origin's `base` by merging it (never a rebase: the branch's
+   * history is other people's). `conflicts`: the merge is left in progress with conflict markers in the
+   * listed files; committing all of them concludes it.
+   */
+  async updateFromBase(base: string): Promise<{ state: 'up_to_date' | 'merged' | 'conflicts'; conflicts: string[] }> {
+    if (!safeRef(base)) throw new AppError('UNSAFE_ARGUMENT', 'Invalid branch name');
+    if (await this.mergeInProgress()) return { state: 'conflicts', conflicts: await this.conflicts() };
+    const tracking = `refs/remotes/origin/${base}`;
+    await this.run(['fetch', '--quiet', 'origin', `refs/heads/${base}:${tracking}`], { timeoutMs: 300_000, env: await this.authEnv(await this.originUrl()) });
+    if ((await this.run(['merge-base', '--is-ancestor', tracking, 'HEAD'], { allowFail: true })).exitCode === 0) return { state: 'up_to_date', conflicts: [] };
+    const ident = [...(this.opts.authorName ? ['-c', `user.name=${this.opts.authorName}`] : []), ...(this.opts.authorEmail ? ['-c', `user.email=${this.opts.authorEmail}`] : [])];
+    const r = await this.run([...ident, 'merge', '--no-edit', '--no-ff', '-m', `Merge ${base} into ${(await this.currentBranch()) ?? 'the branch'}`, tracking], { allowFail: true, timeoutMs: 300_000 });
+    if (r.exitCode === 0) return { state: 'merged', conflicts: [] };
+    const conflicts = await this.conflicts();
+    // Not a conflict (e.g. local changes in the way): nothing was merged, and the caller is told why.
+    if (!conflicts.length) throw new AppError('INTERNAL', `git merge failed: ${(r.stderr.trim() || r.stdout.trim()).slice(0, 500)}`);
+    return { state: 'conflicts', conflicts };
+  }
+
+  /** Those of `files` that still contain conflict markers. */
+  async withConflictMarkers(files: string[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const f of files) {
+      const text = await fs.readFile(path.resolve(this.cwd, f), 'utf8').catch(() => '');
+      if (/^<{7} /m.test(text) && /^>{7} /m.test(text)) out.push(f);
+    }
+    return out;
+  }
+
   /** Files changed by the task: current changes minus untouched pre-existing user changes. */
   async taskChanges(base: Baseline): Promise<{ include: FileChange[]; skipped: FileChange[]; warnings: string[] }> {
     const include: FileChange[] = [];
@@ -294,11 +385,126 @@ export class GitManager {
     return this.head();
   }
 
-  async push(branch: string, remote = 'origin') {
+  async push(branch: string, remote = 'origin', to?: { /** Another repository (a fork), by URL. */ url: string; branch: string }) {
+    if (to) {
+      if (!safeRef(to.branch)) throw new AppError('UNSAFE_ARGUMENT', 'Invalid branch name');
+      if (!parseRemote(to.url)) throw new AppError('UNSAFE_ARGUMENT', 'Invalid repository URL');
+      await this.run(['push', to.url, `refs/heads/${branch}:refs/heads/${to.branch}`], { timeoutMs: 300_000, env: await this.authEnv(to.url) });
+      return;
+    }
     const url = (await this.run(['remote', 'get-url', remote], { allowFail: true })).stdout.trim();
-    const host = url ? parseRemote(url)?.host : null;
-    const env = host && this.opts.pushAuth ? await this.opts.pushAuth(host).catch(() => null) : null;
-    await this.run(['push', '--set-upstream', remote, `refs/heads/${branch}:refs/heads/${branch}`], { timeoutMs: 300_000, env: env ?? undefined });
+    await this.run(['push', '--set-upstream', remote, `refs/heads/${branch}:refs/heads/${branch}`], { timeoutMs: 300_000, env: await this.authEnv(url) });
+  }
+
+  private async hostingFor() {
+    const remoteUrl = (await this.run(['config', '--get', 'remote.origin.url'], { allowFail: true })).stdout.trim();
+    const remote = remoteUrl ? parseRemote(remoteUrl) : null;
+    const account = remote && this.opts.hosting ? await this.opts.hosting(remote.host) : null;
+    return remote && account ? { remote, account } : null;
+  }
+
+  /**
+   * A pull/merge request of origin's repository, as its host sees it. Null when the worker has no account
+   * for the host. GitHub computes mergeability in the background: it is asked again a few times.
+   */
+  async pullRequestState(number: number, o: { waitMs?: number } = {}): Promise<PullRequestState | null> {
+    const h = await this.hostingFor();
+    if (!h) return null;
+    const f = this.opts.fetchImpl ?? fetch;
+    const api = h.account.apiBaseUrl.replace(/\/+$/, '');
+    const github = h.account.kind === 'github';
+    const headers: Record<string, string> = github ? { authorization: `Bearer ${h.account.token}`, accept: 'application/vnd.github+json', 'user-agent': 'agent-orchestration' } : { 'private-token': h.account.token };
+    const get = async (url: string) => {
+      const res = await f(url, { headers, signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new AppError('UPSTREAM_ERROR', `${github ? 'GitHub' : 'GitLab'} did not return ${github ? 'pull' : 'merge'} request ${number} (HTTP ${res.status})`);
+      return (await res.json()) as Record<string, any>;
+    };
+    const wait = o.waitMs ?? 3000;
+    if (github) {
+      const repo = `${api}/repos/${h.remote.path}`;
+      let pr = await get(`${repo}/pulls/${number}`);
+      for (let i = 0; i < 5 && pr.state === 'open' && !pr.merged && pr.mergeable === null; i++) {
+        await new Promise((r) => setTimeout(r, wait));
+        pr = await get(`${repo}/pulls/${number}`);
+      }
+      let blocked: string | null = null;
+      if (pr.draft) blocked = 'it is a draft';
+      else if (pr.mergeable === false || pr.mergeable_state === 'dirty') blocked = `it conflicts with ${pr.base?.ref ?? 'the base branch'}`;
+      else if (pr.mergeable_state === 'blocked') blocked = 'branch protection blocks it (a required review or check is missing)';
+      else if (pr.mergeable_state === 'behind') blocked = `its branch must be up to date with ${pr.base?.ref ?? 'the base branch'}`;
+      else if (pr.mergeable === null) blocked = 'GitHub has not decided yet whether it can be merged';
+      if (!blocked && pr.state === 'open') {
+        // Someone asked for changes and has not looked again: not ours to overrule, whatever the branch rules say.
+        const reviews = (await get(`${repo}/pulls/${number}/reviews?per_page=100`).catch(() => [])) as unknown as Array<Record<string, any>>;
+        const latest = new Map<string, string>();
+        for (const r of Array.isArray(reviews) ? reviews : []) if (['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state)) latest.set(String(r.user?.login), r.state);
+        const asking = [...latest].filter(([, s]) => s === 'CHANGES_REQUESTED').map(([u]) => u);
+        if (asking.length) blocked = `${asking.join(', ')} requested changes`;
+      }
+      return { number, open: pr.state === 'open', merged: Boolean(pr.merged), draft: Boolean(pr.draft), headSha: pr.head?.sha ?? null, blocked };
+    }
+    const project = `${api}/api/v4/projects/${encodeURIComponent(h.remote.path)}`;
+    let mr = await get(`${project}/merge_requests/${number}`);
+    const checking = (m: Record<string, any>) => ['checking', 'unchecked', 'preparing'].includes(m.detailed_merge_status ?? m.merge_status);
+    for (let i = 0; i < 5 && mr.state === 'opened' && checking(mr); i++) {
+      await new Promise((r) => setTimeout(r, wait));
+      mr = await get(`${project}/merge_requests/${number}`);
+    }
+    const detail = String(mr.detailed_merge_status ?? '');
+    const reasons: Record<string, string> = {
+      conflict: `it conflicts with ${mr.target_branch ?? 'the target branch'}`,
+      need_rebase: `its branch must be rebased on ${mr.target_branch ?? 'the target branch'}`,
+      not_approved: 'a required approval is missing',
+      discussions_not_resolved: 'there are unresolved discussions',
+      ci_must_pass: 'its pipeline must pass',
+      ci_still_running: 'its pipeline is still running',
+      draft_status: 'it is a draft',
+      requested_changes: 'a reviewer requested changes',
+      blocked_status: 'it is blocked by another merge request',
+      external_status_checks: 'an external status check must pass',
+      not_open: 'it is not open',
+    };
+    let blocked: string | null = null;
+    if (mr.draft || mr.work_in_progress) blocked = 'it is a draft';
+    else if (mr.has_conflicts || mr.merge_status === 'cannot_be_merged') blocked = reasons.conflict!;
+    else if (detail && detail !== 'mergeable' && !checking(mr)) blocked = reasons[detail] ?? `GitLab reports "${detail}"`;
+    else if (checking(mr)) blocked = 'GitLab has not decided yet whether it can be merged';
+    return { number, open: mr.state === 'opened', merged: mr.state === 'merged', draft: Boolean(mr.draft || mr.work_in_progress), headSha: mr.sha ?? null, blocked };
+  }
+
+  /**
+   * Merges a pull/merge request through the host, only at `sha` (the head that was verified). A method
+   * the repository does not allow is replaced by one it allows. A refusal is a result, not an error.
+   */
+  async mergePullRequest(number: number, o: { method: MergeMethod; sha: string | null }): Promise<MergeResult> {
+    const h = await this.hostingFor();
+    if (!h) return { merged: false, method: o.method, commit: null, reason: 'this worker has no Git hosting token for the repository’s host' };
+    const f = this.opts.fetchImpl ?? fetch;
+    const api = h.account.apiBaseUrl.replace(/\/+$/, '');
+    if (h.account.kind === 'github') {
+      const headers = { authorization: `Bearer ${h.account.token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': 'agent-orchestration' };
+      let reason: string | null = null;
+      for (const method of [o.method, ...(['squash', 'merge', 'rebase'] as const).filter((m) => m !== o.method)]) {
+        const res = await f(`${api}/repos/${h.remote.path}/pulls/${number}/merge`, { method: 'PUT', headers, body: JSON.stringify({ merge_method: method, ...(o.sha ? { sha: o.sha } : {}) }), signal: AbortSignal.timeout(60_000) });
+        const data = (await res.json().catch(() => ({}))) as { merged?: boolean; sha?: string; message?: string };
+        if (res.ok && data.merged) return { merged: true, method, commit: data.sha ?? null, reason: null };
+        reason = `${data.message ?? 'GitHub refused the merge'} (HTTP ${res.status})`;
+        // Only "this repository does not allow that method" is worth another method.
+        if (!(res.status === 405 && /not allowed|not enabled/i.test(data.message ?? ''))) break;
+      }
+      return { merged: false, method: o.method, commit: null, reason };
+    }
+    const res = await f(`${api}/api/v4/projects/${encodeURIComponent(h.remote.path)}/merge_requests/${number}/merge`, {
+      method: 'PUT',
+      headers: { 'private-token': h.account.token, 'content-type': 'application/json' },
+      // How a merge request is merged (merge commit, fast-forward) is the project's setting; squashing is ours to ask for.
+      body: JSON.stringify({ squash: o.method === 'squash', ...(o.sha ? { sha: o.sha } : {}) }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const data = (await res.json().catch(() => ({}))) as { state?: string; merge_commit_sha?: string; squash_commit_sha?: string; sha?: string; message?: string | object };
+    if (res.ok && data.state === 'merged') return { merged: true, method: o.method, commit: data.merge_commit_sha ?? data.squash_commit_sha ?? data.sha ?? null, reason: null };
+    const message = typeof data.message === 'string' ? data.message : data.message ? JSON.stringify(data.message) : 'GitLab refused the merge';
+    return { merged: false, method: o.method, commit: null, reason: `${res.status === 409 ? 'the branch changed after it was verified' : message} (HTTP ${res.status})` };
   }
 
   /**
@@ -418,7 +624,7 @@ export class GitManager {
    * Apply the task's Git policy (spec §42). Never discards anything; returns blocked reasons instead
    * of failing the task when an optional step (push/PR) cannot be done.
    */
-  async applyPolicy(input: { policy: GitPolicy; baseline: Baseline; branch: string | null; message: string; prTitle: string; prBody: string; requirePushApproval?: boolean; pushApproved?: boolean; /** The pull request an earlier commit of this task opened: later commits join it. */ existingPullRequestUrl?: string | null }): Promise<CommitResult> {
+  async applyPolicy(input: { policy: GitPolicy; baseline: Baseline; branch: string | null; message: string; prTitle: string; prBody: string; requirePushApproval?: boolean; pushApproved?: boolean; /** The pull request an earlier commit of this task opened: later commits join it. */ existingPullRequestUrl?: string | null; /** Commits made outside this call (a merge of the base branch) are pushed even without new changes. */ pushHead?: boolean; /** Push to a fork's branch instead of origin. */ pushTo?: { url: string; branch: string } | null; /** The branch a new pull request targets (default: the branch the task started from). */ prBase?: string | null }): Promise<CommitResult> {
     const { include, warnings } = await this.taskChanges(input.baseline);
     const result: CommitResult = {
       policy: input.policy,
@@ -432,8 +638,8 @@ export class GitManager {
       blocked: [],
       warnings,
     };
-    if (input.policy === 'NONE' || !include.length) return result;
-    result.commit = await this.commit(input.message, include.map((f) => f.path));
+    if (input.policy === 'NONE' || (!include.length && !input.pushHead)) return result;
+    result.commit = include.length ? await this.commit(input.message, include.map((f) => f.path)) : await this.head();
     if (input.policy === 'COMMIT') return result;
     if (input.requirePushApproval && !input.pushApproved) {
       result.blocked.push('Push requires approval by policy');
@@ -449,7 +655,7 @@ export class GitManager {
       return result;
     }
     try {
-      await this.push(result.branch);
+      await this.push(result.branch, 'origin', input.pushTo ?? undefined);
       result.pushed = true;
     } catch (e) {
       result.blocked.push(`Push failed: ${(e as Error).message}`);
@@ -458,7 +664,7 @@ export class GitManager {
     if (input.policy === 'PULL_REQUEST' && input.existingPullRequestUrl) result.pullRequestUrl = input.existingPullRequestUrl;
     else if (input.policy === 'PULL_REQUEST') {
       try {
-        result.pullRequestUrl = await this.createPullRequest(input.prTitle, input.prBody, input.baseline.branch, result.branch);
+        result.pullRequestUrl = await this.createPullRequest(input.prTitle, input.prBody, input.prBase ?? input.baseline.branch, result.branch);
       } catch (e) {
         result.blocked.push(`Pull request not created: ${(e as Error).message}. Add a GitHub/GitLab token for this host in the worker (Git hosting), or install and sign in to the GitHub CLI (gh).`);
       }
